@@ -18,3 +18,4 @@ Thread resources shared by provider adapters: the resource model of a thread (fi
 ## Boundary
 
 - Depends on `agent-core` and `companion-host` only; names no provider and reads no provider storage.
+- A provider may resolve a thread's workspace from its own index independently of its history. Repository change lists and diffs can then use the workspace VCS directly. Session patches, attachments and combined reads still require the history projection.

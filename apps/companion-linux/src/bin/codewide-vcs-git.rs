@@ -3,13 +3,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use codewide_companion::vcs::{
-    CHANGES_CAPABILITY, DIFF_CAPABILITY, DIFF_PAGE_CAPABILITY, GitProvider, INSPECT_CAPABILITY,
-    VcsError, VcsFile, VcsScope, VcsSnapshot, WORKSPACE_CREATE_CAPABILITY, WorkspaceCreateResult,
-    WorkspaceSupport,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use vcs_git::{
+    CHANGES_CAPABILITY, DIFF_CAPABILITY, DIFF_PAGE_CAPABILITY, GitProvider, INSPECT_CAPABILITY,
+    REMOTES_CAPABILITY, VcsError, VcsFile, VcsScope, VcsSnapshot, WORKSPACE_CREATE_CAPABILITY,
+    WorkspaceCreateResult, WorkspaceSupport,
+};
 
 const PROTOCOL_VERSION: u32 = 1;
 const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
@@ -66,6 +66,7 @@ async fn dispatch(request: Request) -> Response {
         "vcs.diffPage" => diff_page_request(&request.params).await,
         "workspace.inspect" => workspace_inspect_request(&request.params).await,
         "workspace.create" => workspace_create_request(&request.params).await,
+        "vcs.remotes" => remotes_request(&request.params).await,
         _ => Err(ProviderError::MethodNotFound(request.method)),
     };
     match result {
@@ -79,6 +80,11 @@ async fn dispatch(request: Request) -> Response {
             request.id,
             WORKSPACE_NOT_OWNED,
             "workspace is not owned by Git",
+        ),
+        Err(ProviderError::Vcs(error @ VcsError::UnsupportedScope { .. })) => failure(
+            request.id,
+            vcs_git::UNSUPPORTED_SCOPE_CODE,
+            &error.to_string(),
         ),
         Err(ProviderError::MethodNotFound(method)) => {
             failure(request.id, -32_601, &format!("method not found: {method}"))
@@ -119,9 +125,16 @@ fn initialize(params: &Value) -> Result<Value, ProviderError> {
             CHANGES_CAPABILITY,
             DIFF_CAPABILITY,
             DIFF_PAGE_CAPABILITY,
-            WORKSPACE_CREATE_CAPABILITY
+            WORKSPACE_CREATE_CAPABILITY,
+            REMOTES_CAPABILITY
         ]
     }))
+}
+
+async fn remotes_request(params: &Value) -> Result<Value, ProviderError> {
+    let workspace = required_absolute_path(params, "workspace")?;
+    let remotes = GitProvider.remotes(&workspace).await?;
+    serde_json::to_value(remotes).map_err(|error| ProviderError::Protocol(error.to_string()))
 }
 
 async fn vcs_inspect_request(params: &Value) -> Result<Value, ProviderError> {
@@ -424,7 +437,8 @@ mod tests {
                 CHANGES_CAPABILITY,
                 DIFF_CAPABILITY,
                 DIFF_PAGE_CAPABILITY,
-                WORKSPACE_CREATE_CAPABILITY
+                WORKSPACE_CREATE_CAPABILITY,
+                REMOTES_CAPABILITY
             ])
         );
     }

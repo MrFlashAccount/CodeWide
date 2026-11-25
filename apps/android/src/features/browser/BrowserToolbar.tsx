@@ -2,7 +2,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { Pressable, View } from "react-native";
 import { useEvent } from "../../react/useEvent";
 import { colors, controlSize, iconSize } from "../../theme";
-import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
+import type { ActionMenuItem } from "../../ui/ActionMenu";
+import { OverflowMenu } from "../../ui/OverflowMenu";
 import { AppText } from "../../ui/Typography";
 import { BrowserAddressBar } from "./BrowserAddressBar";
 import { BrowserButton } from "./BrowserButton";
@@ -103,16 +104,13 @@ function BrowserOverflow(
     }
   });
   return (
-    <ActionMenu
+    <OverflowMenu
       accessibilityLabel="Browser menu"
       actions={actions}
       onSelect={selectAction}
+      tone="muted"
       triggerSize={MENU_TRIGGER_SIZE}
-    >
-      <Pressable accessibilityLabel="Browser menu" accessibilityRole="button" style={styles.button}>
-        <Ionicons color={colors.textMuted} name="ellipsis-horizontal" size={iconSize.action} />
-      </Pressable>
-    </ActionMenu>
+    />
   );
 }
 

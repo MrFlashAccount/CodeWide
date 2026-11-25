@@ -1,3 +1,4 @@
+import type { LayoutChangeEvent } from "react-native";
 import { WorkspaceRouteThreadList } from "./WorkspaceRouteThreadList";
 import {
   useWorkspaceListRouteResources,
@@ -24,14 +25,16 @@ export function WorkspaceListRoute({
 /** Places desktop catalog chrome and mobile route capabilities under one resource boundary. */
 export function WorkspaceListRouteShell({
   listProps,
+  onLayout,
   resources,
 }: {
   readonly listProps: ReturnType<typeof useWorkspaceListRouteResources>;
+  readonly onLayout: (event: LayoutChangeEvent) => void;
   readonly resources: WorkspaceRouteResources;
 }): React.JSX.Element {
   return (
     <WorkspaceListRouteContext.Provider value={listProps}>
-      <WorkspaceShell resources={resources} />
+      <WorkspaceShell onLayout={onLayout} resources={resources} />
     </WorkspaceListRouteContext.Provider>
   );
 }

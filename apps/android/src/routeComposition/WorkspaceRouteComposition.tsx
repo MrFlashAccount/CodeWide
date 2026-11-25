@@ -1,5 +1,7 @@
+import { OpenForgeLinkContext } from "../services/threads/openForgeLink";
+import { useOpenForgeLink } from "./useOpenForgeLink";
 import { useSelector } from "@legendapp/state/react";
-import { createElement, useEffect, useState, useSyncExternalStore } from "react";
+import { createElement, useEffect, useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { newChatDefaultServer } from "../features/projects/newChatEntry";
@@ -23,11 +25,11 @@ import { globalVoiceOrbStateForPhase } from "../features/globalSupervisor/global
 import { useBrowserFeedbackSubmission } from "../features/browser/feedbackSubmission";
 import { usePendingRequests } from "../features/requests/pendingRequests";
 import { GlobalSearchScreen } from "../features/search/GlobalSearchScreen";
+import { DownloadsSheet } from "../features/downloads/DownloadsSheet";
 import { ManageTerminalsSheet } from "../features/terminal/ManageTerminalsSheet";
 import { useThreadListActions } from "../features/threadList/threadListActions";
 import type { ThreadListSources } from "../features/threadList/threadListSources";
 import { useV1WorkspaceDeepLinks } from "../features/workspace/useV1WorkspaceDeepLinks";
-import { useWindowLayout } from "../features/workspace/useWindowLayout";
 import { useWorkspaceListBindings } from "../features/workspace/workspaceListBindings";
 import { useWorkspaceProjectBindings } from "../features/workspace/workspaceProjectBindings";
 import { useWorkspaceRuntime } from "../features/workspace/useWorkspaceRuntime";
@@ -52,15 +54,16 @@ import {
   threadRouteSessionOwner,
   workspaceRouteSessionOwner,
 } from "../services/threads/threadRouteParams";
-import { routeSessionSnapshot, subscribeRouteSessions } from "../services/routeSessionPolicy";
 import type { WorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import { useEvent } from "../react/useEvent";
 import { useAppNotice } from "../ui/useAppNotice";
 import type { AppVoiceInputRuntime } from "../ui/VoiceInputRuntime";
+import { useWorkspaceViewport } from "./useWorkspaceViewport";
 import { WorkspaceListRouteShell } from "./WorkspaceListRoute";
 import { ensureV1NewThreadRoute, useWorkspaceRouteModel } from "./WorkspaceRouteModel";
 import { workspaceCapabilities } from "./workspaceCapabilities";
 import { useAdaptiveSearchRoute } from "./useAdaptiveSearchRoute";
+import { useWorkspaceSearchSessionRetention } from "./useWorkspaceSearchSessionRetention";
 
 const SEARCH_REMOTE = {
   searchMessages: features.search.searchMessages.bind(features.search),
@@ -179,34 +182,23 @@ function sidebarSearchContent({
         });
 }
 
-function useSearchSessionRetention(sessionId: string | null): void {
-  useSyncExternalStore(subscribeRouteSessions, routeSessionSnapshot, routeSessionSnapshot);
-  useEffect(() => {
-    if (sessionId === null) {
-      return undefined;
-    }
-    // Search can briefly leave the active route while a selected result is pushed.
-    // Explicit close, workspace teardown, and idle expiry own its retirement.
-    return searchRouteSessions.retain(sessionId, workspaceRouteSessionOwner);
-  }, [sessionId]);
-}
-
 /** Composes the mounted V1 route resources, list chrome, and active destination slot. */
 export function WorkspaceRouteComposition(): React.JSX.Element {
   const [terminalsVisible, setTerminalsVisible] = useState(false);
+  const [downloadsOpenedAt, setDownloadsOpenedAt] = useState<number | null>(null);
   const [desktopSearchSessionId, setDesktopSearchSessionId] = useState<string | null | undefined>(
     undefined,
   );
-  const windowLayout = useWindowLayout();
-  const route = useWorkspaceRouteModel(windowLayout.desktop, desktopSearchSessionId);
+  const { desktop, onWorkspaceLayout, viewportWidth } = useWorkspaceViewport();
+  const route = useWorkspaceRouteModel(desktop, desktopSearchSessionId);
+  useWorkspaceSearchSessionRetention();
   const searchEntry =
     route.globalSearchSessionId === null
       ? null
       : searchRouteSessions.get(route.globalSearchSessionId, workspaceRouteSessionOwner);
-  const searchVisible =
-    route.pathname === "/search" || (windowLayout.desktop && searchEntry !== null);
+  const searchVisible = route.pathname === "/search" || (desktop && searchEntry !== null);
   const { closeGlobalSearch, openGlobalSearch } = useAdaptiveSearchRoute(
-    windowLayout.desktop,
+    desktop,
     route,
     setDesktopSearchSessionId,
   );
@@ -228,6 +220,7 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     threadListSources,
     threadRouter: route.threadRouter,
   });
+  const openForgeLink = useOpenForgeLink(list.settingsConnections);
   const project = useWorkspaceProjectBindings({
     connections,
     list,
@@ -285,6 +278,12 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
   });
   const closeTerminals = useEvent((): void => {
     setTerminalsVisible(false);
+  });
+  const openDownloads = useEvent((): void => {
+    setDownloadsOpenedAt(Date.now());
+  });
+  const closeDownloads = useEvent((): void => {
+    setDownloadsOpenedAt(null);
   });
   const selectTerminal = useEvent((terminal: NativeTerminalSession): void => {
     const params = v1ThreadRouteParams({
@@ -398,7 +397,7 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     browserFeedback,
     connectionActions,
     connections,
-    desktop: windowLayout.desktop,
+    desktop,
     insets,
     list,
     listActions,
@@ -411,7 +410,7 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     recovery,
     runtime,
     threadListSources,
-    viewportWidth: windowLayout.width,
+    viewportWidth,
   };
   const searchVoiceConnectionId = resolveSearchVoiceConnectionId(list.serverScope, list.servers);
   const startSearchVoiceTranscription = useEvent<NonNullable<AppVoiceInputRuntime["startRemote"]>>(
@@ -433,7 +432,6 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     searchEntry,
     startRemote: startSearchVoiceTranscription,
   });
-  useSearchSessionRetention(searchEntry?.id ?? null);
   const sidebarSearch = sidebarSearchContent({
     closeGlobalSearch,
     resources,
@@ -445,10 +443,11 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
 
   const threadListProps = {
     createSidebarThread,
-    desktop: windowLayout.desktop,
+    desktop,
     globalVoice,
     list,
     listActions,
+    openDownloads,
     openGlobalSearch,
     openProjects: () => {
       route.router.push("/projects");
@@ -462,11 +461,14 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     refreshThreadListAccountRateLimits,
     sidebarSearch,
     threadListSources,
-    viewportWidth: windowLayout.width,
   };
   return (
-    <>
-      <WorkspaceListRouteShell listProps={threadListProps} resources={resources} />
+    <OpenForgeLinkContext.Provider value={openForgeLink}>
+      <WorkspaceListRouteShell
+        listProps={threadListProps}
+        onLayout={onWorkspaceLayout}
+        resources={resources}
+      />
       <ManageTerminalsSheet
         onClose={closeTerminals}
         onCloseTerminal={closeTerminal}
@@ -475,6 +477,7 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
         threads={list.scopedThreads}
         visible={terminalsVisible}
       />
-    </>
+      <DownloadsSheet onClose={closeDownloads} openedAt={downloadsOpenedAt} />
+    </OpenForgeLinkContext.Provider>
   );
 }

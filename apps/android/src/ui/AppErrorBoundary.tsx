@@ -1,4 +1,5 @@
 import { appLogger } from "../observability/logger";
+import { startupSurfaceProps } from "../boot/startupSplash";
 import { spacing, typeScale, typeWeight, radii, controlSize, layoutSize } from "../theme";
 import { Component, type ErrorInfo, type ReactNode, useState, useSyncExternalStore } from "react";
 import {
@@ -157,7 +158,7 @@ export function RootFailure({
   };
 
   return (
-    <View style={styles.root} testID="root-error-boundary">
+    <View {...startupSurfaceProps} style={styles.root} testID="root-error-boundary">
       <View style={styles.badge}>
         <Text style={styles.badgeText}>!</Text>
       </View>

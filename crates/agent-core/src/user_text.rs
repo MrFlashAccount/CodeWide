@@ -5,8 +5,8 @@
 //! provider cleans its own text through [`UserTextCleaner`]
 //! (`AgentProvider::user_text_cleaner`). The companion picks the cleaner of a
 //! thread's provider and removes only what the companion itself adds: its
-//! file envelope ([`file_envelope`]) and a cross-provider fork's context
-//! handoff ([`is_companion_context`]).
+//! file envelope ([`file_envelope`]), a cross-provider fork's context handoff,
+//! and a delegated-task completion wake ([`is_companion_context`]).
 
 use std::path::Path;
 
@@ -54,6 +54,10 @@ pub struct FileEnvelope<'a> {
 /// form, still present in stored history.
 const REQUEST_HEADINGS: [&str; 2] = ["## My request:", "## My request for Codex:"];
 
+/// Prefix of a model-only delegated-task completion wake. The payload after
+/// this heading is owned and validated by the companion.
+pub const DELEGATED_TASK_CONTEXT_PREFIX: &str = "CodeWide delegated task completion:";
+
 /// The companion's file envelope (`# Files mentioned by the user:`, one
 /// `## name: /absolute/path` line per file, then a request heading), when the
 /// text is one.
@@ -96,11 +100,37 @@ fn file_mention(line: &str) -> Option<FileMention<'_>> {
         .then_some(FileMention { name, path })
 }
 
-/// Whether a text input is the companion's own model-only context: the
-/// context handoff a cross-provider fork prepends to its first turn.
+/// Start of the model-only PR identity block. Some history sources concatenate text blocks.
+pub const REVIEW_CHAT_OPEN: &str = "[CodeWide review chat]";
+/// End of the model-only PR identity block.
+pub const REVIEW_CHAT_CLOSE: &str = "[/CodeWide review chat]";
+
+/// Authored prefix when the companion's separate final PR context block is present.
+#[must_use]
+pub fn before_review_chat_context(text: &str) -> Option<&str> {
+    let body = text
+        .trim_end()
+        .strip_suffix(REVIEW_CHAT_CLOSE)?
+        .strip_suffix('\n')?;
+    let (authored, context) = body.rsplit_once(REVIEW_CHAT_OPEN)?;
+    (context.starts_with('\n') && (authored.is_empty() || authored.ends_with('\n')))
+        .then(|| authored.trim_end_matches('\n'))
+}
+
+/// Whether a text input is the companion's own model-only context: a fork
+/// handoff, PR review context, or a delegated-task completion wake.
 #[must_use]
 pub fn is_companion_context(text: &str) -> bool {
-    text.trim_start().starts_with("Context handoff (fork):")
+    let text = text.trim_start();
+    before_review_chat_context(text).is_some_and(str::is_empty)
+        || text.starts_with("Context handoff (fork):")
+        || text
+            .strip_prefix("Continue the unfinished work from the ")
+            .and_then(|rest| rest.split_once(" session.\n\n[CodeWide session handoff]\n"))
+            .is_some_and(|(provider, _)| !provider.is_empty() && !provider.contains('\n'))
+        || text
+            .strip_prefix(DELEGATED_TASK_CONTEXT_PREFIX)
+            .is_some_and(|payload| payload.starts_with('\n'))
 }
 
 /// The text shown for one user text input of a provider (thread-list
@@ -110,6 +140,7 @@ pub fn display_text(text: &str, cleaner: &dyn UserTextCleaner) -> Option<String>
     if is_companion_context(text) {
         return None;
     }
+    let text = before_review_chat_context(text).unwrap_or(text);
     let request = file_envelope(text).map_or(text, |envelope| envelope.request);
     match cleaner.clean(request) {
         CleanedText::Unchanged => Some(request.trim().to_owned()),
@@ -153,7 +184,29 @@ mod tests {
         assert_eq!(display_text("[wrapped] context", &Wrapped), None);
         assert_eq!(
             display_text(
+                "Continue the unfinished work from the Claude session.\n\n[CodeWide session handoff]\ncontext",
+                &NoUserTextFormats
+            ),
+            None
+        );
+        assert_eq!(
+            display_text(
+                "Continue the unfinished work from the Claude session.",
+                &NoUserTextFormats
+            )
+            .as_deref(),
+            Some("Continue the unfinished work from the Claude session.")
+        );
+        assert_eq!(
+            display_text(
                 "Context handoff (fork):\nUser: hi\n\nUser message:",
+                &NoUserTextFormats
+            ),
+            None
+        );
+        assert_eq!(
+            display_text(
+                "CodeWide delegated task completion:\n{\"version\":1}",
                 &NoUserTextFormats
             ),
             None

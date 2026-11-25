@@ -22,6 +22,10 @@ export const styles = StyleSheet.create({
     marginLeft: spacing.xs,
     transform: [{ translateY: spacing.optical }],
   },
+  conversationIdentitySubtitle: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   conversationTitle: {
     color: colors.text,
     ...typeScale.title,

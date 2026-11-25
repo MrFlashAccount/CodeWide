@@ -22,6 +22,12 @@ function choiceIsSelected(
   );
 }
 
+/** A suggested row leads with its reason; every row names its server and location. */
+function choiceSubtitle({ project, server }: ProjectPickerChoice, note: string | null): string {
+  const location = `${server.name} · ${project.path}${server.available ? "" : " · Offline"}`;
+  return note === null ? location : `${note} · ${location}`;
+}
+
 /** Section heading and count for the virtualized picker. */
 export function SectionLabel({ count, title }: { count: number; title: string }) {
   return (
@@ -36,6 +42,7 @@ export function ProjectChoiceRow({
   busy,
   choice,
   current,
+  note = null,
   onPin,
   onSelect,
   pinned = false,
@@ -45,6 +52,8 @@ export function ProjectChoiceRow({
   busy: boolean;
   choice: ProjectPickerChoice;
   current: ProjectDestination | null;
+  /** Why a suggested row is offered, shown before its location. */
+  note?: string | null;
   onPin?: (() => void) | undefined;
   onSelect: (destination: ProjectDestination) => void;
   pinned?: boolean;
@@ -75,7 +84,7 @@ export function ProjectChoiceRow({
       position={position}
       selected={selected}
       serverIconId={server.iconId}
-      subtitle={`${server.name} · ${project.path}${server.available ? "" : " · Offline"}`}
+      subtitle={choiceSubtitle(choice, note)}
       title={project.name}
     />
   );

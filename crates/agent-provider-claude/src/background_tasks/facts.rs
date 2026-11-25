@@ -1,6 +1,6 @@
 //! What a thread's own items say about one background task, and the task's
 //! status. A thread knows a task it launched (a `command` item naming it as
-//! its `backgroundTaskId`) or one reported to it (a `taskNotification` item
+//! its `background` task) or one reported to it (a `taskNotification` item
 //! with its task id); no other task's output is ever read for it. Pure.
 //!
 //! Status: the newest final report's status (an `interim` report is not
@@ -9,7 +9,9 @@
 
 use std::path::PathBuf;
 
-use agent_core::model::{AgentItem, AgentTurn, BackgroundTaskStatus, TaskNotificationStatus};
+use agent_core::model::{
+    AgentItem, AgentTurn, BackgroundCommand, BackgroundTaskStatus, TaskNotificationStatus,
+};
 
 use super::BackgroundTaskId;
 
@@ -72,7 +74,7 @@ impl TaskFacts {
                 }
             }
             AgentItem::Command {
-                background_task_id: Some(task_id),
+                background: Some(BackgroundCommand { task_id, .. }),
                 command,
                 output,
                 ..
@@ -157,7 +159,12 @@ mod tests {
             )),
             exit_code: Some(0),
             duration_ms: Some(3),
-            background_task_id: Some(task_id.into()),
+            background: Some(BackgroundCommand {
+                task_id: task_id.into(),
+                started_at: 1_760_000_100,
+                description: None,
+                state: agent_core::model::BackgroundCommandState::Running,
+            }),
         }
     }
 

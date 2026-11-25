@@ -1,5 +1,6 @@
 import { observable, type Observable } from "@legendapp/state";
 import { readQuestionDraft, writeQuestionDraft } from "../../../data/questionDraftStorage";
+import { readQuestionFiles } from "./questionFiles";
 import { unknownRecord } from "../../../data/unknownRecord";
 import {
   answerText,
@@ -122,7 +123,8 @@ export async function loadQuestionSession(
       if (
         interaction.questions.some(
           (question, index) =>
-            answerText(question, current.drafts[index] ?? { custom: "", selected: null }) === "",
+            answerText(question, current.drafts[index] ?? { custom: "", selected: null }) === "" &&
+            (current.drafts[index]?.attachments?.length ?? 0) === 0,
         )
       ) {
         return;
@@ -161,6 +163,7 @@ function restoreDraft(question: Question, value: unknown): AnswerDraft {
   }
   const row = unknownRecord(value);
   return {
+    ...readQuestionFiles(row?.attachments),
     custom: typeof row?.custom === "string" ? row.custom : "",
     selected: restoreSelection(question, row?.selected),
   };

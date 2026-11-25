@@ -138,9 +138,9 @@ Ownership documentation:
 
 ## Multi-provider pages
 
-Status: approved contract for the agent provider layer ([`docs/agent-providers.md`](agent-providers.md)); implementation in progress. The server-owned membership and opaque-cursor rules above stay unchanged for the primary (lead) provider.
+Status: approved contract for the agent provider layer ([`docs/agent-providers.md`](agent-providers.md)); implementation in progress. The server-owned membership and opaque-cursor rules above stay unchanged for the lead provider (the one declaring `codex.native`).
 
-When more than one provider is enabled, Companion merges `thread/list` from the lead (primary) provider and the other providers in `crates/companion-core/src/agent/client_wire/`. The callers' exact params are the contract: `apps/android/src/data/thread-catalog-loader.ts` and `packages/sync-client/src/session.ts`.
+When more than one provider is enabled, Companion merges `thread/list` from the lead provider and the other providers in `crates/companion-core/src/agent/client_wire/`. The callers' exact params are the contract: `apps/android/src/data/thread-catalog-loader.ts` and `packages/sync-client/src/session.ts`.
 
 Non-lead rows:
 

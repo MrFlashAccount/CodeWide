@@ -10,5 +10,6 @@ pub mod prices;
 pub mod probe;
 pub mod proxy_environment;
 pub mod published_limits;
+pub mod rate_limit_reset;
 pub mod recorded_model;
 pub mod running_sessions;

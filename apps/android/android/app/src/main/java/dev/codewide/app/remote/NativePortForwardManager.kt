@@ -1,6 +1,7 @@
 package dev.codewide.app.remote
 
 import android.content.Context
+import android.util.Log
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -179,8 +180,12 @@ internal class NativePortForwardManager(
         if (closed || pending.serverId in suspended ||
           (inventoryEpochs[pending.serverId] ?: 0L) != pending.generation) return
         availablePorts[pending.serverId] = discoveredByPort
-        inventoryReconciler.reconcile(pending.serverId, inventory)
+        val failures = inventoryReconciler.reconcile(pending.serverId, inventory)
         inventorySnapshots[pending.serverId] = envelope.toString()
+        // Only the exception type: messages may carry wire metadata.
+        failures.firstOrNull()?.let {
+          Log.w(TAG, "Port inventory applied with ${failures.size} failed entries (${it.javaClass.simpleName})")
+        }
       }
       CodeWideModule.emitPortForwardEvent(JSONObject().put("type", "inventory")
         .put("connectionId", pending.serverId).toString())
@@ -630,6 +635,7 @@ internal class NativePortForwardManager(
   }
 
   companion object {
+    private const val TAG = "CodeWidePortForward"
     private const val LISTENER_BACKLOG = 32
     private const val MAX_CLIENTS_PER_PROFILE = 64
     private const val MAX_ACTIVE_CLIENTS = 64

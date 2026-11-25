@@ -50,11 +50,19 @@ export type BooleanCapability = (typeof BOOLEAN_CAPABILITIES)[number];
  * such a fork.
  * `threads.backgroundTaskOutput`: the provider reads the output of a
  * background task a thread started (`thread.backgroundTask.read`).
+ * `orchestration.externalDelivery`: the provider can durably accept and
+ * deduplicate a non-user completion delivery. Absent keeps the host on the
+ * task-addressed `wait_task` fallback.
+ * `accounts.rateLimitResets`: the provider reports its banked subscription
+ * reset inventory in `ProviderRateLimits.resets` and consumes a selected grant
+ * through `companion/providerRateLimits/reset/consume`.
  */
 export const ADDITIVE_BOOLEAN_CAPABILITIES = [
   "orchestration.tools",
   "threads.crossProviderFork",
   "threads.backgroundTaskOutput",
+  "orchestration.externalDelivery",
+  "accounts.rateLimitResets",
 ] as const;
 
 export type AdditiveBooleanCapability = (typeof ADDITIVE_BOOLEAN_CAPABILITIES)[number];
@@ -90,8 +98,12 @@ export type CapabilitySet = Readonly<Record<BooleanCapability, boolean>> &
 export interface CodewideAgentThreadExtension {
   /** The provider's declared capability set. */
   readonly capabilities: CapabilitySet;
-  /** Whether the provider is the host's primary provider (no badge). */
-  readonly primary: boolean;
+  /**
+   * @deprecated Compatibility flag for published clients: `true` for the
+   * provider serving the native Codex surface. Current clients must not read
+   * it; the companion stops sending it once those builds are retired.
+   */
+  readonly primary?: boolean;
   /** Provider bound to the thread for its whole life. */
   readonly provider: string;
   /** Human-readable provider name, used only as badge text. */

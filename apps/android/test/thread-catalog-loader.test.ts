@@ -54,6 +54,49 @@ function client(response: unknown) {
 }
 
 describe("bounded thread catalog page", () => {
+  it("retries a rejected idempotent read three times with exponential backoff", async () => {
+    vi.useFakeTimers();
+    try {
+      const response = { data: [catalogThread("recovered")], nextCursor: null };
+      const rpc = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("first disconnect"))
+        .mockRejectedValueOnce(new Error("second disconnect"))
+        .mockRejectedValueOnce(new Error("third disconnect"))
+        .mockResolvedValue(response);
+      // WHY: RpcClient has a caller-selected generic result. This fixture exercises
+      // the idempotent transport retry before the normal wire adapter validates it.
+      const session = { rpc } as unknown as RpcClient;
+      const loaded = loadThreadCatalogPage(session, { archived: false, cursor: null });
+
+      await vi.advanceTimersByTimeAsync(250 + 500 + 1000);
+
+      await expect(loaded).resolves.toMatchObject({ nextCursor: null });
+      expect(rpc).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("surfaces the final read error after the three retries are exhausted", async () => {
+    vi.useFakeTimers();
+    try {
+      const rpc = vi.fn().mockRejectedValue(new Error("Companion unavailable"));
+      // WHY: RpcClient has a caller-selected generic result. This fixture exercises
+      // the idempotent transport retry before the normal wire adapter validates it.
+      const session = { rpc } as unknown as RpcClient;
+      const loaded = loadThreadCatalogPage(session, { archived: false, cursor: null });
+      const rejected = expect(loaded).rejects.toThrow("Companion unavailable");
+
+      await vi.advanceTimersByTimeAsync(250 + 500 + 1000);
+
+      await rejected;
+      expect(rpc).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("requests each project's own active or archived continuation from Companion", async () => {
     for (const archived of [false, true]) {
       const test = client({ data: [catalogThread("project-thread")], nextCursor: "project-next" });

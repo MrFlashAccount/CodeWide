@@ -7,7 +7,6 @@ import {
   recordedTurnChangeResources,
   recordedTurnResourcesValue,
   loadRecordedTurnChanges,
-  selectChangePresentation,
 } from "./changePresentation";
 import { CodeReviewWorkspace } from "../review/workspace/CodeReviewWorkspace";
 import type {
@@ -28,15 +27,14 @@ export function CurrentChangesRoute({
   readonly onClose: () => void;
   readonly request: CurrentChangesRouteRequest;
 }): React.JSX.Element {
-  const presentation = currentChangesPresentation(request);
-  const scope = presentation.scope;
+  const { resource, scope, scopes } = request.initialPresentation;
   const loading = currentChangesLoading(request, scope);
   const diff = currentChangesDiff(request);
   return (
     <CodeReviewWorkspace
-      changes={presentation.changes}
-      changeScope={presentation.changeScope}
-      changeScopes={presentation.changeScopes}
+      changes={resource?.changes ?? EMPTY_CHANGES}
+      changeScope={scope}
+      changeScopes={scopes}
       cwd={request.cwd}
       getTransferAccess={request.getTransferAccess}
       initialMode={request.preferences.mode}
@@ -48,26 +46,9 @@ export function CurrentChangesRoute({
       voiceRuntime={request.voiceRuntime}
       {...loading}
       {...diff}
-      {...(presentation.vcs === undefined ? {} : { vcs: presentation.vcs })}
+      {...(resource?.vcs === undefined ? {} : { vcs: resource.vcs })}
     />
   );
-}
-
-function currentChangesPresentation(request: CurrentChangesRouteRequest): {
-  readonly changes: ThreadChangeResource[];
-  readonly changeScope: ThreadChangeScope;
-  readonly changeScopes: ThreadChangeScope[];
-  readonly scope: ThreadChangeScope;
-  readonly vcs: ThreadResourcesValue["vcs"];
-} {
-  const selected = selectChangePresentation(request.initialResource, request.preferences.scope);
-  return {
-    changes: selected.resource?.changes ?? EMPTY_CHANGES,
-    changeScope: selected.scope,
-    changeScopes: selected.scopes,
-    scope: selected.scope,
-    vcs: selected.resource?.vcs,
-  };
 }
 
 function currentChangesDiff(request: CurrentChangesRouteRequest): {
@@ -88,7 +69,13 @@ function currentChangesLoading(
   }
   const loadResources = request.loadResources;
   return {
-    onInitialLoad: async () => loadResources(scope, "changes"),
+    onInitialLoad: async () =>
+      loadResources(
+        request.initialPresentation.resource === null
+          ? (request.preferences.scope ?? undefined)
+          : scope,
+        "changes",
+      ),
     onLoadScope: async (nextScope) => loadResources(nextScope, "changes"),
   };
 }

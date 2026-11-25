@@ -17,33 +17,29 @@ export type MarkdownDocumentBlock = {
 
 /** Parser segments bound parsing; individual Markdown blocks bound mounting. */
 export function markdownDocumentBlocks(segments: readonly string[]): MarkdownDocumentBlock[] {
-  const blocks: MarkdownDocumentBlock[] = [];
-  for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
-    const segment = segments[segmentIndex];
-    if (segment === undefined) {
-      continue;
-    }
-    const parsed = parseRichMarkdown(segment);
-    const imageOrder = collectMarkdownImageOrder(parsed.root);
-    const reviewPathPrefix = `segment-${String(segmentIndex)}`;
-    for (let blockIndex = 0; blockIndex < parsed.root.children.length; blockIndex += 1) {
-      const node = parsed.root.children[blockIndex];
-      if (node === undefined) {
-        continue;
-      }
-      const path = `${node.type}-${String(blockIndex)}`;
-      blocks.push({
-        blockIndex,
-        imageOrder,
-        key: `${reviewPathPrefix}/${path}`,
-        node,
-        path,
-        reviewPathPrefix,
-        segmentIndex,
-      });
-    }
-  }
-  return blocks;
+  return segments.flatMap((segment, segmentIndex) => markdownSegmentBlocks(segment, segmentIndex));
+}
+
+/** The viewport items of one parser segment, addressed by its index in the document. */
+export function markdownSegmentBlocks(
+  segment: string,
+  segmentIndex: number,
+): MarkdownDocumentBlock[] {
+  const parsed = parseRichMarkdown(segment);
+  const imageOrder = collectMarkdownImageOrder(parsed.root);
+  const reviewPathPrefix = `segment-${String(segmentIndex)}`;
+  return parsed.root.children.map((node, blockIndex) => {
+    const path = `${node.type}-${String(blockIndex)}`;
+    return {
+      blockIndex,
+      imageOrder,
+      key: `${reviewPathPrefix}/${path}`,
+      node,
+      path,
+      reviewPathPrefix,
+      segmentIndex,
+    };
+  });
 }
 
 /** Resolves source-line navigation before the destination viewport is mounted. */

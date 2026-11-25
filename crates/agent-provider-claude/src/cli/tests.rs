@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use super::{
     command::{QueryOptions, SessionIdentity, profile_options},
     process::{ClaudeProcess, ProcessError, ProcessEvent},
-    protocol::{ControlRequest, Priority},
+    protocol::{Author, ControlRequest, Priority},
 };
 use crate::test_scripts::fake_claude;
 
@@ -38,6 +38,7 @@ fn fake(directory: &Path, script: &str) -> QueryOptions {
         profile: profile_options(":workspace").unwrap_or_else(|| unreachable!()),
         identity: SessionIdentity::New("s1".into()),
         client_tools: true,
+        session_instructions: None,
     }
 }
 
@@ -82,7 +83,12 @@ async fn drives_the_control_protocol_and_reports_the_exit() {
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     process
-        .send_user(&json!("hello"), Some("u1"), Priority::Queued)
+        .send_user(
+            &json!("hello"),
+            Some("u1"),
+            Priority::Queued,
+            Author::Person,
+        )
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     assert!(matches!(

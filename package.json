@@ -20,6 +20,8 @@
     "test:android-device": "tsx scripts/android-device-gate.ts",
     "android:gradle": "sh scripts/android-gradle.sh",
     "dev:android": "sh scripts/android-fast-refresh.sh",
+    "dev:android:agent": "./scripts/android-agent/start",
+    "test:android:notifications": "./scripts/android-agent/notifications",
     "build:android-apk": "tsx scripts/build-android-apk.ts",
     "release:plan": "node scripts/release-plan.ts",
     "release:set-plan": "node scripts/release-set-plan.ts",
@@ -79,9 +81,12 @@
       "react-native-enriched-markdown@1.0.2": "patches/react-native-enriched-markdown@1.0.2.patch",
       "expo-video@57.0.3": "patches/expo-video@57.0.3.patch",
       "expo-status-bar@57.0.1": "patches/expo-status-bar@57.0.1.patch",
+      "react-native-reanimated@4.5.1": "patches/react-native-reanimated@4.5.1.patch",
       "react-native-webrtc@124.0.8": "patches/react-native-webrtc@124.0.8.patch",
       "react-native-keyboard-controller@1.21.9": "patches/react-native-keyboard-controller@1.21.9.patch",
-      "@legendapp/list@3.4.0": "patches/@legendapp__list@3.4.0.patch"
+      "@legendapp/list@3.4.0": "patches/@legendapp__list@3.4.0.patch",
+      "@pierre/trees@1.0.0": "patches/@pierre__trees@1.0.0.patch",
+      "react-native-screens@4.26.0": "patches/react-native-screens@4.26.0.patch"
     }
   }
 }

@@ -3,7 +3,10 @@ import { projectedThreadExecutionSettings } from "@codewide/sync-client";
 import type { TurnControlsSection, TurnControlsValue } from "../../data/turn-controls-types";
 
 export function executionPermissionsLabel(
-  settings: ReturnType<typeof projectedThreadExecutionSettings>,
+  settings: Pick<
+    NonNullable<ReturnType<typeof projectedThreadExecutionSettings>>,
+    "approvalPolicy" | "permissions" | "sandboxPolicy"
+  > | null,
   pending = true,
 ): string {
   if (settings?.permissions !== null && settings?.permissions !== undefined) {
@@ -18,7 +21,9 @@ export function executionPermissionsLabel(
           ? "Read only"
           : settings?.sandboxPolicy === "externalSandbox"
             ? "External sandbox"
-            : null;
+            : settings?.sandboxPolicy === "managed"
+              ? "Managed access"
+              : null;
   const approval =
     settings?.approvalPolicy === "on-request"
       ? "Ask"
@@ -28,7 +33,9 @@ export function executionPermissionsLabel(
           ? null
           : settings?.approvalPolicy === "granular"
             ? "Granular"
-            : null;
+            : settings?.approvalPolicy === "on-failure"
+              ? "On failure"
+              : null;
   if (sandbox !== null && approval !== null) {
     return `${sandbox} · ${approval}`;
   }

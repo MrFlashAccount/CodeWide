@@ -1,13 +1,12 @@
-import { createElement, useState } from "react";
+import { createElement } from "react";
 import { Pressable, View } from "react-native";
 import { subagentDisplayName } from "../../data/subagent-projection";
 import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import { useEvent } from "../../react/useEvent";
 import { colors } from "../../theme";
 import { AgentAvatar, AgentAvatarStack, type AgentAvatarSubject } from "../../ui/AgentAvatar";
-import { AnchoredMenuList, AnchoredMenuRow } from "../../ui/AnchoredMenuList";
-import { ContentMenu } from "../../ui/ContentMenu";
-import { useAnchoredMenuSize } from "../../ui/useAnchoredMenuSize";
+import { AnchoredMenuRow } from "../../ui/AnchoredMenuList";
+import { TaskPillPicker } from "../../ui/TaskPillPicker";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./WorkingSubagentsMenu.styles";
 
@@ -15,8 +14,7 @@ type WorkingSubagent = AgentAvatarSubject & { readonly threadId: string };
 
 /**
  * The subagents still working, floating beside the live plan: their avatars
- * and a count; nothing while none works. It opens the list of those agents,
- * each row opening its child. Status comes from the child threads, so a launch
+ * and a count. One opens its chat directly; several open a list. Status comes from the child threads, so a launch
  * alone never reads as a result.
  */
 export function WorkingSubagentsMenu({
@@ -27,44 +25,46 @@ export function WorkingSubagentsMenu({
   readonly onOpen: (threadId: string) => void;
   readonly working: readonly StoredThreadSummary[];
 }): React.JSX.Element | null {
-  const [open, setOpen] = useState(false);
-  const menu = useAnchoredMenuSize();
   const agents = working.map((summary): WorkingSubagent => ({
     kind: "agent",
     name: subagentDisplayName(summary),
     threadId: summary.remoteThreadId,
   }));
-  const toggleOpen = useEvent(() => {
-    setOpen((current) => !current);
-  });
-  const openChild = useEvent((threadId: string) => {
-    setOpen(false);
-    onOpen(threadId);
-  });
-  const trigger = createElement(WorkingSubagentsTrigger, {
-    agents,
-    onPress: toggleOpen,
-    open,
-  });
-  if (agents.length === 0) {
-    return null;
-  }
+  const rows = (close: () => void) =>
+    agents.map((agent) => (
+      <WorkingSubagentRow agent={agent} close={close} key={agent.threadId} onOpen={onOpen} />
+    ));
   return (
-    <ContentMenu
-      align="center"
-      onOpenChange={setOpen}
-      open={open}
+    <TaskPillPicker
+      entries={agents}
+      listTestID="working-subagents-list"
       placement="top"
-      trigger={trigger}
-      width={menu.width}
+      renderSingle={(agent) => (
+        <SingleWorkingSubagent agent={agent} agents={agents} onOpen={onOpen} />
+      )}
+      renderTrigger={(open, toggle) =>
+        createElement(WorkingSubagentsTrigger, { agents, onPress: toggle, open })
+      }
+      title="Working now"
     >
-      <AnchoredMenuList testID="working-subagents-list" title="Working now">
-        {agents.map((agent) => (
-          <WorkingSubagentRow agent={agent} key={agent.threadId} onOpen={openChild} />
-        ))}
-      </AnchoredMenuList>
-    </ContentMenu>
+      {rows}
+    </TaskPillPicker>
   );
+}
+
+function SingleWorkingSubagent({
+  agent,
+  agents,
+  onOpen,
+}: {
+  readonly agent: WorkingSubagent;
+  readonly agents: readonly WorkingSubagent[];
+  readonly onOpen: (threadId: string) => void;
+}): React.JSX.Element {
+  const press = useEvent(() => {
+    onOpen(agent.threadId);
+  });
+  return <WorkingSubagentsTrigger agents={agents} onPress={press} open={null} />;
 }
 
 function WorkingSubagentsTrigger({
@@ -74,15 +74,17 @@ function WorkingSubagentsTrigger({
 }: {
   readonly agents: readonly WorkingSubagent[];
   readonly onPress: () => void;
-  readonly open: boolean;
+  readonly open: boolean | null;
 }): React.JSX.Element {
   const label = `${String(agents.length)} working`;
   return (
     <Pressable
-      accessibilityHint="Shows the subagents still working"
+      accessibilityHint={
+        open === null ? "Opens the working subagent’s chat" : "Shows the subagents still working"
+      }
       accessibilityLabel={`Agents, ${label}`}
       accessibilityRole="button"
-      accessibilityState={{ expanded: open }}
+      accessibilityState={open === null ? {} : { expanded: open }}
       onPress={onPress}
       style={({ pressed }) => [styles.trigger, pressed && styles.pressed]}
       testID="working-subagents-chip"
@@ -104,12 +106,15 @@ function WorkingSubagentsTrigger({
 
 function WorkingSubagentRow({
   agent,
+  close,
   onOpen,
 }: {
   readonly agent: WorkingSubagent;
+  readonly close: () => void;
   readonly onOpen: (threadId: string) => void;
 }): React.JSX.Element {
   const press = useEvent(() => {
+    close();
     onOpen(agent.threadId);
   });
   return (

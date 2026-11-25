@@ -1,24 +1,32 @@
 import { Ionicons } from "@expo/vector-icons";
-import { ActivityIndicator, findNodeHandle, Pressable } from "react-native";
+import type { RefObject } from "react";
+import { ActivityIndicator, findNodeHandle, Pressable, type View } from "react-native";
 import { setNativeVoiceAuraOrigin } from "../../native/native-transport";
 import { colors, iconSize } from "../../theme";
-import type { ComposerFeatureProps } from "./ComposerFeatureContract";
 import { styles } from "./ComposerMicrophone.styles";
 
-type Props = Pick<
-  ComposerFeatureProps,
-  | "microphoneButtonRef"
-  | "editingQueuedMessage"
-  | "voicePhase"
-  | "voiceDisabled"
-  | "voiceRetryAvailable"
-  | "retryVoice"
-  | "toggleVoice"
-  | "finishVoice"
-  | "microphoneAccess"
->;
+/**
+ * The composer's microphone control over one retained voice input. It owns no
+ * recording state: the caller binds its own input scope and supplies the phase
+ * and actions, so the chat composer and the review line composer share it.
+ */
+export type ComposerMicrophoneProps = {
+  /** The owning input cannot record right now (for example a queued message is being edited). */
+  readonly disabled: boolean;
+  /** Stops the recording and inserts its transcript (`false`) or sends it (`true`). */
+  readonly finishVoice: (sendAfter: boolean) => Promise<void>;
+  readonly microphoneAccess: { readonly allowCapture: () => boolean; readonly granted: boolean };
+  readonly microphoneButtonRef: RefObject<View | null>;
+  readonly retryVoice: () => Promise<void>;
+  readonly toggleVoice: () => Promise<void>;
+  /** Another input owns the microphone and the hand-off policy forbids taking it. */
+  readonly voiceDisabled: boolean;
+  readonly voicePhase: "idle" | "starting" | "recording" | "finishing";
+  readonly voiceRetryAvailable: boolean;
+};
+
 export function ComposerMicrophone({
-  editingQueuedMessage,
+  disabled,
   finishVoice,
   microphoneAccess,
   microphoneButtonRef,
@@ -27,7 +35,7 @@ export function ComposerMicrophone({
   voiceDisabled,
   voicePhase,
   voiceRetryAvailable,
-}: Props) {
+}: ComposerMicrophoneProps) {
   const handoffDisabled = voiceDisabled && voicePhase === "idle" && !voiceRetryAvailable;
   return (
     <Pressable
@@ -41,11 +49,7 @@ export function ComposerMicrophone({
             : "Stop voice input and insert transcript"
       }
       accessibilityRole="button"
-      disabled={
-        editingQueuedMessage ||
-        handoffDisabled ||
-        (voicePhase === "finishing" && !voiceRetryAvailable)
-      }
+      disabled={disabled || handoffDisabled || (voicePhase === "finishing" && !voiceRetryAvailable)}
       hitSlop={6}
       onPress={() =>
         void (voiceRetryAvailable
@@ -62,12 +66,13 @@ export function ComposerMicrophone({
       ref={microphoneButtonRef}
       style={[
         styles.composerIcon,
-        (editingQueuedMessage ||
+        (disabled ||
           handoffDisabled ||
           (voicePhase === "idle" && !microphoneAccess.granted && !voiceRetryAvailable) ||
           (voicePhase === "finishing" && !voiceRetryAvailable)) &&
           styles.disabled,
       ]}
+      testID="composer-microphone"
     >
       {voicePhase === "starting" ? (
         <ActivityIndicator color={colors.textMuted} size="small" />

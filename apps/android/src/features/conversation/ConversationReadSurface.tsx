@@ -13,6 +13,7 @@ import { TimelineViewport } from "./timeline/TimelineViewportView";
 /** Projects authoritative thread data into the read-only conversation surface. */
 export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
   const read = useReadConversationTimelineBindings({
+    historyViewport: props.historyViewport,
     overlayState: props.overlayState,
     remoteThread: props.remoteThread,
     server: props.server,
@@ -68,7 +69,7 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
     read.presentation.liveTurnPlan !== null &&
     timelinePositioned &&
     !read.searchProjection.threadSearchActive;
-  const timelineContent = (
+  const timelineContent = rows.withTimelineResources(
     <TimelineViewport
       {...props.viewport}
       {...read.search}
@@ -116,7 +117,7 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
       timelinePositioned={timelinePositioned}
       timelineViewportRef={props.viewport.timelineViewportRef}
       windowLayout={read.windowLayout}
-    />
+    />,
   );
   const headerContent = (
     <ReadSurfaceHeader
@@ -126,6 +127,7 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
       dismissComposerKeyboardForOverlay={props.overlay.dismissComposerKeyboardForOverlay}
       draftConnectionId={read.connectionId}
       draftThreadId={props.thread.id}
+      identitySubtitle={props.headerSubtitle}
       onBack={props.onBack}
       remoteThread={props.remoteThread}
       server={props.server}

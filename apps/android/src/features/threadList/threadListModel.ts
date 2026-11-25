@@ -3,6 +3,7 @@ import { useThreadListPageRequest } from "./threadListPageRequest";
 import type { ThreadListSources } from "./threadListSources";
 import { useThreadSummaryView } from "../../data/use-thread-summary-view";
 import { threadListLayout } from "../../ui/thread-list-layout";
+import { CATALOG_ROW_CELL_HEIGHT } from "../../ui/CatalogRow.styles";
 import { threadSelectionKey } from "../../services/threads/threadRouteParams";
 import type { SidebarProject, SidebarProjectActions } from "../projects/sidebarProjects";
 import { sidebarListState, type SidebarListState } from "./SidebarListFeedback";
@@ -73,11 +74,9 @@ export function sidebarRowKey(row: ThreadListRow): string {
   return threadSelectionKey(row.thread);
 }
 
-export const THREAD_LIST_ROW_CONTENT_HEIGHT = threadListLayout.rowContentHeight;
-
 export const THREAD_LIST_ROW_VERTICAL_MARGIN = threadListLayout.rowVerticalMargin;
 
-const THREAD_LIST_ROW_HEIGHT = THREAD_LIST_ROW_CONTENT_HEIGHT + THREAD_LIST_ROW_VERTICAL_MARGIN * 2;
+const THREAD_LIST_ROW_HEIGHT = CATALOG_ROW_CELL_HEIGHT;
 
 export const THREAD_LIST_SECTION_HEIGHT = threadListLayout.sectionHeight;
 

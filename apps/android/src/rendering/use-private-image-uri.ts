@@ -7,8 +7,17 @@ import type {
 } from "../data/private-transfer";
 import { materializePrivateAsset } from "./private-asset";
 import { useAsyncResource } from "./async-resource-store";
+import { imageReferenceIdentity } from "./imageReferenceIdentity";
 import { privateImageResourceKey } from "./private-image-resource-key";
 import { incrementMetric, recordTiming } from "../data/operational-metrics";
+import { cachedDirectImage } from "../native/attachment-cache/cached-transfer";
+import { checkAborted } from "../native/check-aborted";
+import { loadDirectImage } from "./directImage";
+import {
+  type DirectImageGrant,
+  type DirectImageSources,
+  useDirectImageSources,
+} from "./directImageSources";
 
 type ResolvedImageSource = { headers?: Record<string, string>; uri: string };
 type PrivateImageLoadState = {
@@ -91,13 +100,119 @@ export function usePrivateFileAccessScope(): string {
   return useContext(PrivateFileAccessScopeContext);
 }
 
+/**
+ * One remote image reference. When the nearest {@link DirectImageSources} owner grants the
+ * reference a credential-free URL, it loads directly and is cached under the grant's stable
+ * identity, falling back to the private asset path once on failure. Every other reference
+ * keeps the private asset path.
+ */
 export function usePrivateImageUri(
   sourceUri: string | null,
   sourceHeaders?: Record<string, string>,
   revision = 0,
 ): PrivateImageSource {
-  const source = sourceUri === null ? null : imageAssetSource(sourceUri, sourceHeaders);
-  return usePrivateAssetUri(source, { revision });
+  const direct = directImageRequest(sourceUri, sourceHeaders, useDirectImageSources());
+  const source =
+    sourceUri === null || direct !== null ? null : imageAssetSource(sourceUri, sourceHeaders);
+  const privateImage = usePrivateAssetUri(source, { revision });
+  const directImage = useDirectImageUri(direct, revision);
+  return direct === null ? privateImage : directImage;
+}
+
+type DirectImageRequest = {
+  readonly grant: DirectImageGrant;
+  readonly reference: string;
+  readonly sources: DirectImageSources;
+};
+
+function directImageRequest(
+  reference: string | null,
+  headers: Record<string, string> | undefined,
+  sources: DirectImageSources | null,
+): DirectImageRequest | null {
+  if (reference === null || headers !== undefined || sources === null) {
+    return null;
+  }
+  const grant = sources.grant(reference);
+  return grant === null ? null : { grant, reference, sources };
+}
+
+/** The resource identity omits the grant URL: a refreshed URL for the same image is the same image. */
+function useDirectImageUri(
+  request: DirectImageRequest | null,
+  revision: number,
+): PrivateImageSource {
+  const getAccess = useContext(PrivateImageAccessContext);
+  const key =
+    request === null
+      ? null
+      : `direct-image:${request.sources.cacheScope}:${String(revision)}:${imageReferenceIdentity(request.grant, request.grant.identity)}`;
+  const resource = useAsyncResource<PrivateImageLoadState>(
+    key,
+    key ?? "none",
+    async (_publish, signal) => loadGrantedImage(request, getAccess, signal),
+  );
+  const state = currentPrivateImageState(resource.status, resource.value);
+  return {
+    detail: null,
+    failed: state.failed,
+    headers: state.headers,
+    source: state.source,
+    uri: state.uri,
+  };
+}
+
+async function loadGrantedImage(
+  request: DirectImageRequest | null,
+  getAccess: GetTransferAccess | null,
+  signal: AbortSignal,
+): Promise<PrivateImageLoadState> {
+  if (request === null) {
+    return EMPTY_PRIVATE_IMAGE;
+  }
+  const startedAt = performance.now();
+  try {
+    const { uri } = await loadDirectImage({
+      grant: request.grant,
+      now: Date.now,
+      read: cachedDirectImage,
+      reference: request.reference,
+      signal,
+      sources: request.sources,
+    });
+    if (!signal.aborted) {
+      recordTiming("image_materialize_ms", performance.now() - startedAt);
+    }
+    return { failed: false, headers: {}, source: { headers: {}, uri }, uri };
+  } catch (error) {
+    checkAborted(signal);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw error;
+    }
+    return loadGrantedImageFallback(request.reference, getAccess, signal);
+  }
+}
+
+/** A terminal fallback result prevents the resource store from restarting either path. */
+async function loadGrantedImageFallback(
+  reference: string,
+  getAccess: GetTransferAccess | null,
+  signal: AbortSignal,
+): Promise<PrivateImageLoadState> {
+  try {
+    return await loadPrivateImage({
+      getAccess,
+      signal,
+      source: { kind: "remote", url: reference },
+      variant: "preview",
+    });
+  } catch (error) {
+    checkAborted(signal);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw error;
+    }
+    return FAILED_PRIVATE_IMAGE;
+  }
 }
 
 export function usePrivateAssetUri(
@@ -115,10 +230,14 @@ export function usePrivateAssetUri(
   const getAccess = accessOverride ?? inheritedAccess;
   const inheritedAccessScope = usePrivateFileAccessScope();
   const accessScope = accessScopeOverride ?? inheritedAccessScope;
-  const identity = privateImageIdentity({ accessScope, revision, source, variant });
+  const { detail, key } = privateImageRequests(
+    source,
+    { accessScope, getAccess, revision },
+    variant,
+  );
   const resource = useAsyncResource<PrivateImageLoadState>(
-    identity.key,
-    identity.key ?? "none",
+    key,
+    key ?? "none",
     async (_publish, signal) =>
       loadPrivateImage({
         getAccess,
@@ -129,10 +248,6 @@ export function usePrivateAssetUri(
       }),
   );
   const state = currentPrivateImageState(resource.status, resource.value);
-  const detail =
-    variant === "preview"
-      ? createPrivateImageDetailRequest(source, { accessScope, getAccess, revision })
-      : null;
   return {
     detail,
     failed: state.failed,
@@ -152,23 +267,18 @@ function currentPrivateImageState(
   return value ?? EMPTY_PRIVATE_IMAGE;
 }
 
-function privateImageIdentity({
-  accessScope,
-  revision,
-  source,
-  variant,
-}: {
-  accessScope: string;
-  revision: number;
-  source: PrivateAssetSource | null;
-  variant: PrivateAssetImageVariant;
-}): { key: string | null } {
+function privateImageRequests(
+  source: PrivateAssetSource | null,
+  options: PrivateImageDetailOptions,
+  variant: PrivateAssetImageVariant,
+): { readonly detail: PrivateImageDetailRequest | null; readonly key: string | null } {
   if (source === null) {
-    return { key: null };
+    return { detail: null, key: null };
   }
   const sourceKey = privateImageResourceKey(source);
   return {
-    key: `private-asset:${accessScope}:${String(revision)}:${variant}:${sourceKey}`,
+    detail: variant === "preview" ? privateImageDetailRequest(source, options, sourceKey) : null,
+    key: `private-asset:${options.accessScope}:${String(options.revision)}:${variant}:${sourceKey}`,
   };
 }
 
@@ -177,10 +287,18 @@ export function createPrivateImageDetailRequest(
   source: PrivateAssetSource | null,
   options: PrivateImageDetailOptions,
 ): PrivateImageDetailRequest | null {
+  return privateImageDetailRequest(source, options, null);
+}
+
+function privateImageDetailRequest(
+  source: PrivateAssetSource | null,
+  options: PrivateImageDetailOptions,
+  previewKey: string | null,
+): PrivateImageDetailRequest | null {
   if (source === null || source.kind === "direct" || options.getAccess === null) {
     return null;
   }
-  const sourceKey = privateImageResourceKey(source);
+  const sourceKey = previewKey ?? privateImageResourceKey(source);
   return {
     accessScope: options.accessScope,
     getAccess: options.getAccess,
@@ -234,6 +352,9 @@ async function loadPrivateImage({
 function imageAssetSource(uri: string, headers?: Record<string, string>): PrivateAssetSource {
   if (headers !== undefined) {
     return { headers, kind: "direct", uri };
+  }
+  if (uri.startsWith("data:") || uri.startsWith("file:")) {
+    return { kind: "direct", uri };
   }
   try {
     const url = new URL(uri);

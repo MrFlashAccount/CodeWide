@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, type ReactElement } from "react";
+import { QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
+import { useContext, useLayoutEffect, useRef, type ReactElement } from "react";
 
 import { useConstant } from "../../react/useConstant";
 import { useEvent } from "../../react/useEvent";
@@ -13,14 +14,24 @@ type RouteFullscreenOverlayProps = {
   readonly scope: string;
 };
 
-/** Projects a Router-owned destination into the application fullscreen window. */
+/** Projects a route into the application window with its existing query client. */
 export function RouteFullscreenOverlay({
   onDismiss,
   render,
   scope,
 }: RouteFullscreenOverlayProps): null {
   const mountedRef = useRef(false);
-  const renderRoute = useEvent((close: () => void): ReactElement | null => render(close));
+  // The host is outside the workspace provider. Preserve this route's client,
+  // without creating another cache or requiring queries in a query-free route.
+  const queryClient = useContext(QueryClientContext);
+  const renderRoute = useEvent((close: () => void): ReactElement | null => {
+    const content = render(close);
+    return queryClient === undefined ? (
+      content
+    ) : (
+      <QueryClientProvider client={queryClient}>{content}</QueryClientProvider>
+    );
+  });
   const dismissRoute = useEvent(() => {
     if (mountedRef.current) {
       onDismiss();

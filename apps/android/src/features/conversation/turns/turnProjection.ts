@@ -179,7 +179,7 @@ export function turnActivityLabel(
   count?: number,
 ): string {
   const labels: string[] = [];
-  if (kinds.some((kind) => kind === "fileChange" || kind === "turnDiff" || kind === "diff")) {
+  if (kinds.some((kind) => kind === "fileChange" || kind === "diff")) {
     labels.push("Edited files");
   }
   if (kinds.some((kind) => kind === "commandExecution" || kind === "terminal")) {
@@ -240,26 +240,12 @@ export function turnMetadataBlocks(scope: string, turn: Thread["turns"][number])
       tone: "info",
     });
   }
-  if (metadata.diff !== undefined) {
-    blocks.push({
-      body: metadata.diff,
-      collapsible: true,
-      content: null,
-      durationMs: null,
-      key: `${scope}/${turn.id}/live-diff`,
-      kind: "turnDiff",
-      raw: { diff: metadata.diff, id: "codewide:turnDiff" },
-      status: null,
-      title: "Turn diff",
-      tone: "neutral",
-    });
-  }
   return blocks;
 }
 
 import { projectAgentArtifacts } from "../../../rendering/agent-artifacts";
 import {
-  attachmentSourceKey,
+  attachmentRenderKey,
   type UserMessageAttachment,
 } from "../../../rendering/user-message-attachments";
 import type { ContentReviewTarget } from "../../../rendering/content-review";
@@ -267,7 +253,10 @@ import {
   projectCachedLiveMarkdown,
   type LiveMarkdownProjection,
 } from "../../../rendering/live-text-stream";
-import { richMarkdownLayout } from "../../../rendering/rich-markdown-layout";
+import {
+  completeMarkdownLayout,
+  richMarkdownLayout,
+} from "../../../rendering/rich-markdown-layout";
 import { isAgentMessageStillStreaming } from "../../../rendering/thread-render-window";
 import { activeTurnSequence } from "../../../rendering/turn-sequence";
 
@@ -458,13 +447,15 @@ function prepareTurnPresentation(turn: TurnRow) {
         (block) => block.kind === "collabAgentToolCall" || block.kind === "subAgentActivity",
       ),
   );
+  const responseLayout =
+    rawTurn.status === "inProgress" ? richMarkdownLayout : completeMarkdownLayout;
   const agentBubbleFill =
     hasQuestions ||
     artifacts.length > 0 ||
     hasDisclosedBubbleActivity ||
     hasSubagentRows ||
     (latestAgentTextReference?.byteLength ?? 0) > 0 ||
-    (hasGeneratedAgentResponse && richMarkdownLayout(latestAgentBlock?.body ?? "") === "fill");
+    (hasGeneratedAgentResponse && responseLayout(copyText) === "fill");
   const hasAgentContent =
     hasQuestions ||
     (rawTurn.status !== "inProgress"
@@ -544,7 +535,7 @@ function sameAttachments(
         candidate !== undefined &&
         value.kind === candidate.kind &&
         value.name === candidate.name &&
-        attachmentSourceKey(value.source) === attachmentSourceKey(candidate.source)
+        attachmentRenderKey(value.source) === attachmentRenderKey(candidate.source)
       );
     })
   );

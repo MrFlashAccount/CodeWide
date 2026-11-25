@@ -40,6 +40,7 @@ export type ThreadUiStateDatabase = {
     offset: number,
     historyAnchorTurnId: string | null,
     historyAnchorOffsetPx: number | null,
+    historyAnchorRowKey?: string | null,
   ) => Promise<void>;
   // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
   // oxlint-disable-next-line eslint/max-params

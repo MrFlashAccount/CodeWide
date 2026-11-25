@@ -168,19 +168,15 @@ function selectUnreadAgentTurnId(
   if (unread <= 0) {
     return null;
   }
-  return (
-    recordedUnreadAgentTurnId(timeline, firstUnreadAgentTurnId) ??
-    latestCompletedAgentTurnId(timeline)
-  );
+  return firstUnreadAgentTurnId === null
+    ? latestCompletedAgentTurnId(timeline)
+    : recordedUnreadAgentTurnId(timeline, firstUnreadAgentTurnId);
 }
 
 function recordedUnreadAgentTurnId(
   timeline: readonly TimelineItem[],
-  firstUnreadAgentTurnId: string | null,
+  firstUnreadAgentTurnId: string,
 ): string | null {
-  if (firstUnreadAgentTurnId === null) {
-    return null;
-  }
   const anchored = timeline.find(
     (item) => item.kind === "turn" && item.id === firstUnreadAgentTurnId,
   );

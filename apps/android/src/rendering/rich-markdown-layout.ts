@@ -1,14 +1,44 @@
 import type { ListItem, PhrasingContent, RootContent } from "mdast";
-import { parseRichMarkdown } from "@codewide/rendering-core";
+import {
+  parseRichMarkdown,
+  projectCompleteMarkdown,
+  TARGET_MARKDOWN_SEGMENT_CHARS,
+  type ParsedRichMarkdown,
+} from "@codewide/rendering-core";
 
 export type RichMarkdownLayout = "intrinsic" | "fill";
+
+/** A bounded piece of the source paired with the tree used to lay it out and render it. */
+export type ParsedMarkdownSegment = {
+  readonly parsed: ParsedRichMarkdown;
+  readonly source: string;
+};
+
+const displayMath = /\$\$|\\\[/u;
+
+/** Reads the width requirement directly from the segment that will be rendered. */
+export function segmentNeedsAvailableWidth(segment: ParsedMarkdownSegment): boolean {
+  return (
+    displayMath.test(segment.source) || segment.parsed.root.children.some(blockNeedsAvailableWidth)
+  );
+}
+
+/** Computes an enclosing bubble's width from the same bounded inputs as its settled content. */
+export function completeMarkdownLayout(source: string): RichMarkdownLayout {
+  if (source.length < TARGET_MARKDOWN_SEGMENT_CHARS) {
+    return richMarkdownLayout(source);
+  }
+  return projectCompleteMarkdown(source).some((segment) => richMarkdownLayout(segment) === "fill")
+    ? "fill"
+    : "intrinsic";
+}
 
 /**
  * Yoga can size plain text and text-only containers intrinsically. Renderers
  * that need a concrete viewport opt into the available bubble width instead.
  */
 export function richMarkdownLayout(source: string): RichMarkdownLayout {
-  if (/\$\$|\\\[/u.test(source)) {
+  if (displayMath.test(source)) {
     return "fill";
   }
   return parseRichMarkdown(source).root.children.some(blockNeedsAvailableWidth)

@@ -5,7 +5,7 @@ import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import { createThreadSummaryDatabase } from "../src/data/thread-summary-database.native";
 import {
   QuestionConversationProvider,
-  QuestionDock,
+  TimelineQuestion,
 } from "../src/features/requests/QuestionFeature";
 
 let mockSummaryView: {
@@ -60,7 +60,7 @@ it("shows a live async question while its separate catalog view loads, then hono
   };
   const screen = render(
     <QuestionConversationProvider value={value}>
-      <QuestionDock />
+      <TimelineQuestion />
     </QuestionConversationProvider>,
   );
   expect(await screen.findByText("Продолжать?")).toBeOnTheScreen();
@@ -68,7 +68,7 @@ it("shows a live async question while its separate catalog view loads, then hono
   mockSummaryView = { phase: "error", selected: [] };
   screen.rerender(
     <QuestionConversationProvider value={{ ...value }}>
-      <QuestionDock />
+      <TimelineQuestion />
     </QuestionConversationProvider>,
   );
   expect(screen.getByText("Продолжать?")).toBeOnTheScreen();
@@ -79,10 +79,10 @@ it("shows a live async question while its separate catalog view loads, then hono
   };
   screen.rerender(
     <QuestionConversationProvider value={{ ...value }}>
-      <QuestionDock />
+      <TimelineQuestion />
     </QuestionConversationProvider>,
   );
-  expect(screen.queryByTestId("question-dock")).toBeNull();
+  expect(screen.queryByTestId("question-card")).toBeNull();
   screen.unmount();
   summaries.close();
 });

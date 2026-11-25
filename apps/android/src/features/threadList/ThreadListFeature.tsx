@@ -8,6 +8,8 @@ import type { ThreadSidebarProps } from "./ThreadSidebarContract";
 import type { MobileThreadsProps } from "./MobileThreadsContract";
 
 export { ThreadListSearchPullProvider } from "./ThreadListSearchPullProvider";
+export { ThreadListFabProvider } from "./ThreadListFabProvider";
+export { ThreadListFabStack } from "./ThreadListFabs";
 
 type ThreadListView =
   | { mode: "desktop"; props: ThreadSidebarProps }

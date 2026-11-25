@@ -6,6 +6,7 @@ import {
   richMarkdownCacheStats,
 } from "@codewide/rendering-core";
 import { privateImageResourceKey } from "../src/rendering/private-image-resource-key";
+import { attachmentRenderKey, projectUserMessageAttachments } from "../src/rendering/user-message-attachments";
 import { parseDiagramPreviewResult } from "../src/rendering/diagram-preview-result";
 
 describe("rendering memory ownership", () => {
@@ -32,6 +33,34 @@ describe("rendering memory ownership", () => {
     expect(privateImageResourceKey({ kind: "direct", uri: `${uri}AAAA` })).not.toBe(key);
     expect(privateImageResourceKey({ kind: "path", path: "same" }))
       .not.toBe(privateImageResourceKey({ kind: "content", id: "same" }));
+  });
+
+  it("keeps raw attachment identity through projection and changes it for a same-size replacement", () => {
+    const part = { type: "image", url: "https://private.test/image?token=aaaa" };
+    const key = () => {
+      const [attachment] = projectUserMessageAttachments([part]);
+      if (attachment === undefined) throw new Error("Missing image attachment");
+      return attachmentRenderKey(attachment.source);
+    };
+    const first = key();
+    expect(key()).toBe(first);
+    expect(first).not.toContain("token");
+    part.url = "https://private.test/image?token=bbbb";
+    expect(key()).not.toBe(first);
+  });
+
+  it("separates scoped paths, revisions and credentials while sharing equivalent sources", () => {
+    const scoped = { kind: "scoped", path: "c", rootId: "a:b" } as const;
+    const first = privateImageResourceKey(scoped);
+    expect(privateImageResourceKey({ ...scoped })).toBe(first);
+    expect(privateImageResourceKey({ ...scoped, path: "b:c", rootId: "a" })).not.toBe(first);
+    expect(privateImageResourceKey({ ...scoped, cacheRevision: "2" })).not.toBe(first);
+
+    const direct = { kind: "direct", uri: "https://example.test/secret", headers: { a: "one", b: "two" } } as const;
+    const key = privateImageResourceKey(direct);
+    expect(key).not.toMatch(/secret|one|two/);
+    expect(privateImageResourceKey({ ...direct, headers: { b: "two", a: "one" } })).toBe(key);
+    expect(privateImageResourceKey({ ...direct, headers: { a: "new", b: "two" } })).not.toBe(key);
   });
 
   it("validates native diagram preview results", () => {

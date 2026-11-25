@@ -6,7 +6,7 @@ import {
 import { agentProviders } from "../../data/workspace-runtime";
 import { threadRefusesDirectInput } from "../../data/threadDirectInput";
 import { ConversationComposition } from "./ConversationComposition";
-import { forkOffer, type ForkThreadSettings } from "../turnActions/forkTargets";
+import { readThreadForkOffer, type ForkThreadSettings } from "../turnActions/forkTargets";
 import { threadAgentAccounts, threadAgentActions } from "./threadAgentActions";
 import type { RenderConversationWorkspaceContentProps } from "./ConversationWorkspaceContent.types";
 /**
@@ -16,6 +16,8 @@ import type { RenderConversationWorkspaceContentProps } from "./ConversationWork
  */
 export function renderConversationWorkspaceContent(props: RenderConversationWorkspaceContentProps) {
   const listedThread = props.visibleConversationThread;
+  // A hosted draft requires an explicit project and offers no workspace modes.
+  const hostedDraft = props.draftAdmission?.kind === "hosted" ? props.draftAdmission : null;
   const remoteThread = props.snapshot.remoteThread;
   const gated = threadAgentActions(
     remoteThread,
@@ -49,13 +51,17 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         forkOffer:
           gated.onFork === undefined
             ? undefined
-            : () =>
-                forkOffer(
-                  remoteThread,
-                  serverThreadSettings(remoteThread),
-                  props.runtime.resources?.turnControls.get(props.activeControlsResourceId ?? "")
-                    ?.value?.models ?? [],
-                ),
+            : (receive) => {
+                readThreadForkOffer({
+                  cached: props.runtime.resources?.turnControls.get(
+                    props.activeControlsResourceId ?? "",
+                  )?.value,
+                  load: props.conversationActions.onLoadControls,
+                  receive,
+                  settings: serverThreadSettings(remoteThread),
+                  thread: remoteThread,
+                });
+              },
         onArchive: props.threadMutationActions.onArchive,
         onCompact: gated.onCompact,
         onDelete: props.threadMutationActions.onDelete,
@@ -79,6 +85,11 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         onRefreshSubagents: async (rootThreadId: string) => {
           await props.features.agents.refreshSubagents(props.activeConnectionId, rootThreadId);
         },
+        onRunningBackgroundTasks:
+          props.activeConnectionId === ""
+            ? undefined
+            : (threadId: string) =>
+                props.features.agents.runningBackgroundTasks(props.activeConnectionId, threadId),
         subagentSummaryDatabase: props.snapshot.subagentSummaryDatabase,
         subagentThreadDetails: props.runtime.threadDetails,
       }}
@@ -134,14 +145,23 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         newChatPicker: props.newChatPicker,
         onAddProject: props.addActiveProject,
         onChangeProject: props.changeEmptyThreadProject,
-        onChangeWorkspaceMode: (workspaceMode) => {
-          if (props.newChatDraft !== null) {
-            props.onChangeDraftWorkspaceMode(props.newChatDraft.id, workspaceMode);
-          }
-        },
+        onChangeWorkspaceMode:
+          hostedDraft !== null
+            ? undefined
+            : (workspaceMode) => {
+                if (props.newChatDraft !== null) {
+                  props.onChangeDraftWorkspaceMode(props.newChatDraft.id, workspaceMode);
+                }
+              },
         onManageProjects: props.onManageProjects,
         onReadDirectory: props.readActiveDirectory,
         projectLoadError: props.activeProjectError,
+        projectRequirement:
+          hostedDraft === null || props.newChatDraft?.cwd !== null
+            ? "none"
+            : hostedDraft.suggesting
+              ? "suggesting"
+              : "required",
         projects: props.activeProjects,
         workspaceMode: props.newChatDraft?.workspaceMode ?? "current",
         workspaceSupport: props.activeWorkspaceSupport,
@@ -158,6 +178,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         composerState: props.snapshot.composerState,
         currentOutcome: props.snapshot.currentOutcome ?? null,
         currentUsage: props.snapshot.currentUsage ?? null,
+        detailCursor: props.snapshot.detailCursor ?? 0,
         historyActivityModel: props.snapshot.historyActivityModel ?? null,
         historyActivityResourceId: props.snapshot.historyActivityResourceId ?? null,
         historyRestoreReady: props.snapshot.historyRestoreReady,
@@ -186,8 +207,10 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       surface={{
         compact: !props.desktop,
         cwd: props.snapshot.cwd ?? "/workspace",
+        draftNotice: hostedDraft?.notice ?? null,
         firstUnreadAgentTurnId: props.snapshot.firstUnreadAgentTurnId ?? null,
         newChat: props.newChatDraft !== null,
+        // A closable pane shows its own `×` from ThreePanelsContext instead of this back.
         onBack: props.desktop ? undefined : props.closeActiveConversation,
         onViewedLatest: props.markActiveThreadRead,
         // A thread another process holds opens read-only until it lets go; a
@@ -212,6 +235,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         backgroundTerminalsResourceId: props.activeThreadResourceId,
         onListTerminals: gated.onListTerminals,
         onTerminateTerminal: gated.onTerminateTerminal,
+        readTerminalCommand: props.features.terminal.readTerminalCommand,
       }}
     />
   );

@@ -2,85 +2,61 @@ import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
+import { useAndroidBackHandler } from "../../../ui/use-android-back-handler";
+import { KeyboardDockSpacer } from "../../../ui/KeyboardDock";
+import {
+  SIDEBAR_FRAME_SHARE,
+  SIDEBAR_MIN_WIDTH,
+  SIDEBAR_MAX_WIDTH,
+} from "../../../ui/sidebarDimensions";
 import { appLogger } from "../../../observability/logger";
+import { useEvent } from "../../../react/useEvent";
 import { unknownRecord } from "../../../data/unknownRecord";
 import { colors, spacing, typeScale, typeWeight, radii, controlSize } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
-import type {
-  CodeReviewClientEvent,
-  CodeReviewComposerState,
-  CodeReviewDocument,
-  CodeReviewFileItem,
-  CodeReviewHostCommand,
-  CodeReviewViewMode,
-} from "./editorBridge";
+import type { CodeReviewClientEvent, CodeReviewHostCommand } from "./editorBridge";
 import { CODE_REVIEW_BRIDGE_VERSION } from "./editorBridge";
-import type { CodeReviewComment, CodeReviewLineReference } from "../comments/reviewComment";
-import { matchesCodeReviewInput } from "../comments/reviewComment";
+import type { CodeReviewLineReference } from "../comments/reviewComment";
+import type { CodeReviewEditorProps } from "./codeReviewEditorProps";
 
 const EDITOR_URI = "file:///android_asset/code-review-editor.html";
 
 export type { CodeReviewDocument, CodeReviewFileItem, CodeReviewViewMode } from "./editorBridge";
 
-type DraftSelection = { end: number; start: number };
-type VoicePhase = "idle" | "starting" | "recording" | "finishing";
 type WithoutBridgeEnvelope<T> = T extends unknown ? Omit<T, "version" | "sequence"> : never;
 type CodeReviewHostMessage = WithoutBridgeEnvelope<CodeReviewHostCommand>;
 
+/**
+ * The Pierre review editor in its WebView. It displays the document, the file
+ * tree and inline comments, and reports line taps; the selected line is the
+ * native line composer's anchor. It hosts no composer of its own.
+ */
 // WHY: This V1 render boundary owns one existing decision tree and its local state ordering; splitting it would risk changing visible behavior.
 // oxlint-disable-next-line eslint/complexity
 export function CodeReviewEditor({
-  commentDraft,
   comments,
   compact,
   document,
   files,
+  filesComplete = true,
   loadError,
-  loading,
   mode,
-  onCommentDraftChange,
-  onCommentSelectionChange,
-  onCommentSubmit,
+  onCommentPress,
   onFileSelect,
+  onFilesOpenChange,
   onLinePress,
-  onVoicePress,
+  onRetryLoad,
   revealReference,
   selectedPath,
   selectedReference,
+  showLineNumbers = true,
   sidebarOpen,
-  voiceError,
-  voicePermissionGranted,
-  voicePhase,
-  voiceRetryAvailable,
   workspaceRevision,
   wrapLines,
-}: {
-  commentDraft: string;
-  comments: readonly CodeReviewComment[];
-  compact: boolean;
-  document: CodeReviewDocument | null;
-  files: readonly CodeReviewFileItem[];
-  loadError: string | null;
-  loading: boolean;
-  mode: CodeReviewViewMode;
-  onCommentDraftChange: (value: string) => void;
-  onCommentSelectionChange: (selection: DraftSelection) => void;
-  onCommentSubmit: (reference: CodeReviewLineReference, draft: string) => void;
-  onFileSelect: (path: string) => void;
-  onLinePress: (reference: CodeReviewLineReference) => void;
-  onVoicePress: (draft: string, selection: DraftSelection) => void;
-  revealReference: CodeReviewLineReference | null;
-  selectedPath: string | null;
-  selectedReference: CodeReviewLineReference | null;
-  sidebarOpen: boolean;
-  voiceError: string | null;
-  voicePermissionGranted: boolean;
-  voicePhase: VoicePhase;
-  voiceRetryAvailable: boolean;
-  workspaceRevision: string;
-  wrapLines: boolean;
-}) {
+}: CodeReviewEditorProps): React.JSX.Element {
   const webView = useRef<WebView>(null);
+  const dismissFiles = useEvent(() => onFilesOpenChange?.(false));
+  useAndroidBackHandler(compact && sidebarOpen && onFilesOpenChange !== undefined, dismissFiles);
   const requestId = useRef(0);
   const sequence = useRef(0);
   const revealedReference = useRef<string | null>(null);
@@ -102,8 +78,8 @@ export function CodeReviewEditor({
     if (!ready) {
       return;
     }
-    send({ command: "settings", payload: { mode, wrapLines } });
-  }, [ready, mode, wrapLines]);
+    send({ command: "settings", payload: { mode, showLineNumbers, wrapLines } });
+  }, [ready, mode, showLineNumbers, wrapLines]);
 
   useEffect(() => {
     if (!ready) {
@@ -127,41 +103,36 @@ export function CodeReviewEditor({
     }
     send({
       command: "workspace",
-      payload: { compact, files, revision: workspaceRevision, selectedPath, sidebarOpen },
+      payload: {
+        compact,
+        files,
+        filesComplete,
+        revision: workspaceRevision,
+        selectedPath,
+        sidebarOpen,
+      },
     });
-  }, [ready, files, workspaceRevision, selectedPath, sidebarOpen, compact]);
+  }, [ready, files, filesComplete, workspaceRevision, selectedPath, sidebarOpen, compact]);
 
   useEffect(() => {
     if (!ready) {
       return;
     }
-    const payload: CodeReviewComposerState | null =
-      selectedReference === null
-        ? null
-        : {
-            draft: commentDraft,
-            reference: selectedReference,
-            voiceError,
-            voicePermissionGranted,
-            voicePhase,
-            voiceRetryAvailable,
-          };
-    send({ command: "composer", payload });
-  }, [
-    ready,
-    selectedReference,
-    commentDraft,
-    voicePhase,
-    voicePermissionGranted,
-    voiceRetryAvailable,
-    voiceError,
-  ]);
+    send({ command: "selection", payload: selectedReference });
+  }, [ready, selectedReference]);
 
   useEffect(() => {
     if (!ready || revealReference === null) {
+      revealedReference.current = null;
       return;
     }
-    const key = `${revealReference.path}:${String(revealReference.line)}:${String(revealReference.column ?? "")}`;
+    const key = JSON.stringify([
+      revealReference.path,
+      revealReference.side,
+      revealReference.coordinate,
+      revealReference.line,
+      revealReference.column,
+    ]);
     if (revealedReference.current === key) {
       return;
     }
@@ -170,7 +141,7 @@ export function CodeReviewEditor({
   }, [ready, revealReference]);
 
   // WHY: This dispatcher applies one validated WebView event in protocol order; splitting its
-  // branches would risk accepting stale request ids or targeting the wrong editor state.
+  // branches would risk accepting stale request ids or reordering editor state updates.
   // oxlint-disable-next-line eslint/complexity
   const receive = ({ nativeEvent }: WebViewMessageEvent) => {
     const message = parseClientEvent(nativeEvent.data);
@@ -179,6 +150,17 @@ export function CodeReviewEditor({
     }
     if (message.type === "ready") {
       setReady(true);
+      return;
+    }
+    if (message.type === "filesOpen") {
+      onFilesOpenChange?.(message.open);
+      return;
+    }
+    if (message.type === "fileSelect") {
+      // The persistent tree belongs to the workspace even while another document is loading.
+      if (files.some((item) => item.path === message.path)) {
+        onFileSelect(message.path);
+      }
       return;
     }
     if ("requestId" in message && message.requestId !== requestId.current) {
@@ -191,23 +173,10 @@ export function CodeReviewEditor({
           fields: { durationMs: message.renderMs, mode },
         });
       }
-    } else if (message.type === "fileSelect") {
-      onFileSelect(message.path);
+    } else if (message.type === "commentTap") {
+      onCommentPress?.(message.id);
     } else if (message.type === "lineTap") {
       onLinePress(message.reference);
-    } else if (message.type === "draftChanged") {
-      if (!matchesCodeReviewInput(selectedReference, message.reference)) {
-        return;
-      }
-      onCommentDraftChange(message.draft);
-      onCommentSelectionChange({ end: message.selectionEnd, start: message.selectionStart });
-    } else if (message.type === "commentSubmit") {
-      onCommentSubmit(message.reference, message.draft);
-    } else if (message.type === "voiceAction") {
-      if (!matchesCodeReviewInput(selectedReference, message.reference)) {
-        return;
-      }
-      onVoicePress(message.draft, { end: message.selectionEnd, start: message.selectionStart });
     } else if (message.type === "error") {
       setError({ message: message.message, revision: document?.revision ?? null });
     }
@@ -216,6 +185,14 @@ export function CodeReviewEditor({
   const currentRevision = document?.revision ?? null;
   const currentError = error?.revision === currentRevision ? error.message : null;
   const visibleError = currentError ?? loadError;
+  const retry = useEvent(() => {
+    if (currentError === null && onRetryLoad !== undefined) {
+      onRetryLoad();
+      return;
+    }
+    setError(null);
+    webView.current?.reload();
+  });
   return (
     <View style={styles.root}>
       <WebView
@@ -247,29 +224,29 @@ export function CodeReviewEditor({
         style={styles.webView}
         testID="code-review-editor"
       />
-      {visibleError === null &&
-        selectedPath !== null &&
-        (!ready || (loading && document === null && !sidebarOpen)) && (
-          <View accessibilityLiveRegion="polite" pointerEvents="none" style={styles.loading}>
-            <ActivityIndicator color={colors.accent} />
-            <Text style={styles.loadingText}>Loading file…</Text>
+      {compact && sidebarOpen && <KeyboardDockSpacer />}
+      {visibleError === null && selectedPath !== null && !ready && (
+        <View accessibilityLiveRegion="polite" pointerEvents="none" style={styles.loading}>
+          <ActivityIndicator color={colors.accent} />
+          <Text style={styles.loadingText}>Loading file…</Text>
+        </View>
+      )}
+      {visibleError !== null && !(compact && sidebarOpen && ready) && (
+        <View pointerEvents="box-none" style={styles.errorLayer}>
+          {ready && !compact && sidebarOpen && (
+            <View pointerEvents="none" style={styles.sidebarSpace} />
+          )}
+          <View style={styles.error}>
+            <Text selectable style={styles.errorTitle}>
+              Code preview failed
+            </Text>
+            <Text selectable style={styles.errorMessage}>
+              {visibleError}
+            </Text>
+            <Pressable accessibilityRole="button" onPress={retry} style={styles.retryButton}>
+              <Text style={styles.retryText}>Retry</Text>
+            </Pressable>
           </View>
-        )}
-      {visibleError !== null && (
-        <View style={styles.error}>
-          <Text selectable style={styles.errorTitle}>
-            Code preview failed
-          </Text>
-          <Text selectable style={styles.errorMessage}>
-            {visibleError}
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => webView.current?.reload()}
-            style={styles.retryButton}
-          >
-            <Text style={styles.retryText}>Retry</Text>
-          </Pressable>
         </View>
       )}
     </View>
@@ -293,6 +270,9 @@ function parseClientEvent(value: string): CodeReviewClientEvent | null {
   if (event.type === "ready") {
     return { type: "ready", version: CODE_REVIEW_BRIDGE_VERSION };
   }
+  if (event.type === "filesOpen" && typeof event.open === "boolean") {
+    return { open: event.open, type: "filesOpen", version: CODE_REVIEW_BRIDGE_VERSION };
+  }
   if (typeof event.requestId !== "number") {
     return null;
   }
@@ -308,52 +288,12 @@ function parseClientEvent(value: string): CodeReviewClientEvent | null {
   if (event.type === "fileSelect" && typeof event.path === "string") {
     return { path: event.path, requestId, type: "fileSelect", version: CODE_REVIEW_BRIDGE_VERSION };
   }
+  if (event.type === "commentTap" && typeof event.id === "string") {
+    return { id: event.id, requestId, type: "commentTap", version: CODE_REVIEW_BRIDGE_VERSION };
+  }
   const reference = parseLineReference(event.reference);
   if (event.type === "lineTap" && reference !== null) {
     return { reference, requestId, type: "lineTap", version: CODE_REVIEW_BRIDGE_VERSION };
-  }
-  if (
-    event.type === "draftChanged" &&
-    reference !== null &&
-    typeof event.draft === "string" &&
-    typeof event.selectionEnd === "number" &&
-    typeof event.selectionStart === "number"
-  ) {
-    return {
-      draft: event.draft,
-      reference,
-      requestId,
-      selectionEnd: event.selectionEnd,
-      selectionStart: event.selectionStart,
-      type: "draftChanged",
-      version: CODE_REVIEW_BRIDGE_VERSION,
-    };
-  }
-  if (event.type === "commentSubmit" && reference !== null && typeof event.draft === "string") {
-    return {
-      draft: event.draft,
-      reference,
-      requestId,
-      type: "commentSubmit",
-      version: CODE_REVIEW_BRIDGE_VERSION,
-    };
-  }
-  if (
-    event.type === "voiceAction" &&
-    reference !== null &&
-    typeof event.draft === "string" &&
-    typeof event.selectionEnd === "number" &&
-    typeof event.selectionStart === "number"
-  ) {
-    return {
-      draft: event.draft,
-      reference,
-      requestId,
-      selectionEnd: event.selectionEnd,
-      selectionStart: event.selectionStart,
-      type: "voiceAction",
-      version: CODE_REVIEW_BRIDGE_VERSION,
-    };
   }
   if (
     (event.type === "diffUnavailable" || event.type === "error") &&
@@ -404,10 +344,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.surfaceContainer,
     borderRadius: radii.selected,
+    flex: 1,
     gap: spacing.sm,
-    inset: spacing.md,
     justifyContent: "center",
+    margin: spacing.md,
     padding: spacing.lg,
+  },
+  errorLayer: {
+    flexDirection: "row",
+    inset: 0,
     position: "absolute",
   },
   errorMessage: {
@@ -450,6 +395,11 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     minWidth: 0,
+  },
+  sidebarSpace: {
+    maxWidth: SIDEBAR_MAX_WIDTH,
+    minWidth: SIDEBAR_MIN_WIDTH,
+    width: SIDEBAR_FRAME_SHARE,
   },
   webView: {
     backgroundColor: colors.background,

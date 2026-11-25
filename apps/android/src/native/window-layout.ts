@@ -1,4 +1,5 @@
-const V1_TWO_PANE_MIN_WIDTH = 720;
+/** Minimum window width in logical pixels for a side-by-side workspace. */
+export const V1_TWO_PANE_MIN_WIDTH = 720;
 
 export type WindowLayoutSnapshot = Readonly<{
   desktop: boolean;

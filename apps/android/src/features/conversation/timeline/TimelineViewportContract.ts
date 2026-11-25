@@ -1,3 +1,4 @@
+import type { Observable } from "@legendapp/state";
 import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
 import type { Dispatch, ReactElement, RefObject, SetStateAction } from "react";
 import type { View } from "react-native";
@@ -32,6 +33,7 @@ export type TimelineViewportProps = {
     isCovered: () => boolean;
     willOpen: (id: string) => void;
   };
+  gestureActive$: Observable<boolean>;
   historyViewport: ThreadHistoryViewport;
   inlineQueueExpanded: boolean;
   jumpVisibility: TimelineJumpVisibility;
@@ -63,7 +65,6 @@ export type TimelineViewportProps = {
   scrollOffsetRef: { current: number };
   searchMessageItemId: string | null;
   setAwayFromLatest: Dispatch<SetStateAction<boolean>>;
-  setTimelineGestureActive: Dispatch<SetStateAction<boolean>>;
   threadSearch: string;
   threadSearchActive: boolean;
   threadSearchMatch: number;

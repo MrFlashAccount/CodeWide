@@ -1,66 +1,88 @@
+import { useContext } from "react";
 import { View } from "react-native";
 import { formatClockTime } from "../../../data/device-time";
-import { Bubble, BubbleContent } from "../../../rendering/Bubble";
+import { UserBubbleSurface, UserTextBubble } from "../../../rendering/Bubble";
 import { ImagePreviewGroup } from "../../../rendering/ImagePreviewHost";
-import { SearchMessage } from "../../../rendering/SearchMessageFocus";
+import { SearchMessage, SearchMessageFocus } from "../../../rendering/SearchMessageFocus";
 import { RecoverableRenderBoundary } from "../../../ui/RecoverableRenderBoundary";
 import { AppText as Text } from "../../../ui/Typography";
-import { LargeContentControls } from "../content/FullContentViewer";
+import { userMessageDocument } from "../content/blockContentDocument";
+import { ContentDocumentPress } from "../content/ContentDocumentPress";
 import type { projectTurnPresentation } from "./turnProjection";
 import { styles } from "./TurnTimelineItem.styles";
 import type { TurnTimelineItemProps } from "./TurnTimelineItem.types";
+import { plainBubbleText } from "./userMessageBubbleText";
 import { UserMessageContent } from "./UserMessageContent";
 
 /** User message cluster retains per-item previews, content and timestamp placement. */
-export function renderUserTurnBody(
-  turn: TurnTimelineItemProps["turn"],
-  userBlocks: ReturnType<typeof projectTurnPresentation>["userBlocks"],
-  getTransferAccess: TurnTimelineItemProps["getTransferAccess"],
-) {
+export function UserTurnBody({
+  getTransferAccess,
+  turn,
+  userBlocks,
+}: {
+  getTransferAccess: TurnTimelineItemProps["getTransferAccess"];
+  turn: TurnTimelineItemProps["turn"];
+  userBlocks: ReturnType<typeof projectTurnPresentation>["userBlocks"];
+}) {
   return (
-    <View style={styles.userTurnCluster}>
-      <RecoverableRenderBoundary
-        context={`Thread: ${turn.threadId}\nTurn: ${turn.id}`}
-        label="User message"
-        resetKey={`${turn.key}:user`}
-        scope="bubble"
-      >
-        <ImagePreviewGroup id={`${turn.key}:user`}>
-          <View style={styles.userMessageRow}>
-            <Bubble
-              errorContext={`Thread: ${turn.threadId}\nTurn: ${turn.id}`}
-              errorResetKey={`${turn.key}:user`}
-              testID="user-bubble"
-              variant="user"
+    <RecoverableRenderBoundary
+      context={`Thread: ${turn.threadId}\nTurn: ${turn.id}`}
+      label="User message"
+      resetKey={`${turn.key}:user`}
+      scope="bubble"
+    >
+      <View style={styles.userMessageRow}>
+        <UserTurnBubble
+          blocks={userBlocks}
+          getTransferAccess={getTransferAccess}
+          groupId={`${turn.key}:user`}
+        />
+        {turn.turn.startedAt !== null && (
+          <Text style={styles.messageTime} testID="user-message-time">
+            {formatClockTime(turn.turn.startedAt)}
+          </Text>
+        )}
+      </View>
+    </RecoverableRenderBoundary>
+  );
+}
+
+/** A short plain message has no gallery or document action. Its selectable text owns the surface. */
+function UserTurnBubble({
+  blocks,
+  getTransferAccess,
+  groupId,
+}: {
+  blocks: ReturnType<typeof projectTurnPresentation>["userBlocks"];
+  getTransferAccess: TurnTimelineItemProps["getTransferAccess"];
+  groupId: string;
+}) {
+  const focus = useContext(SearchMessageFocus);
+  const only = blocks.length === 1 ? blocks[0] : undefined;
+  if (only !== undefined && (focus === null || focus.itemId !== only.raw.id)) {
+    const text = plainBubbleText(only);
+    if (text !== null) {
+      return <UserTextBubble text={text} />;
+    }
+  }
+  return (
+    <ImagePreviewGroup id={groupId}>
+      <UserBubbleSurface style={styles.userMessageContent} testID="user-bubble">
+        {blocks.map((block) => (
+          <SearchMessage itemId={block.raw.id} key={block.key}>
+            <ContentDocumentPress
+              accessibilityLabel="Open full message"
+              document={userMessageDocument(block, getTransferAccess ?? null)}
             >
-              <BubbleContent>
-                <View style={styles.userMessageContent}>
-                  {userBlocks.map((block) => (
-                    <SearchMessage itemId={block.raw.id} key={block.key}>
-                      <View style={styles.userMessageBlock}>
-                        <UserMessageContent
-                          content={Array.isArray(block.raw.content) ? block.raw.content : []}
-                          projectedAttachments={block.raw.codewideAttachments}
-                          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-                        />
-                        <LargeContentControls
-                          block={block}
-                          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-                        />
-                      </View>
-                    </SearchMessage>
-                  ))}
-                </View>
-              </BubbleContent>
-            </Bubble>
-            {turn.turn.startedAt !== null && (
-              <Text style={styles.messageTime} testID="user-message-time">
-                {formatClockTime(turn.turn.startedAt)}
-              </Text>
-            )}
-          </View>
-        </ImagePreviewGroup>
-      </RecoverableRenderBoundary>
-    </View>
+              <UserMessageContent
+                content={Array.isArray(block.raw.content) ? block.raw.content : []}
+                projectedAttachments={block.raw.codewideAttachments}
+                {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+              />
+            </ContentDocumentPress>
+          </SearchMessage>
+        ))}
+      </UserBubbleSurface>
+    </ImagePreviewGroup>
   );
 }

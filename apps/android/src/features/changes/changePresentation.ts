@@ -172,9 +172,13 @@ export function useChangeResourcePresentation(
       : (threadResourcesModel.get(threadResourceId) ?? null),
   );
 
-  const currentChangePresentation = useEvent(() =>
-    selectChangePresentation(currentThreadResources()?.value ?? null, changesPreferences.scope),
-  );
+  const currentChangePresentation = useEvent(() => {
+    const row = currentThreadResources();
+    const selected = selectChangePresentation(row?.value ?? null, changesPreferences.scope);
+    return row?.readyKinds?.includes("changes") === false
+      ? { ...selected, resource: null }
+      : selected;
+  });
   return { currentChangePresentation, currentThreadResources };
 }
 

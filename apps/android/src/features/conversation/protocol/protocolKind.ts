@@ -1,7 +1,7 @@
 /** V1 protocolKind owner, extracted without changing interaction or resource lifetime. */
-import type { Ionicons } from "@expo/vector-icons";
+import type { ComposeIconName } from "../../../presentation/icons/composeIconNames";
 
-export function protocolIcon(kind: string): keyof typeof Ionicons.glyphMap {
+export function protocolIcon(kind: string): ComposeIconName {
   if (kind === "reasoning") {
     return "bulb-outline";
   }
@@ -23,9 +23,6 @@ export function protocolIcon(kind: string): keyof typeof Ionicons.glyphMap {
   if (kind === "imageGeneration" || kind === "imageView") {
     return "image-outline";
   }
-  if (kind === "turnDiff") {
-    return "git-compare-outline";
-  }
   if (kind === "tokenUsage") {
     return "speedometer-outline";
   }
@@ -36,7 +33,6 @@ export function isToolActivityKind(kind: string): boolean {
   return (
     kind === "commandExecution" ||
     kind === "fileChange" ||
-    kind === "turnDiff" ||
     kind === "mcpToolCall" ||
     kind === "dynamicToolCall" ||
     kind === "webSearch" ||

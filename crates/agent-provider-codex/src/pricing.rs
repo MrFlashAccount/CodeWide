@@ -14,7 +14,7 @@ use agent_core::usage::{
 };
 use serde_json::Value;
 
-pub const PRICING_VERSION: &str = "openai-api-2026-10-02";
+pub const PRICING_VERSION: &str = "openai-api-2026-11-17";
 const LONG_CONTEXT_INPUT_TOKENS: u64 = 272_000;
 
 /// `OpenAI` standard API rates (<https://developers.openai.com/api/docs/pricing>).
@@ -87,6 +87,8 @@ pub fn parse_rollout_usage(payload: &Value) -> Option<(TokenCounts, TokenCounts,
 /// is billed at 1.25× input; a request above 272K input tokens at 2× input
 /// and 1.5× output.
 const OPENAI_RATES: &[(&str, f64, f64, f64)] = &[
+    ("gpt-6.2-astra", 8.0, 0.4, 40.0),
+    ("gpt-6.2-sol", 2.0, 0.1, 10.0),
     ("gpt-6-astra", 10.0, 1.0, 50.0),
     ("gpt-6.1-sol", 2.0, 0.1, 10.0),
     ("gpt-6-sol", 2.0, 0.2, 10.0),
@@ -190,6 +192,24 @@ mod tests {
             ..TokenCounts::default()
         };
         for (model, expected_price, expected_cost) in [
+            (
+                "gpt-6.2-astra",
+                ModelPrice {
+                    input: 8.0,
+                    cached_input: 0.4,
+                    output: 40.0,
+                },
+                0.0442,
+            ),
+            (
+                "gpt-6.2-sol",
+                ModelPrice {
+                    input: 2.0,
+                    cached_input: 0.1,
+                    output: 10.0,
+                },
+                0.01105,
+            ),
             (
                 " GPT-6.1-Sol ",
                 ModelPrice {

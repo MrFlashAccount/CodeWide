@@ -22,7 +22,7 @@ export function safeImageUri(value: unknown): string | null {
   if (typeof value !== "string" || value.length === 0 || value.length > MAX_INLINE_IMAGE_CHARS) {
     return null;
   }
-  if (isSafeHttpImageUrl(value)) {
+  if (!value.startsWith("data:") && isSafeHttpImageUrl(value)) {
     return value;
   }
   if (DATA_IMAGE_PATTERN.test(value)) {

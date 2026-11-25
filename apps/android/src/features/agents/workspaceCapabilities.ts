@@ -1,4 +1,5 @@
 import type { BackgroundTaskOutputPage } from "../../data/backgroundTaskOutput";
+import type { RunningBackgroundTasksQuery } from "../../data/runningBackgroundTaskResource";
 
 /** Qualified agents operations; transport and persisted state stay with their existing lower owners. */
 export type AgentsWorkspaceCapabilities = {
@@ -9,4 +10,6 @@ export type AgentsWorkspaceCapabilities = {
   ) => Promise<BackgroundTaskOutputPage>;
   /** Reads one root's descendant index again; concurrent requests for the root share one read. */
   refreshSubagents: (connectionId: string, rootThreadId: string) => Promise<void>;
+  /** The query of a thread's running background commands. */
+  runningBackgroundTasks: (connectionId: string, threadId: string) => RunningBackgroundTasksQuery;
 };

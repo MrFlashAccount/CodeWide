@@ -9,7 +9,7 @@
 //! wire recorder in front of `claude`, isolates the environment and runs
 //! every scenario in its own process.
 //!
-//! Environment: `CODEWIDE_LIVE_CONFIG` (the provider entry JSON),
+//! Environment: `CODEWIDE_LIVE_CLAUDE_EXECUTABLE` (the `claude` to drive),
 //! `CODEWIDE_LIVE_OUT` (output directory), `CODEWIDE_LIVE_WORK` (scenario
 //! working directories). Arguments: one scenario name, or `--list`.
 
@@ -109,9 +109,13 @@ async fn spawn_provider(
     tools: Option<&Arc<EchoTools>>,
     log: &Arc<Mutex<std::fs::File>>,
 ) -> Result<(Arc<ClaudeProvider>, mpsc::UnboundedReceiver<Value>), Box<dyn std::error::Error>> {
-    let mut entry: Value = serde_json::from_str(&variable("CODEWIDE_LIVE_CONFIG")?)?;
-    entry["journalDirectory"] = json!(journal);
-    let provider = ClaudeProvider::spawn(&ClaudeConfig::parse(&entry, &ClaudeDefaults::default())?);
+    let provider = ClaudeProvider::spawn(&ClaudeConfig::with_executable(
+        PathBuf::from(variable("CODEWIDE_LIVE_CLAUDE_EXECUTABLE")?),
+        &ClaudeDefaults {
+            journal_directory: journal.to_path_buf(),
+            ..ClaudeDefaults::default()
+        },
+    )?);
     if let Some(tools) = tools {
         let host: Arc<dyn ClientToolHost> = tools.clone();
         let weak: Weak<dyn ClientToolHost> = Arc::downgrade(&host);

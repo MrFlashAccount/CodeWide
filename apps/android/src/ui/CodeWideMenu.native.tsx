@@ -115,7 +115,7 @@ function MenuPopup({
         <RNHostView matchContents>{trigger}</RNHostView>
       </DropdownMenu.Trigger>
       <DropdownMenu.Items>
-        <MenuBody actions={actions} menuWidth={menuWidth} onSelect={onSelect} />
+        {expanded ? <MenuBody actions={actions} menuWidth={menuWidth} onSelect={onSelect} /> : null}
       </DropdownMenu.Items>
     </DropdownMenu>
   );

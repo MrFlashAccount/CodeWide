@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""Boot the dedicated AVD and leave the local Metro development session running."""
+
+import fcntl
+import hashlib
+import json
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+from urllib.request import ProxyHandler, build_opener
+
+sys.dont_write_bytecode = True
+from lab import (
+    AVD,
+    AVDS,
+    CLI,
+    ENV,
+    LAB,
+    METRO,
+    PACKAGE,
+    PORT,
+    ROOT,
+    SDK,
+    SERIAL,
+    adb,
+    device,
+    device_claims,
+    owns_claim,
+    launch,
+    run,
+    verify_avd,
+    wait_for,
+)
+
+VERSION = "0.21.39"
+os.umask(0o077)
+LAB.mkdir(parents=True, exist_ok=True)
+logs = LAB / "logs"
+logs.mkdir(exist_ok=True)
+lock = (LAB / "start.lock").open("a")
+fcntl.flock(lock, fcntl.LOCK_EX)
+state = LAB / "processes.json"
+owners = json.loads(state.read_text()) if state.exists() else {}
+
+
+def alive(owner):
+    try:
+        stat = Path(f"/proc/{owner['pid']}/stat").read_text().rsplit(")", 1)[1].split()
+        return stat[0] != "Z" and stat[19] == owner["start"]
+    except FileNotFoundError:
+        return False
+
+
+def spawn(name, args, env, cwd):
+    owner = owners.get(name)
+    if owner and alive(owner):
+        if owner["checkout"] != str(ROOT):
+            raise RuntimeError(f"{name} already serves {owner['checkout']}")
+        return
+    with (logs / f"{name}.log").open("w") as log:
+        proc = subprocess.Popen(
+            args,
+            cwd=cwd,
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    start = Path(f"/proc/{proc.pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+    owners[name] = {"pid": proc.pid, "start": start, "checkout": str(ROOT)}
+    tmp = state.with_suffix(".tmp")
+    tmp.write_text(json.dumps(owners))
+    tmp.replace(state)
+
+
+def metro_ready():
+    try:
+        with build_opener(ProxyHandler({})).open(f"http://localhost:{METRO}/status", timeout=2) as response:
+            return response.read() == b"packager-status:running"
+    except OSError:
+        return False
+
+
+def start():
+    manifest = CLI.parent.parent / "agent-device/package.json"
+    if not manifest.exists() or json.loads(manifest.read_text())["version"] != VERSION:
+        subprocess.run(
+            [
+                "npm",
+                "install",
+                "--prefix",
+                LAB / "tools",
+                "--no-audit",
+                "--no-fund",
+                f"agent-device@{VERSION}",
+            ],
+            check=True,
+        )
+    avdmanager = SDK / "cmdline-tools/latest/bin/avdmanager"
+    image = "system-images;android-35;google_apis;x86_64"
+    if (
+        not (SDK / "emulator/emulator").exists()
+        or not (SDK / "system-images/android-35/google_apis/x86_64/system.img").exists()
+    ):
+        subprocess.run(
+            [avdmanager.with_name("sdkmanager"), "platform-tools", "emulator", image], env=ENV, check=True
+        )
+    AVDS.mkdir(exist_ok=True)
+    if not (AVDS / f"{AVD}.ini").exists():
+        run(avdmanager, "create", "avd", "-n", AVD, "-k", image, "-d", "pixel_5", env=ENV, stdin="no\n")
+    devices = run(SDK / "platform-tools/adb", "devices", env=ENV)
+    if SERIAL not in devices:
+        spawn(
+            "emulator",
+            [
+                SDK / "emulator/emulator",
+                "-avd",
+                AVD,
+                "-port",
+                str(PORT),
+                "-gpu",
+                "software",
+                "-no-window",
+                "-no-snapshot",
+                "-no-boot-anim",
+                "-no-metrics",
+                "-cores",
+                "4",
+                "-memory",
+                "3072",
+            ],
+            ENV,
+            ROOT,
+        )
+    wait_for("dedicated AVD", lambda: adb("get-state") == "device", 150)
+    verify_avd()
+    wait_for("Android boot", lambda: adb("shell", "getprop", "sys.boot_completed") == "1", 180)
+    if metro_ready() and not ("metro" in owners and alive(owners["metro"])):
+        raise RuntimeError(f"Unmanaged Metro already uses port {METRO}")
+    spawn(
+        "metro",
+        ["pnpm", "exec", "expo", "start", "--dev-client", "--localhost", "--port", str(METRO)],
+        dict(os.environ, EXPO_NO_TELEMETRY="1", EXPO_OFFLINE="1"),
+        ROOT / "apps/android",
+    )
+    wait_for("Metro", metro_ready, 75)
+    with (logs / "build.log").open("w") as build_log:
+        cmd = ["sh", "scripts/android-gradle.sh", ":app:assembleDebug", "-PreactNativeArchitectures=x86_64"]
+        if subprocess.run(cmd, cwd=ROOT, stdout=build_log, stderr=subprocess.STDOUT).returncode:
+            raise RuntimeError(f"Debug build failed. See {build_log.name}")
+    apk = ROOT / "apps/android/android/app/build/outputs/apk/debug/app-debug.apk"
+    with apk.open("rb") as file:
+        digest = hashlib.file_digest(file, "sha256").hexdigest()
+    stamp = LAB / "installed-apk.sha256"
+    if not stamp.exists() or stamp.read_text() != digest or not adb("shell", "pm", "path", PACKAGE):
+        run(SDK / "platform-tools/adb", "-s", SERIAL, "install", "-r", apk, env=ENV, timeout=180)
+        stamp.write_text(digest)
+    adb("shell", "pm", "grant", PACKAGE, "android.permission.POST_NOTIFICATIONS")
+    adb("shell", "wm", "dismiss-keyguard")
+    adb("reverse", f"tcp:{METRO}", f"tcp:{METRO}")
+    launch()
+    print(f"CodeWide ready on {SERIAL}. Metro {METRO}. Logs: {logs}")
+
+
+def close_owned_session():
+    if not CLI.exists():
+        return
+    if any(owns_claim(claim) for claim in device_claims()):
+        verify_avd()
+        device("close")
+
+
+if sys.argv[1:] == ["--stop"]:
+    close_owned_session()
+    for name, owner in owners.items():
+        if alive(owner) and owner["checkout"] == str(ROOT):
+            os.killpg(owner["pid"], signal.SIGTERM)
+            wait_for(f"{name} shutdown", lambda: not alive(owner), 30)
+elif not sys.argv[1:]:
+    start()
+else:
+    sys.exit("Usage: start [--stop]")

@@ -210,9 +210,6 @@ struct CompanionMenuView<MoreActions: View>: View {
     private func providerConnectionDetails(_ provider: CompanionAgentProvider) -> some View {
         VStack(spacing: 9) {
             detail("Connection", value: provider.connectionSummary)
-            if provider.primary {
-                detail("Role", value: "Primary provider")
-            }
             if let version = provider.version {
                 detail(provider.name, value: version)
             }

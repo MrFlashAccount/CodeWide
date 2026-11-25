@@ -1,57 +1,37 @@
-//! `codewide-companion providers status`: an offline report of
-//! `<state dir>/agent-providers.json` — which providers the companion would
-//! enable and whether each configured child provider could start. It reads
-//! the configuration and file metadata only; it starts no provider, makes no
-//! network or model call, and never talks to the running daemon.
+//! `codewide-companion providers status`: an offline report of the
+//! providers the companion would enable on this machine — Codex always,
+//! Claude when the user's `claude` is found — and whether Claude could
+//! start. It reads file metadata and the login shell's `PATH` only; it
+//! starts no provider, makes no network or model call, and never talks to
+//! the running daemon. No configuration file is read.
 
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
 };
 
-use codewide_companion::agent::{
-    providers::{claude, codex},
-    registry::{AgentProvidersConfig, CONFIG_FILE_NAME},
-};
+use codewide_companion::agent::providers::{claude, codex};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusReport {
-    config_path: PathBuf,
-    config: ConfigState,
     providers: Vec<ProviderStatus>,
 }
 
 impl StatusReport {
-    /// Whether every configured provider would start.
+    /// Whether every provider the companion would enable could start.
     #[must_use]
     pub fn ready(&self) -> bool {
-        !matches!(self.config, ConfigState::Invalid { .. })
-            && self.providers.iter().all(|provider| {
-                matches!(
-                    provider.state,
-                    ProviderState::BuiltIn { .. }
-                        | ProviderState::Ready { .. }
-                        | ProviderState::Disabled
-                        | ProviderState::Off { .. }
-                )
-            })
+        self.providers.iter().all(|provider| {
+            matches!(
+                provider.state,
+                ProviderState::BuiltIn { .. }
+                    | ProviderState::Ready { .. }
+                    | ProviderState::Off { .. }
+            )
+        })
     }
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "state", rename_all = "camelCase")]
-enum ConfigState {
-    /// No file: Codex only.
-    Missing,
-    /// The file is unreadable or invalid: the companion runs Codex only.
-    Invalid {
-        error: String,
-    },
-    Valid {
-        primary: String,
-    },
 }
 
 #[derive(Debug, Serialize)]
@@ -76,31 +56,24 @@ enum ProviderState {
         problems: Vec<String>,
         host: ClaudeHostReport,
     },
-    /// `false` in the configuration turns the provider off.
-    Disabled,
-    /// No entry and no `claude` found: the companion runs no Claude.
+    /// No `claude` found: the companion runs no Claude.
     Off {
         reason: String,
     },
-    /// The entry does not parse; the companion disables this provider.
-    Invalid {
-        error: String,
-    },
-    /// No adapter has this id; the companion disables it.
-    Unknown,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ClaudeHostReport {
-    /// The `PATH` the host child gets.
+    /// The `PATH` the `claude` children get.
     search_path: Vec<PathBuf>,
-    /// `configured` (the entry's `environment.PATH`), `loginShell` (the
-    /// user's login-shell `PATH`) or `inherited` (the companion's own `PATH`,
-    /// here: this command's `PATH`, which may differ from the service
-    /// manager's).
+    /// `loginShell` (the user's login-shell `PATH`) or `inherited` (the
+    /// companion's own `PATH`, here: this command's `PATH`, which may differ
+    /// from the service manager's).
     search_path_source: &'static str,
-    claude_config_dir: Option<PathBuf>,
+    /// Claude's configuration directory (`CLAUDE_CONFIG_DIR`, else
+    /// `~/.claude`).
+    config_directory: Option<PathBuf>,
     /// Claude's session store the companion watches.
     projects_root: Option<PathBuf>,
 }
@@ -122,136 +95,58 @@ pub fn default_state_directory() -> PathBuf {
         .join("codewide/companion")
 }
 
-/// What the machine gives Claude for one `providers.claude` entry (`{}`
-/// without one).
-type DefaultsFor<'a> = &'a dyn Fn(&serde_json::Value) -> claude::config::ClaudeDefaults;
-
 /// Builds the report; `inherited_path` stands in for the companion's own
-/// `PATH` when an entry configures none.
+/// `PATH` when the login shell reports none.
 #[must_use]
 pub fn report(state_directory: &Path, inherited_path: Option<&OsString>) -> StatusReport {
-    report_with(state_directory, inherited_path, &|entry| {
-        claude_defaults(state_directory, entry)
-    })
+    report_with(
+        &claude::config::ClaudeDefaults::discover(state_directory.join("claude-journal")),
+        inherited_path,
+    )
 }
 
 fn report_with(
-    state_directory: &Path,
+    defaults: &claude::config::ClaudeDefaults,
     inherited_path: Option<&OsString>,
-    defaults: DefaultsFor<'_>,
 ) -> StatusReport {
-    let config_path = state_directory.join(CONFIG_FILE_NAME);
-    let mut providers = vec![ProviderStatus {
-        id: codex::PROVIDER_ID.to_owned(),
-        state: ProviderState::BuiltIn {
-            note: "always enabled; configured by the serve flags (a host without Codex is not supported)",
-        },
-    }];
-    let loaded = AgentProvidersConfig::load(&config_path);
-    let claude_entry = match &loaded {
-        Ok(Some(config)) => config
-            .entries
-            .iter()
-            .any(|(id, _)| id.as_str() == claude::PROVIDER_ID),
-        Ok(None) | Err(_) => false,
-    };
-    if !claude_entry {
-        providers.push(ProviderStatus {
-            id: claude::PROVIDER_ID.to_owned(),
-            state: automatic_claude_state(defaults, inherited_path),
-        });
-    }
-    let config = match loaded {
-        Ok(None) => ConfigState::Missing,
-        Err(err) => ConfigState::Invalid {
-            error: err.to_string(),
-        },
-        Ok(Some(config)) => {
-            for (id, entry) in &config.entries {
-                let state = match id.as_str() {
-                    codex::PROVIDER_ID => continue,
-                    claude::PROVIDER_ID if entry == &serde_json::Value::Bool(false) => {
-                        ProviderState::Disabled
-                    }
-                    claude::PROVIDER_ID => claude_state(defaults, entry, inherited_path),
-                    _ => ProviderState::Unknown,
-                };
-                providers.push(ProviderStatus {
-                    id: id.to_string(),
-                    state,
-                });
-            }
-            ConfigState::Valid {
-                primary: config.primary.to_string(),
-            }
-        }
-    };
     StatusReport {
-        config_path,
-        config,
-        providers,
+        providers: vec![
+            ProviderStatus {
+                id: codex::PROVIDER_ID.to_owned(),
+                state: ProviderState::BuiltIn {
+                    note: "always enabled; configured by the serve flags (a host without Codex is not supported)",
+                },
+            },
+            ProviderStatus {
+                id: claude::PROVIDER_ID.to_owned(),
+                state: claude_state(defaults, inherited_path),
+            },
+        ],
     }
 }
 
-/// What the companion would give Claude for `entry`: the user's `claude`
-/// and login-shell `PATH`.
-fn claude_defaults(
-    state_directory: &Path,
-    entry: &serde_json::Value,
-) -> claude::config::ClaudeDefaults {
-    claude::config::ClaudeDefaults::discover(entry, state_directory.join("claude-journal"))
-}
-
-fn automatic_claude_state(
-    defaults: DefaultsFor<'_>,
+fn claude_state(
+    defaults: &claude::config::ClaudeDefaults,
     inherited_path: Option<&OsString>,
 ) -> ProviderState {
-    let entry = serde_json::Value::Object(serde_json::Map::new());
-    let defaults = defaults(&entry);
-    match claude::ClaudeConfig::automatic(&defaults) {
-        Ok(config) => config_state(
-            &config,
-            &entry,
-            inherited_path,
-            defaults.login_path.as_ref(),
-        ),
+    match claude::ClaudeConfig::automatic(defaults) {
+        Ok(config) => config_state(&config, inherited_path),
         Err(err) => ProviderState::Off {
             reason: err.to_string(),
         },
     }
 }
 
-fn claude_state(
-    defaults: DefaultsFor<'_>,
-    entry: &serde_json::Value,
-    inherited_path: Option<&OsString>,
-) -> ProviderState {
-    let defaults = defaults(entry);
-    match claude::ClaudeConfig::parse(entry, &defaults) {
-        Ok(config) => config_state(&config, entry, inherited_path, defaults.login_path.as_ref()),
-        Err(err) => ProviderState::Invalid {
-            error: err.to_string(),
-        },
-    }
-}
-
-fn config_state(
-    config: &claude::ClaudeConfig,
-    entry: &serde_json::Value,
-    inherited_path: Option<&OsString>,
-    login_path: Option<&Vec<PathBuf>>,
-) -> ProviderState {
+fn config_state(config: &claude::ClaudeConfig, inherited_path: Option<&OsString>) -> ProviderState {
     let inherited = inherited_path.map(OsString::as_os_str);
     let host = ClaudeHostReport {
         search_path: config.search_path(inherited),
-        search_path_source: if entry.pointer("/environment/PATH").is_some() {
-            "configured"
-        } else if login_path.is_some() || config.environment.search_path.is_some() {
+        search_path_source: if config.search_path.is_some() {
             "loginShell"
         } else {
             "inherited"
         },
-        claude_config_dir: config.environment.claude_config_dir.clone(),
+        config_directory: config.config_directory(),
         projects_root: config.projects_root(),
     };
     let problems = claude::preflight::preflight(config, inherited)
@@ -269,21 +164,7 @@ fn config_state(
 mod tests {
     use std::os::unix::fs::PermissionsExt;
 
-    use serde_json::json;
-
     use super::*;
-
-    /// A machine that offers Claude nothing: no `claude`,
-    /// no login shell.
-    fn no_machine(
-        state_directory: &Path,
-    ) -> impl Fn(&serde_json::Value) -> claude::config::ClaudeDefaults {
-        let journal = state_directory.join("claude-journal");
-        move |_| claude::config::ClaudeDefaults {
-            journal_directory: journal.clone(),
-            ..claude::config::ClaudeDefaults::default()
-        }
-    }
 
     fn executable(path: &Path, content: &str) -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all(path.parent().ok_or("no parent")?)?;
@@ -292,14 +173,24 @@ mod tests {
         Ok(())
     }
 
+    fn machine(
+        root: &Path,
+        claude: Option<PathBuf>,
+        login_path: Option<Vec<PathBuf>>,
+    ) -> claude::config::ClaudeDefaults {
+        claude::config::ClaudeDefaults {
+            claude_executable: claude,
+            journal_directory: root.join("claude-journal"),
+            login_path,
+        }
+    }
+
     #[test]
-    fn reports_missing_valid_and_invalid_configurations() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn reports_codex_and_the_found_claude() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
-        let missing = report_with(root.path(), None, &no_machine(root.path()));
-        assert!(matches!(missing.config, ConfigState::Missing));
+        // A machine without `claude` runs no Claude and is still ready.
+        let missing = report_with(&machine(root.path(), None, None), None);
         assert!(missing.ready());
-        // A machine without `claude` runs no Claude.
         assert!(matches!(
             missing.providers[1].state,
             ProviderState::Off { .. }
@@ -309,51 +200,23 @@ mod tests {
         let claude = root.path().join("npm/bin/claude");
         executable(&node, "")?;
         executable(&claude, "#!/usr/bin/env node\n")?;
-        let write = |environment: serde_json::Value| {
-            std::fs::write(
-                root.path().join(CONFIG_FILE_NAME),
-                serde_json::to_vec(&json!({
-                    "version": 1, "primary": "codex",
-                    "providers": {
-                        "claude": {
-                            "claudeExecutable": claude,
-                            "journalDirectory": root.path().join("journal"),
-                            "environment": environment,
-                        },
-                        "other": {},
-                    },
-                }))?,
-            )
-        };
-
-        write(json!({"PATH": "/usr/bin:/bin"}))?;
-        let ready = report_with(root.path(), None, &no_machine(root.path()));
-        let value = serde_json::to_value(&ready)?;
-        assert_eq!(
-            value["config"],
-            json!({"state": "valid", "primary": "codex"})
+        let ready = report_with(
+            &machine(
+                root.path(),
+                Some(claude),
+                Some(vec!["/usr/bin".into(), "/bin".into()]),
+            ),
+            None,
         );
+        let value = serde_json::to_value(&ready)?;
+        assert_eq!(value["providers"][0]["id"], "codex");
         assert_eq!(value["providers"][1]["id"], "claude");
         assert_eq!(value["providers"][1]["status"], "ready");
         assert_eq!(
             value["providers"][1]["host"]["searchPathSource"],
-            "configured"
+            "loginShell"
         );
-        assert_eq!(
-            value["providers"][2],
-            json!({"id": "other", "status": "unknown"})
-        );
-        assert!(!ready.ready());
-
-        std::fs::remove_file(&claude)?;
-        let invalid =
-            serde_json::to_value(report_with(root.path(), None, &no_machine(root.path())))?;
-        assert_eq!(invalid["providers"][1]["status"], "invalid");
-
-        std::fs::write(root.path().join(CONFIG_FILE_NAME), "{")?;
-        let broken = report_with(root.path(), None, &no_machine(root.path()));
-        assert!(matches!(broken.config, ConfigState::Invalid { .. }));
-        assert!(!broken.ready());
+        assert!(ready.ready());
         Ok(())
     }
 
@@ -362,20 +225,9 @@ mod tests {
         let root = tempfile::tempdir()?;
         let claude = root.path().join("npm/bin/claude");
         executable(&claude, "#!/usr/bin/env node\n")?;
-        std::fs::write(
-            root.path().join(CONFIG_FILE_NAME),
-            serde_json::to_vec(&json!({
-                "version": 1, "primary": "codex",
-                "providers": {"claude": {
-                    "claudeExecutable": claude,
-                    "journalDirectory": root.path().join("journal"),
-                }},
-            }))?,
-        )?;
         let status = report_with(
-            root.path(),
+            &machine(root.path(), Some(claude), None),
             Some(&OsString::from("/nonexistent")),
-            &no_machine(root.path()),
         );
         let value = serde_json::to_value(&status)?;
         assert_eq!(value["providers"][1]["status"], "notReady");

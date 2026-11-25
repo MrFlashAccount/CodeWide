@@ -27,7 +27,8 @@ export type PrivateAssetSource =
 
 export type PrivateAssetImageVariant = "detail" | "original" | "preview";
 
-type MediaAssetSource = { id: string; kind: "media" };
+type MediaId = string & { readonly __mediaId: unique symbol };
+type MediaAssetSource = { readonly id: MediaId; readonly kind: "media" };
 type ResolvedPrivateAssetSource =
   | Exclude<PrivateAssetSource, { kind: "direct" | "remote" }>
   | MediaAssetSource;
@@ -119,6 +120,20 @@ export async function fetchPrivateAsset(
     return response;
   }
   throw new Error("Private attachment authorization did not recover");
+}
+
+/** Sends a device file directly to the authenticated PR attachment endpoint. */
+export async function fetchForgeAttachmentUpload(
+  target: { readonly name: string; readonly pullRequest: string },
+  getAccess: GetTransferAccess,
+  init: CompanionTransportInit,
+): Promise<Response> {
+  return fetchAuthenticatedTransfer(getAccess, (access) => {
+    const uri = new URL(companionHttpUrl(access.baseUrl, "/v1/forge/comment-attachment"));
+    uri.searchParams.set("pullRequest", target.pullRequest);
+    uri.searchParams.set("name", target.name);
+    return { init, uri: uri.toString() };
+  });
 }
 
 export async function fetchScopedUpload(
@@ -359,13 +374,10 @@ function privateAssetUrl(source: ResolvedPrivateAssetSource, access: TransferAcc
     return url.toString();
   }
   if (source.kind === "content") {
-    if (!/^[a-f0-9]{64}$/u.test(source.id)) {
-      throw new Error("Private asset reference is invalid");
-    }
+    validateContentDigest(source.id);
     return companionUrl(access, `/v1/content/${source.id}`).toString();
   }
   if (source.kind === "media") {
-    validateAssetId(source.id);
     return companionUrl(access, `/v1/media/${source.id}`).toString();
   }
   const url = new URL(scopedTransferUrl(access, "/v1/files/download", source.rootId, source.path));
@@ -388,10 +400,9 @@ function privateAssetImageUrl(
     url = companionUrl(access, "/v1/image-previews/host-file");
     url.searchParams.set("path", source.path);
   } else if (source.kind === "content") {
-    validateAssetId(source.id);
+    validateContentDigest(source.id);
     url = companionUrl(access, `/v1/image-previews/content/${source.id}`);
   } else if (source.kind === "media") {
-    validateAssetId(source.id);
     url = companionUrl(access, `/v1/image-previews/media/${source.id}`);
   } else {
     validateScopedPath(source.rootId, source.path);
@@ -453,7 +464,7 @@ async function materializeRemoteAsset(
     throw new Error(`Private asset materialization failed (${String(response.status)})`);
   }
   const body = unknownRecord(await response.json());
-  if (body === null || typeof body.id !== "string" || !/^[a-f0-9]{64}$/u.test(body.id)) {
+  if (body === null || !isMediaId(body.id)) {
     throw new Error("Private asset response is invalid");
   }
   return { id: body.id, kind: "media" };
@@ -466,7 +477,12 @@ function resolvedPrivateAssetCacheKey(source: ResolvedPrivateAssetSource): strin
   return privateAssetCacheKey(source);
 }
 
-function validateAssetId(id: string): void {
+// Companion encodes 24 random bytes as an unpadded base64url media handle.
+function isMediaId(value: unknown): value is MediaId {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{32}$/u.test(value);
+}
+
+function validateContentDigest(id: string): void {
   if (!/^[a-f0-9]{64}$/u.test(id)) {
     throw new Error("Private asset reference is invalid");
   }

@@ -25,24 +25,27 @@ const skills: CatalogSkill[] = [
 
 describe("composer skill suggestions", () => {
   it("maps enabled catalog results to canonical dollar invocations", () => {
-    expect(composerSkillSuggestions(skills, "review")).toEqual([{
-      kind: "skill",
-      id: "skill:/skills/review",
-      label: "review",
-      insertText: "$quality:review",
-      url: "codewide-skill://%2Fskills%2Freview",
-      description: "Stress-test a change",
-      group: "Quality",
-      name: "quality:review",
-      path: "/skills/review",
-      plugin: { id: "quality", label: "Quality", icon: null },
-    }]);
+    expect(composerSkillSuggestions(skills, "review")).toEqual([
+      {
+        kind: "skill",
+        id: "skill:/skills/review",
+        label: "review",
+        insertText: "$quality:review",
+        url: "codewide-skill://%2Fskills%2Freview",
+        description: "Stress-test a change",
+        group: "Quality",
+        name: "quality:review",
+        path: "/skills/review",
+        plugin: { id: "quality", label: "Quality", icon: null },
+      },
+    ]);
     expect(composerSkillSuggestions(skills, "disabled")).toEqual([]);
   });
 
   it("removes composer metadata links before submission", () => {
-    expect(markdownForComposerSubmission("Use [$review](codewide-skill://%2Fskills%2Freview) now"))
-      .toBe("Use $review now");
+    expect(
+      markdownForComposerSubmission("Use [$review](codewide-skill://%2Fskills%2Freview) now"),
+    ).toBe("Use $review now");
   });
 
   it("matches only complete skill invocation tokens", () => {

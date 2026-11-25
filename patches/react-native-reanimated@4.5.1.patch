@@ -1,0 +1,49 @@
+diff --git a/Common/cpp/reanimated/Fabric/updates/UpdatesRegistry.cpp b/Common/cpp/reanimated/Fabric/updates/UpdatesRegistry.cpp
+--- a/Common/cpp/reanimated/Fabric/updates/UpdatesRegistry.cpp
++++ b/Common/cpp/reanimated/Fabric/updates/UpdatesRegistry.cpp
+@@ -167,9 +167,17 @@
+   flushUpdatesToRegistry(updatesBatch_);
+ 
+   UpdatesBatch updatesBatch;
+-  for (const auto &[tag, pair] : updatesRegistry_) {
+-    const auto &[shadowNodeFamily, props] = pair;
+-    updatesBatch.emplace_back(shadowNodeFamily, props);
++  // Synchronous updates only need tags touched in this batch, with their merged props.
++  std::unordered_set<Tag> collectedTags;
++  for (const auto &[shadowNodeFamily, _] : updatesBatch_) {
++    const auto tag = shadowNodeFamily->getTag();
++    if (!collectedTags.insert(tag).second) {
++      continue;
++    }
++    const auto it = updatesRegistry_.find(tag);
++    if (it != updatesRegistry_.end()) {
++      updatesBatch.emplace_back(it->second.first, it->second.second);
++    }
+   }
+   return updatesBatch;
+ }
+diff --git a/android/src/main/java/com/swmansion/reanimated/NativeProxy.kt b/android/src/main/java/com/swmansion/reanimated/NativeProxy.kt
+--- a/android/src/main/java/com/swmansion/reanimated/NativeProxy.kt
++++ b/android/src/main/java/com/swmansion/reanimated/NativeProxy.kt
+@@ -238,6 +238,12 @@
+         }
+     }
+ 
++    private val getViewExistsMethod by lazy {
++        runCatching {
++            mountingManager.javaClass.getMethod("getViewExists", Int::class.javaPrimitiveType)
++        }.getOrNull()
++    }
++
+     private val updatePropsSynchronouslyMethod by lazy {
+         mountingManager.javaClass.methods
+             .first {
+@@ -253,6 +259,8 @@
+         SynchronousPropsBufferParser.parse(intBuffer, doubleBuffer) { viewTag, props ->
+             if (BuildConfig.IS_REACT_NATIVE_86_OR_NEWER) {
+                 try {
++                    // Fabric will apply the registry props on commit if the view mounts later.
++                    if (getViewExistsMethod?.invoke(mountingManager, viewTag) == false) return@parse
+                     updatePropsSynchronouslyMethod.invoke(mountingManager, viewTag, props)
+                 } catch (e: Exception) {
+                     Log.w("Reanimated", "synchronouslyUpdateUIProps failed for tag $viewTag", e)

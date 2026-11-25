@@ -60,6 +60,7 @@ export const colors = {
   red: scheme.error,
   surfaceHover: scheme.surfaceContainerHigh,
   surfaceRaised: scheme.surfaceContainer,
+  systemBarShade: "rgba(0, 0, 0, 0.16)",
   text: scheme.onSurface,
   textDim: "#858585",
   textMuted: scheme.onSurfaceVariant,

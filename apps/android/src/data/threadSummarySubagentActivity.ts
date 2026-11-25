@@ -1,5 +1,6 @@
 import { threadSummaryDescendants } from "./thread-summary-descendants";
 import type { StoredThreadSummary } from "./thread-summary-types";
+import { threadAgentDeclares } from "./threadAgent";
 import { unknownRecord } from "./unknownRecord";
 
 /**
@@ -77,8 +78,9 @@ const ENDED_AGENT_STATES: ReadonlySet<string> = new Set([
 /**
  * The sub-agent states an item event of a parent thread reports
  * (`item/started` or `item/completed` of a `collabAgentToolCall`, keyed by the
- * child thread id). Only a non-primary provider relies on them: its children
- * have no live thread of their own, whereas the primary provider's children
+ * child thread id). Only a provider without the native Codex surface relies on
+ * them: its children have no live thread of their own, whereas the native
+ * provider's children
  * report their status through their own events, which a late parent item must
  * not override.
  */
@@ -105,8 +107,9 @@ export function reportedSubagentStates(payload: unknown): ReportedSubagentState[
 
 /**
  * The latest reported state of each sub-agent in a batch, from the events of
- * parents that belong to a non-primary provider (`parentOf` returns the
- * parent's current row).
+ * parents whose provider does not serve the native Codex surface
+ * (`codex.native`), whose sub-agents are no threads of their own
+ * (`parentOf` returns the parent's current row).
  */
 export function reportedSubagentStatesOfBatch(
   payloads: readonly { readonly parentThreadId: string | null; readonly payload: unknown }[],
@@ -115,7 +118,8 @@ export function reportedSubagentStatesOfBatch(
   const reported = new Map<string, boolean>();
   for (const { parentThreadId, payload } of payloads) {
     const parent = parentThreadId === null ? undefined : parentOf(parentThreadId);
-    if (parent?.codewideAgent?.primary !== false) {
+    const agent = parent?.codewideAgent ?? null;
+    if (agent === null || threadAgentDeclares(agent, "codex.native")) {
       continue;
     }
     for (const state of reportedSubagentStates(payload)) {

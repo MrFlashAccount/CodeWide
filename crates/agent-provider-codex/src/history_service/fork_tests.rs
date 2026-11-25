@@ -19,6 +19,23 @@ pub(super) const FORK: &str = "019fe7af-0000-7000-8000-000000000002";
 const NESTED_FORK: &str = "019fe7af-0000-7000-8000-000000000003";
 const MISSING: &str = "019fe7af-0000-7000-8000-0000000000ff";
 
+#[tokio::test]
+async fn history_files_include_the_originals_of_a_nested_fork() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let parent_end = write_parent_forked_mid_turn(root.path())?;
+    let fork_end = write_fork(root.path(), (PARENT, parent_end), &["f0"])?;
+    write_thread(root.path(), NESTED_FORK, (FORK, fork_end), &["n0"])?;
+    let service = service(root.path())?;
+    let paths = service.thread_history_files(NESTED_FORK).await?;
+    let expected = [PARENT, FORK, NESTED_FORK].map(|id| rollout_path(root.path(), id));
+    let expected = expected.into_iter().collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(paths, expected);
+    for path in paths {
+        assert!(std::fs::read_to_string(path)?.contains("session_meta"));
+    }
+    Ok(())
+}
+
 pub(super) fn service(root: &Path) -> Result<HistoryService, Box<dyn std::error::Error>> {
     Ok(HistoryService::new(
         Arc::new(SessionCatalog::scan(root)),

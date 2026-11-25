@@ -2,7 +2,7 @@ import { StyleSheet } from "react-native";
 import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../theme";
 import { threadListLayout } from "../../ui/thread-list-layout";
 
-export const SECTION_HEIGHT = controlSize.touch + spacing.sm;
+const SECTION_HEIGHT = controlSize.touch + spacing.sm;
 
 export const styles = StyleSheet.create({
   archiveCrumb: {
@@ -131,8 +131,8 @@ export const styles = StyleSheet.create({
   shortcut: {
     gap: spacing.xs,
     height: threadListLayout.projectRowHeight,
-    marginHorizontal: threadListLayout.edgeInset,
-    paddingHorizontal: spacing.xs,
+    marginHorizontal: threadListLayout.cardEdgeInset,
+    paddingHorizontal: threadListLayout.cardContentInset,
   },
   shortcutIdentity: {
     alignItems: "baseline",

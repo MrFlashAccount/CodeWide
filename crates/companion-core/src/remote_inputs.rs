@@ -92,6 +92,59 @@ pub async fn prepare_remote_file_inputs(
     Ok(params)
 }
 
+/// Rewrites scoped attachments in a question answer into file references the provider
+/// can read. Its requestUserInput response accepts strings only.
+pub(crate) async fn prepare_question_files(
+    mut response: Value,
+    files: Option<&FileService>,
+) -> Result<Value, RemoteInputError> {
+    let Some(answers) = response
+        .pointer_mut("/result/answers")
+        .and_then(Value::as_object_mut)
+    else {
+        return Ok(response);
+    };
+    let mut count = 0;
+    for answer in answers.values_mut() {
+        let Some(parts) = answer.get_mut("answers").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for part in parts.iter_mut().filter(|part| part.is_object()) {
+            let text = part
+                .get("text")
+                .and_then(Value::as_str)
+                .ok_or(RemoteInputError::InvalidField("text"))?;
+            let attachments = part
+                .get("files")
+                .and_then(Value::as_array)
+                .ok_or(RemoteInputError::InvalidField("files"))?;
+            count += attachments.len();
+            if count > MAX_REMOTE_FILES {
+                return Err(RemoteInputError::TooManyFiles);
+            }
+            let service = files.ok_or(RemoteInputError::FileServiceUnavailable)?;
+            let mut resolved = text.to_owned();
+            for file in attachments {
+                let fields = file
+                    .as_object()
+                    .ok_or(RemoteInputError::InvalidField("file"))?;
+                let path = service
+                    .resolve_input_file(
+                        bounded_string(fields, "rootId")?,
+                        bounded_string(fields, "path")?,
+                    )
+                    .await?;
+                if !resolved.is_empty() {
+                    resolved.push('\n');
+                }
+                resolved.push_str(path.to_str().ok_or(RemoteInputError::NonUtf8Path)?);
+            }
+            *part = Value::String(resolved);
+        }
+    }
+    Ok(response)
+}
+
 fn wrap_text_with_mentioned_files(input: &mut Vec<Value>, files: &[(String, String)]) {
     let file_list = files
         .iter()
@@ -172,6 +225,41 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+
+    #[tokio::test]
+    async fn question_resolves_only_the_answer_owning_the_attachment()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path();
+        tokio::fs::write(root.join("capture.png"), b"png").await?;
+        let files = FileService::open(
+            HashMap::from([("attachments".into(), root.to_owned())]),
+            Vec::new(),
+            None,
+            None,
+        )
+        .await?;
+        let response = json!({"id":"ask","result":{"answers":{
+            "order":{"answers":["Keep current order"]},
+            "appearance":{"answers":[{"text":"See screenshot","files":[{"rootId":"attachments","path":"capture.png"}]}]}
+        }}});
+        let mut missing = response.clone();
+        missing["result"]["answers"]["appearance"]["answers"][0]["files"][0]["path"] =
+            json!("absent.png");
+        assert!(prepare_question_files(missing, Some(&files)).await.is_err());
+        let prepared = prepare_question_files(response, Some(&files)).await?;
+        assert_eq!(prepared["id"], "ask");
+        assert_eq!(
+            prepared["result"]["answers"]["order"]["answers"],
+            json!(["Keep current order"])
+        );
+        let actual = tokio::fs::canonicalize(root.join("capture.png")).await?;
+        assert_eq!(
+            prepared["result"]["answers"]["appearance"]["answers"],
+            json!([format!("See screenshot\n{}", actual.display())])
+        );
+        Ok(())
+    }
 
     #[tokio::test]
     async fn resolves_remote_files_to_app_server_input_variants()

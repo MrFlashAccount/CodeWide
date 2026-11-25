@@ -23,6 +23,16 @@ export const styles = StyleSheet.create({
     justifyContent: "flex-end",
     marginLeft: "auto",
   },
+  answerRow: {
+    alignItems: "center",
+    borderTopColor: colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: controlSize.regular,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.sm,
+  },
   card: {
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
@@ -151,4 +161,11 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
   },
   selected: { backgroundColor: colors.surfaceContainerHigh },
+  timelineCard: {
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.medium,
+    gap: spacing.xs,
+    padding: spacing.sm,
+    width: "100%",
+  },
 });

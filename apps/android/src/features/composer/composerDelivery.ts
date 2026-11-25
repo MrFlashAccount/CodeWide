@@ -178,6 +178,7 @@ export function useComposerDelivery({
     queuedComposerEditBusy,
     saveQueuedComposerEdit,
     send,
+    sendAvailable: onSend !== undefined,
     threadLifecycleActive,
     uploadsBlockSend,
     voiceError,

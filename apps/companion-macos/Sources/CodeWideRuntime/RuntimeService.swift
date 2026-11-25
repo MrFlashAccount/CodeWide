@@ -74,6 +74,32 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
         }
     }
 
+    func httpProxySettings(
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        do {
+            reply(try core.httpProxySettingsJson(), nil)
+        } catch {
+            reply(nil, Self.xpcError(error))
+        }
+    }
+
+    func setHttpProxySettings(
+        json: String,
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        do {
+            reply(try core.setHttpProxySettingsJson(settingsJson: json), nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                // LaunchAgent restarts unsuccessful exits and reopens the
+                // dictation client with the newly persisted proxy settings.
+                exit(EXIT_FAILURE)
+            }
+        } catch {
+            reply(nil, Self.xpcError(error))
+        }
+    }
+
     func discoverAppServers(
         withReply reply: @escaping @Sendable (AppServerListPayload?, NSError?) -> Void
     ) {

@@ -207,7 +207,7 @@ index 7ca6a3adfa35353588c37e04dc5fc532100faf1a..41c37e9a6de9b6e230a433410570bb77
      view: EnrichedMarkdownTextInputView?,
      displayText: String?,
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/input/EnrichedMarkdownTextInputView.kt b/android/src/main/java/com/swmansion/enriched/markdown/input/EnrichedMarkdownTextInputView.kt
-index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dcba0ccf21 100644
+index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..b70e392b01a6b3fc1c84104f37cdc5e5d861d5b6 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/input/EnrichedMarkdownTextInputView.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/input/EnrichedMarkdownTextInputView.kt
 @@ -5,6 +5,7 @@ import android.content.Context
@@ -256,7 +256,19 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
  
    val contextMenu = InputContextMenu(this)
    val eventEmitter = InputEventEmitter(this)
-@@ -202,7 +208,7 @@ class EnrichedMarkdownTextInputView(
+@@ -160,6 +166,11 @@ class EnrichedMarkdownTextInputView(
+       InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
+       InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
+     gravity = Gravity.TOP or Gravity.START
++    // Font padding grows the first and last line to the font's top/bottom
++    // extremes (Roboto Flex: 2461/600 units over a 1900/500 ascent/descent), so
++    // a line box centred by its owner would draw the glyphs below its centre.
++    // Lines span ascent..descent instead; InputMeasurementStore measures the same.
++    includeFontPadding = false
+ 
+     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+       breakStrategy = android.graphics.text.LineBreaker.BREAK_STRATEGY_HIGH_QUALITY
+@@ -202,7 +213,7 @@ class EnrichedMarkdownTextInputView(
  
    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
      val base = super.onCreateInputConnection(outAttrs) ?: return null
@@ -265,7 +277,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
    }
  
    // Plain Tab is consumed before the platform's focus navigation so it inserts
-@@ -268,6 +274,7 @@ class EnrichedMarkdownTextInputView(
+@@ -268,6 +279,7 @@ class EnrichedMarkdownTextInputView(
    override fun isLayoutRequested(): Boolean = false
  
    override fun onTouchEvent(ev: MotionEvent): Boolean {
@@ -273,7 +285,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
      when (ev.action) {
        MotionEvent.ACTION_DOWN -> {
          detectScrollMovement = true
-@@ -285,11 +292,18 @@ class EnrichedMarkdownTextInputView(
+@@ -285,11 +297,18 @@ class EnrichedMarkdownTextInputView(
          }
        }
      }
@@ -293,7 +305,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
    // In auto-grow mode (scrollEnabled=false) TextView's internal bringPointIntoView
    // scrolls content before Fabric has resized the view, causing a visible flicker.
    override fun scrollTo(
-@@ -339,12 +353,18 @@ class EnrichedMarkdownTextInputView(
+@@ -339,12 +358,18 @@ class EnrichedMarkdownTextInputView(
  
      editSession.enter(EditPhase.Processing)
      try {
@@ -313,7 +325,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
            preEditSelectionStart = preEditSelectionStart,
            preEditSelectionEnd = preEditSelectionEnd,
            pendingStyles = pendingStyles.toSet(),
-@@ -354,6 +374,8 @@ class EnrichedMarkdownTextInputView(
+@@ -354,6 +379,8 @@ class EnrichedMarkdownTextInputView(
        editSession.isTextChanging = false
        editSession.didTextChangeRecently = true
        lastProcessedText = text?.toString() ?: currentText
@@ -322,7 +334,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
      } finally {
        editSession.exit()
      }
-@@ -367,7 +389,7 @@ class EnrichedMarkdownTextInputView(
+@@ -367,7 +394,7 @@ class EnrichedMarkdownTextInputView(
      if (!isComponentReady || editSession.shouldSuppressTextWatcher) return
  
      if (!editSession.isTextChanging) {
@@ -331,7 +343,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
          setSelection(newStart, newEnd)
          return
        }
-@@ -423,8 +445,9 @@ class EnrichedMarkdownTextInputView(
+@@ -423,8 +450,9 @@ class EnrichedMarkdownTextInputView(
      editStart: Int,
      deletedLength: Int,
      insertedLength: Int,
@@ -342,7 +354,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
      blockStore.adjustForEdit(editStart, deletedLength, insertedLength)
      editPipeline.pruneOrphanedAnchors()
      text?.let { blockStore.normalizeToLineBounds(it) }
-@@ -434,13 +457,14 @@ class EnrichedMarkdownTextInputView(
+@@ -434,13 +462,14 @@ class EnrichedMarkdownTextInputView(
      start: Int,
      end: Int,
      newText: String,
@@ -358,7 +370,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
        postAdjust(editable)
        lastProcessedText = editable.toString()
        applyFormattingAndEmit()
-@@ -454,6 +478,7 @@ class EnrichedMarkdownTextInputView(
+@@ -454,6 +483,7 @@ class EnrichedMarkdownTextInputView(
      val editable = text ?: return
      formatter.applyFormatting(editable, formattingStore.allRanges)
      formatter.applyBlockFormatting(editable, blockStore.allRanges)
@@ -366,7 +378,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
    }
  
    private fun applyFormattingAndEmit() {
-@@ -600,8 +625,10 @@ class EnrichedMarkdownTextInputView(
+@@ -600,8 +630,10 @@ class EnrichedMarkdownTextInputView(
              val le = blockCoordinator.lineEndOf(editable, i)
              val onlyZwsp = le - ls == 1 && editable[ls] == ZWSP
              val isEmptyListLine = onlyZwsp && blockCoordinator.listBlockAtLineStart(ls) != null
@@ -378,7 +390,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
                blockStore.adjustForEdit(i, 1, 0)
                anchorChanged = true
              } else {
-@@ -620,6 +647,7 @@ class EnrichedMarkdownTextInputView(
+@@ -620,6 +652,7 @@ class EnrichedMarkdownTextInputView(
          val block = blockCoordinator.listBlockAtLineStart(ls)
          if (block != null && le == ls) {
            runAsATransaction { editable.insert(ls, ZWSP.toString()) }
@@ -386,7 +398,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
            blockStore.adjustForEdit(ls, 0, 1)
            blockStore.normalizeToLineBounds(editable)
            setSelection(ls + 1)
-@@ -702,6 +730,16 @@ class EnrichedMarkdownTextInputView(
+@@ -702,6 +735,16 @@ class EnrichedMarkdownTextInputView(
      return super.onTextContextMenuItem(id)
    }
  
@@ -403,7 +415,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
    fun markdownForSelectedRange(): String? {
      val fullText = text?.toString() ?: return null
      return clipboardCoordinator.serializeSelectedRange(fullText, selectionStart, selectionEnd, text)
-@@ -726,6 +764,11 @@ class EnrichedMarkdownTextInputView(
+@@ -726,6 +769,11 @@ class EnrichedMarkdownTextInputView(
     */
    fun pasteMarkdown(markdown: String) {
      val editable = text ?: return
@@ -415,7 +427,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
      val prefix = markdown.takeWhile { it == '\n' }
      val suffix = if (markdown.length > prefix.length) markdown.takeLastWhile { it == '\n' } else ""
      val core = markdown.substring(prefix.length, markdown.length - suffix.length)
-@@ -739,7 +782,7 @@ class EnrichedMarkdownTextInputView(
+@@ -739,7 +787,7 @@ class EnrichedMarkdownTextInputView(
      replaceTextInRange(selStart, selEnd, plainText) { editable ->
        for (range in parsed.formattingRanges) {
          formattingStore.addRange(
@@ -424,7 +436,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
          )
        }
        for (block in parsed.blockRanges) {
-@@ -750,6 +793,25 @@ class EnrichedMarkdownTextInputView(
+@@ -750,6 +798,25 @@ class EnrichedMarkdownTextInputView(
      }
    }
  
@@ -450,7 +462,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
    /** Toggles a heading (H1-H6) on the cursor's paragraph(s); the active level toggles back to a paragraph. */
    fun toggleHeading(level: Int) {
      val blockType = BlockType.forHeadingLevel(level) ?: return
-@@ -760,6 +822,7 @@ class EnrichedMarkdownTextInputView(
+@@ -760,6 +827,7 @@ class EnrichedMarkdownTextInputView(
      type: BlockType,
      level: Int,
    ) {
@@ -458,7 +470,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
      val editable = text ?: return
      val selStart = selectionStart.coerceIn(0, editable.length)
      val selEnd = selectionEnd.coerceIn(selStart, editable.length)
-@@ -849,11 +912,13 @@ class EnrichedMarkdownTextInputView(
+@@ -849,11 +917,13 @@ class EnrichedMarkdownTextInputView(
      if (start < 0 || end < start || end > editable.length) return
  
      val shouldAppendSpace = end >= editable.length || !editable[end].isWhitespace()
@@ -474,7 +486,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
        dispatchMentionEvents(mentionCoordinator.clear(indicatorOverride = indicator))
        setSelection(start + replacement.length)
      }
-@@ -861,6 +926,7 @@ class EnrichedMarkdownTextInputView(
+@@ -861,6 +931,7 @@ class EnrichedMarkdownTextInputView(
  
    fun startMention(indicator: String) {
      if (indicator.isEmpty() || !mentionCoordinator.containsIndicator(indicator)) return
@@ -482,7 +494,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
      val selStart = selectionStart
      val selEnd = selectionEnd
  
-@@ -870,6 +936,36 @@ class EnrichedMarkdownTextInputView(
+@@ -870,6 +941,36 @@ class EnrichedMarkdownTextInputView(
      dispatchMentionUpdate()
    }
  
@@ -519,7 +531,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
    fun removeLinkAtCursor() {
      if (!linkCoordinator.removeLink(selectionStart)) return
      applyFormattingAndEmit()
-@@ -878,10 +974,24 @@ class EnrichedMarkdownTextInputView(
+@@ -878,10 +979,24 @@ class EnrichedMarkdownTextInputView(
    fun deleteLinkBeforeCursor(): Boolean {
      val cursorStart = selectionStart
      val cursorEnd = selectionEnd
@@ -544,7 +556,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
  
      replaceTextInRange(linkRange.start, linkRange.end, "") { editable ->
        setSelection(linkRange.start.coerceAtMost(editable.length))
-@@ -895,6 +1005,8 @@ class EnrichedMarkdownTextInputView(
+@@ -895,6 +1010,8 @@ class EnrichedMarkdownTextInputView(
      dispatchMentionUpdate()
    }
  
@@ -553,7 +565,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
    fun dismissActiveMention() {
      mentionCoordinator.clear(emit = false)
    }
-@@ -938,6 +1050,7 @@ class EnrichedMarkdownTextInputView(
+@@ -938,6 +1055,7 @@ class EnrichedMarkdownTextInputView(
        forceScrollToSelection()
        layoutManager.invalidateLayout()
        lastProcessedText = text?.toString() ?: ""
@@ -561,7 +573,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
      } finally {
        editSession.exit()
      }
-@@ -951,9 +1064,24 @@ class EnrichedMarkdownTextInputView(
+@@ -951,9 +1069,24 @@ class EnrichedMarkdownTextInputView(
      if (size <= 0f) return
      val sizePx = ceil(PixelUtil.toPixelFromSP(size))
      setTextSize(TypedValue.COMPLEX_UNIT_PX, sizePx)
@@ -586,7 +598,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
    fun setColorFromProps(colorInt: Int?) {
      setTextColor(colorInt ?: Color.BLACK)
    }
-@@ -999,6 +1127,7 @@ class EnrichedMarkdownTextInputView(
+@@ -999,6 +1132,7 @@ class EnrichedMarkdownTextInputView(
        )
      typeface = newTypeface
      paint.typeface = newTypeface
@@ -594,7 +606,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
      layoutManager.invalidateLayout()
    }
  
-@@ -1020,6 +1149,7 @@ class EnrichedMarkdownTextInputView(
+@@ -1020,6 +1154,7 @@ class EnrichedMarkdownTextInputView(
  
    fun afterUpdateTransaction() {
      updateTypeface()
@@ -602,7 +614,7 @@ index ffeb7a1d15d533349784f23b3bfae8aba68eaa32..bbdc6768a52fba359f9eb233a5dfc1dc
      if (autoFocusRequested) {
        autoFocusRequested = false
        pendingAutoFocusKeyboard = true
-@@ -1055,6 +1185,10 @@ class EnrichedMarkdownTextInputView(
+@@ -1055,6 +1190,10 @@ class EnrichedMarkdownTextInputView(
    }
  
    private fun dispatchMentionUpdate() {
@@ -1488,7 +1500,7 @@ index 0000000000000000000000000000000000000000..2e0619b106ba27f418c500212f696dbe
 +    (requestedHeight - (descent - ascent)).coerceAtLeast(0f)
 +}
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/input/layout/InputMeasurementStore.kt b/android/src/main/java/com/swmansion/enriched/markdown/input/layout/InputMeasurementStore.kt
-index d7fc9ac55b5c9b9f9f9553f18c86fe742b245ccf..1db810069fca0cab414a527be5ee93bbde1e6627 100644
+index d7fc9ac55b5c9b9f9f9553f18c86fe742b245ccf..67465f6b998c79e372f7315f75067bd29ac45e00 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/input/layout/InputMeasurementStore.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/input/layout/InputMeasurementStore.kt
 @@ -4,6 +4,7 @@ import android.content.Context
@@ -1555,11 +1567,14 @@ index d7fc9ac55b5c9b9f9f9553f18c86fe742b245ccf..1db810069fca0cab414a527be5ee93bb
    ): Long {
      val content = text ?: ""
      val widthPx = maxWidth.toInt().coerceAtLeast(0)
-@@ -125,7 +133,7 @@ object InputMeasurementStore {
+@@ -124,8 +132,9 @@ object InputMeasurementStore {
+     val builder =
        StaticLayout.Builder
          .obtain(content, 0, content.length, paint, widthPx)
-         .setIncludePad(true)
+-        .setIncludePad(true)
 -        .setLineSpacing(0f, 1f)
++        // Must match the input's includeFontPadding = false.
++        .setIncludePad(false)
 +        .setLineSpacing(lineSpacing, 1f)
  
      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

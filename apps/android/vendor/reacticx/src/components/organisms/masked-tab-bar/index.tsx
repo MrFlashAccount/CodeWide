@@ -1,0 +1,765 @@
+// @ts-check
+import React, { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  LayoutChangeEvent,
+  StyleSheet,
+  Text,
+  View,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  cancelAnimation,
+  useAnimatedReaction,
+  useAnimatedStyle,
+  useFrameCallback,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
+import { useEvent } from "@/react/useEvent";
+
+import {
+  DEFAULT_FONT_SIZE,
+  DEFAULT_GAP,
+  DEFAULT_HEIGHT,
+  DEFAULT_ICON_SIZE,
+  DEFAULT_PADDING,
+  DEFAULT_TRIGGER_GAP,
+  DEFAULT_TRIGGER_PADDING_X,
+  FOLLOW_DAMPING,
+  FOLLOW_STIFFNESS,
+  MAX_FRAME_SECONDS,
+  PALETTES,
+  PILL_SPRING,
+  PRESS_GROW,
+  PRESS_SPRING,
+} from "./const";
+import {
+  MaskedTabBarContext,
+  MaskedTabLayerContext,
+  MaskedTabRowContext,
+  useMaskedTabBar,
+  useMaskedTabLayer,
+} from "./context";
+import { startPillMotionOnUI } from "./motion";
+import type {
+  IMaskedTabBarContext,
+  IMaskedTabBarIcon,
+  IMaskedTabBarLabel,
+  IMaskedTabBarList,
+  IMaskedTabBarPalette,
+  IMaskedTabBarRoot,
+  IMaskedTabBarTrigger,
+  IMaskedTabBox,
+  IMaskedTabBoxEntry,
+} from "./types";
+import { createCompoundComponent } from "@/utils/create-compound-component";
+
+function clampValue(value: number, min: number, max: number): number {
+  "worklet";
+  return Math.min(Math.max(value, min), max);
+}
+
+const SELECTED_TAP_MAX_TRANSLATION = 8;
+
+function boxAtX(
+  list: IMaskedTabBoxEntry[],
+  x: number,
+): IMaskedTabBoxEntry | null {
+  "worklet";
+  for (let i = 0; i < list.length; i += 1) {
+    const box = list[i];
+    if (x >= box.x && x <= box.x + box.width) {
+      return box.disabled ? null : box;
+    }
+  }
+  return null;
+}
+
+function boxForValue(
+  list: IMaskedTabBoxEntry[],
+  value: string,
+): IMaskedTabBoxEntry | null {
+  "worklet";
+  for (let i = 0; i < list.length; i += 1) {
+    const box = list[i];
+    if (box.value === value) return box;
+  }
+  return null;
+}
+
+/** The trigger whose centre is closest to `center` — used when releasing. */
+function nearestBox(
+  list: IMaskedTabBoxEntry[],
+  center: number,
+): IMaskedTabBoxEntry | null {
+  "worklet";
+  let best: IMaskedTabBoxEntry | null = null;
+  let bestDistance = Number.MAX_VALUE;
+  for (let i = 0; i < list.length; i += 1) {
+    const box = list[i];
+    if (box.disabled) continue;
+    const distance = Math.abs(box.x + box.width / 2 - center);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = box;
+    }
+  }
+  return best;
+}
+
+function useTabPillMotion() {
+  const pillX = useSharedValue(0);
+  const pillWidth = useSharedValue(0);
+  const placedValueRef = useRef<string | null>(null);
+  const [motion] = useState(() => ({ pillX, pillWidth, placedValueRef }));
+  return motion;
+}
+
+const TabPillMotionContext = React.createContext<ReturnType<typeof useTabPillMotion> | null>(null);
+
+/** Shares the live indicator between catalog panes while each keeps its own measured targets. */
+export function MaskedTabBarMotionProvider({ children }: { readonly children: React.ReactNode }) {
+  const motion = useTabPillMotion();
+  return <TabPillMotionContext.Provider value={motion}>{children}</TabPillMotionContext.Provider>;
+}
+
+function MaskedTabBarRoot(props: IMaskedTabBarRoot): React.JSX.Element {
+  const motion = useContext(TabPillMotionContext);
+  return motion === null
+    ? <StandaloneTabBar {...props} />
+    : <MeasuredTabBar {...props} motion={motion} />;
+}
+
+function StandaloneTabBar(props: IMaskedTabBarRoot): React.JSX.Element {
+  const motion = useTabPillMotion();
+  return <MeasuredTabBar {...props} motion={motion} />;
+}
+
+function MeasuredTabBar({
+  motion,
+  active = true,
+  children,
+  value: valueProp,
+  defaultValue,
+  onValueChange,
+  onSelectedValueActivate,
+  theme = "light",
+  palette: paletteProp,
+  height = DEFAULT_HEIGHT,
+  radius,
+  padding = DEFAULT_PADDING,
+  gap = DEFAULT_GAP,
+  iconSize = DEFAULT_ICON_SIZE,
+  fontSize = DEFAULT_FONT_SIZE,
+  fontWeight = "600",
+  draggable = true,
+  measureRevision = 0,
+  style,
+}: IMaskedTabBarRoot & { readonly motion: ReturnType<typeof useTabPillMotion> }): React.JSX.Element {
+  const isControlled = valueProp !== undefined;
+  const [internalValue, setInternalValue] = useState<string>(
+    defaultValue ?? "",
+  );
+  const value = isControlled ? (valueProp as string) : internalValue;
+
+  const [boxMap, setBoxMap] = useState<
+    Record<string, IMaskedTabBox & { disabled: boolean }>
+  >({});
+  const [listWidth, setListWidth] = useState<number>(0);
+
+  const { pillX, pillWidth, placedValueRef } = motion;
+  const press = useSharedValue<number>(0);
+  const grabbed = useSharedValue<boolean>(false);
+
+  const palette = useMemo<IMaskedTabBarPalette>(
+    () => ({ ...PALETTES[theme], ...paletteProp }),
+    [theme, paletteProp],
+  );
+
+  const setValue = useCallback(
+    (next: string) => {
+      if (next === value) return;
+      if (!isControlled) setInternalValue(next);
+      onValueChange?.(next);
+    },
+    [value, isControlled, onValueChange],
+  );
+
+  const registerTrigger = useCallback(
+    (key: string, box: IMaskedTabBox, disabled: boolean) => {
+      setBoxMap((prev) => {
+        const current = prev[key];
+        if (
+          current &&
+          current.disabled === disabled &&
+          Math.abs(current.x - box.x) < 0.5 &&
+          Math.abs(current.width - box.width) < 0.5
+        ) {
+          return prev;
+        }
+        return { ...prev, [key]: { ...box, disabled } };
+      });
+    },
+    [],
+  );
+
+  const boxes = useMemo<IMaskedTabBoxEntry[]>(
+    () =>
+      Object.entries(boxMap)
+        .map(([key, box]) => ({ ...box, value: key }))
+        .sort((a, b) => a.x - b.x),
+    [boxMap],
+  );
+
+  useEffect(() => {
+    if (value || boxes.length === 0) return;
+    setValue(boxes[0].value);
+  }, [value, boxes, setValue]);
+
+  const activeBox = boxMap[value];
+
+  useEffect(() => {
+    if (!active || !activeBox) return;
+    if (grabbed.value) return;
+    // The pill springs only to a newly selected tab. When the selected tab
+    // itself moves or resizes (a relayout, a fold), the pill follows at once.
+    if (placedValueRef.current !== value && placedValueRef.current !== null) {
+      placedValueRef.current = value;
+      pillX.value = withSpring(activeBox.x, PILL_SPRING);
+      pillWidth.value = withSpring(activeBox.width, PILL_SPRING);
+      return;
+    }
+    placedValueRef.current = value;
+    cancelAnimation(pillX);
+    cancelAnimation(pillWidth);
+    pillX.value = activeBox.x;
+    pillWidth.value = activeBox.width;
+  }, [active, activeBox, pillX, pillWidth, placedValueRef, grabbed, value]);
+
+  const ctx = useMemo<IMaskedTabBarContext>(
+    () => ({
+      value,
+      setValue,
+      onSelectedValueActivate,
+      registerTrigger,
+      boxes,
+      listWidth,
+      setListWidth,
+      pillX,
+      pillWidth,
+      press,
+      grabbed,
+      palette,
+      height,
+      radius: radius ?? height / 2,
+      padding,
+      gap,
+      iconSize,
+      fontSize,
+      fontWeight,
+      draggable,
+      measureRevision,
+    }),
+    [
+      measureRevision,
+      value,
+      setValue,
+      onSelectedValueActivate,
+      registerTrigger,
+      boxes,
+      listWidth,
+      pillX,
+      pillWidth,
+      press,
+      grabbed,
+      palette,
+      height,
+      radius,
+      padding,
+      gap,
+      iconSize,
+      fontSize,
+      fontWeight,
+      draggable,
+    ],
+  );
+
+  return (
+    <MaskedTabBarContext.Provider value={ctx}>
+      <View
+        style={[
+          styles.root,
+          {
+            height,
+            borderRadius: radius ?? height / 2,
+            backgroundColor: palette.track,
+            padding,
+          },
+          style,
+        ]}
+      >
+        {children}
+      </View>
+    </MaskedTabBarContext.Provider>
+  );
+}
+
+const MaskedTabBarList: React.FC<IMaskedTabBarList> &
+  React.FunctionComponent<IMaskedTabBarList> = ({
+  children,
+  style,
+}: IMaskedTabBarList): React.JSX.Element => {
+  const {
+    boxes,
+    setValue,
+    setListWidth,
+    listWidth,
+    pillX,
+    pillWidth,
+    press,
+    grabbed,
+    palette,
+    radius,
+    padding,
+    gap,
+    draggable,
+    measureRevision,
+    value,
+    onSelectedValueActivate,
+  } = useMaskedTabBar("MaskedTabBar.List");
+
+  const boxesValue = useSharedValue<IMaskedTabBoxEntry[]>([]);
+  useEffect(() => {
+    boxesValue.value = boxes;
+  }, [boxes, boxesValue]);
+
+  const layoutRevision = useRef(0);
+  const onLayout = useEvent((e: LayoutChangeEvent) => {
+    layoutRevision.current += 1;
+    setListWidth(e.nativeEvent.layout.width);
+  });
+  const listRef = useRef<View>(null);
+  const rowRef = useRef<View>(null);
+  useEffect(() => {
+    if (measureRevision === 0) return;
+    const requestedLayout = layoutRevision.current;
+    let cancelled = false;
+    listRef.current?.measure((_x, _y, width) => {
+      // A newer layout event or foreground request owns the geometry now.
+      if (cancelled || layoutRevision.current !== requestedLayout) return;
+      if (Number.isFinite(width) && width > 0) setListWidth(width);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [measureRevision, setListWidth]);
+  const grabOffset = useSharedValue<number>(0);
+  const dragTarget = useSharedValue<number>(0);
+  const dragVelocity = useSharedValue<number>(0);
+  const dragged = useSharedValue<boolean>(false);
+  const pendingValue = useSharedValue<string>("");
+  const hoveredValue = useSharedValue<string>("");
+  const listWidthValue = useSharedValue<number>(0);
+
+  useEffect(() => {
+    listWidthValue.value = listWidth;
+  }, [listWidth, listWidthValue]);
+
+  const follow = useFrameCallback((frame) => {
+    if (!grabbed.value) return;
+    const dt = Math.min(
+      (frame.timeSincePreviousFrame ?? 16) / 1000,
+      MAX_FRAME_SECONDS,
+    );
+    const displacement = dragTarget.value - pillX.value;
+    const velocity =
+      dragVelocity.value +
+      (FOLLOW_STIFFNESS * displacement - FOLLOW_DAMPING * dragVelocity.value) *
+        dt;
+    dragVelocity.value = velocity;
+    pillX.value = pillX.value + velocity * dt;
+  }, false);
+
+  const setFollowActive = useCallback(
+    (active: boolean) => follow.setActive(active),
+    [follow],
+  );
+
+  useAnimatedReaction(
+    () => grabbed.value,
+    (isGrabbed, wasGrabbed) => {
+      if (isGrabbed !== wasGrabbed) scheduleOnRN(setFollowActive, isGrabbed);
+    },
+  );
+
+  const gesture = useMemo(
+    () => {
+      const pan = Gesture.Pan()
+        .withTestId("catalog-tab-pan")
+        .minDistance(0)
+        .shouldCancelWhenOutside(false)
+        .onBegin((e) => {
+          press.value = withSpring(1, PRESS_SPRING);
+          dragged.value = false;
+          pendingValue.value = "";
+          hoveredValue.value = "";
+
+          const inside =
+            e.x >= pillX.value && e.x <= pillX.value + pillWidth.value;
+          grabbed.value = draggable && inside;
+          grabOffset.value = pillX.value - e.x;
+          if (grabbed.value) {
+            dragTarget.value = pillX.value;
+            dragVelocity.value = 0;
+          }
+        })
+        .onStart((e) => {
+          if (grabbed.value) return;
+          const tapped = boxAtX(boxesValue.value, e.x);
+          if (!tapped) return;
+          pendingValue.value = tapped.value;
+          startPillMotionOnUI(tapped, pillX, pillWidth);
+        })
+        .onUpdate((e) => {
+          if (!grabbed.value) return;
+
+          if (
+            Math.abs(e.translationX) > SELECTED_TAP_MAX_TRANSLATION ||
+            Math.abs(e.translationY) > SELECTED_TAP_MAX_TRANSLATION
+          ) {
+            dragged.value = true;
+          }
+
+          dragTarget.value = clampValue(
+            e.x + grabOffset.value,
+            0,
+            Math.max(listWidthValue.value - pillWidth.value, 0),
+          );
+          const over = nearestBox(
+            boxesValue.value,
+            dragTarget.value + pillWidth.value / 2,
+          );
+          if (over && over.value !== hoveredValue.value) {
+            hoveredValue.value = over.value;
+            pillWidth.value = withSpring(over.width, PILL_SPRING);
+          }
+        })
+        .onFinalize((_event, success) => {
+          press.value = withSpring(0, PRESS_SPRING);
+          const wasGrabbed = grabbed.value;
+          const selectedTap = !dragged.value;
+          grabbed.value = false;
+          dragged.value = false;
+          hoveredValue.value = "";
+          dragVelocity.value = 0;
+
+          if (!success) {
+            pendingValue.value = "";
+            const selected = boxForValue(boxesValue.value, value);
+            if (selected) {
+              pillX.value = withSpring(selected.x, PILL_SPRING);
+              pillWidth.value = withSpring(selected.width, PILL_SPRING);
+            }
+            return;
+          }
+
+          if (!wasGrabbed) {
+            const nextValue = pendingValue.value;
+            pendingValue.value = "";
+            if (nextValue === "") return;
+            if (nextValue === value && onSelectedValueActivate) {
+              scheduleOnRN(onSelectedValueActivate, nextValue);
+            } else {
+              scheduleOnRN(setValue, nextValue);
+            }
+            return;
+          }
+          pendingValue.value = "";
+
+          const box = nearestBox(
+            boxesValue.value,
+            dragTarget.value + pillWidth.value / 2,
+          );
+          if (!box) return;
+
+          pillX.value = withSpring(box.x, {
+            ...PILL_SPRING,
+            velocity: dragVelocity.value,
+          });
+          pillWidth.value = withSpring(box.width, PILL_SPRING);
+          if (selectedTap && box.value === value && onSelectedValueActivate) {
+            scheduleOnRN(onSelectedValueActivate, box.value);
+          }
+          scheduleOnRN(setValue, box.value);
+        });
+      // Android can deliver DOWN and UP without a MOVE. Such a tap never activates Pan.
+      const tap = Gesture.Tap()
+        .withTestId("catalog-tab-tap")
+        .maxDistance(SELECTED_TAP_MAX_TRANSLATION)
+        .onEnd((event, success) => {
+          if (!success) return;
+          const box = boxAtX(boxesValue.value, event.x);
+          if (!box) return;
+          if (box.value === value && onSelectedValueActivate) {
+            scheduleOnRN(onSelectedValueActivate, value);
+          } else {
+            startPillMotionOnUI(box, pillX, pillWidth);
+            scheduleOnRN(setValue, box.value);
+          }
+        });
+      return Gesture.Race(pan, tap);
+    },
+    [
+      boxesValue,
+      listWidthValue,
+      grabbed,
+      grabOffset,
+      dragTarget,
+      dragVelocity,
+      dragged,
+      pendingValue,
+      hoveredValue,
+      pillX,
+      pillWidth,
+      press,
+      setValue,
+      draggable,
+      value,
+      onSelectedValueActivate,
+    ],
+  );
+
+  const clipStyle = useAnimatedStyle<Pick<ViewStyle, "width" | "transform">>(
+    () => {
+      const grow = press.value * PRESS_GROW;
+      return {
+        width: pillWidth.value + grow * 2,
+        transform: [{ translateX: pillX.value - grow }],
+      };
+    },
+  );
+
+  const innerStyle = useAnimatedStyle<Pick<ViewStyle, "transform">>(() => {
+    const grow = press.value * PRESS_GROW;
+    return { transform: [{ translateX: -(pillX.value - grow) }] };
+  });
+
+  const rowStyle = useMemo<ViewStyle>(() => ({ gap }), [gap]);
+
+  return (
+    <GestureDetector gesture={gesture}>
+      <View ref={listRef} collapsable={false} style={[styles.list, style]} onLayout={onLayout}>
+        <MaskedTabLayerContext.Provider value="base">
+          <MaskedTabRowContext.Provider value={rowRef}>
+            <View ref={rowRef} collapsable={false} style={[styles.row, rowStyle]}>
+              {children}
+            </View>
+          </MaskedTabRowContext.Provider>
+        </MaskedTabLayerContext.Provider>
+
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.clip,
+            {
+              borderRadius: Math.max(radius - padding, 0),
+              backgroundColor: palette.pill,
+            },
+            clipStyle,
+          ]}
+        >
+          <Animated.View
+            style={[styles.row, rowStyle, { width: listWidth }, innerStyle]}
+          >
+            <MaskedTabLayerContext.Provider value="active">
+              {children}
+            </MaskedTabLayerContext.Provider>
+          </Animated.View>
+        </Animated.View>
+      </View>
+    </GestureDetector>
+  );
+};
+
+const MaskedTabBarTrigger: React.FC<IMaskedTabBarTrigger> &
+  React.FunctionComponent<IMaskedTabBarTrigger> = ({
+  children,
+  value,
+  disabled = false,
+  style,
+}: IMaskedTabBarTrigger): React.JSX.Element => {
+  const { registerTrigger, measureRevision } = useMaskedTabBar("MaskedTabBar.Trigger");
+  const layer = useMaskedTabLayer();
+  const rowRef = useContext(MaskedTabRowContext);
+  const triggerRef = useRef<View>(null);
+  const layoutRevision = useRef(0);
+  useEffect(() => {
+    if (measureRevision === 0 || layer !== "base") return;
+    const row = rowRef?.current;
+    if (!row) return;
+    const requestedLayout = layoutRevision.current;
+    let cancelled = false;
+    triggerRef.current?.measureLayout(row, (x, _y, width) => {
+      if (cancelled || layoutRevision.current !== requestedLayout) return;
+      if (!Number.isFinite(x) || !Number.isFinite(width) || width <= 0) return;
+      registerTrigger(value, { x, width }, disabled);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [measureRevision, layer, rowRef, registerTrigger, value, disabled]);
+
+  const onLayout = useEvent((e: LayoutChangeEvent) => {
+    if (layer !== "base") return;
+    layoutRevision.current += 1;
+    const { x, width } = e.nativeEvent.layout;
+    registerTrigger(value, { x, width }, disabled);
+  });
+
+  return (
+    <View
+      ref={triggerRef}
+      collapsable={false}
+      onLayout={onLayout}
+      style={[styles.trigger, disabled ? styles.disabled : null, style]}
+    >
+      {children}
+    </View>
+  );
+};
+
+const MaskedTabBarLabel: React.FC<IMaskedTabBarLabel> &
+  React.FunctionComponent<IMaskedTabBarLabel> = ({
+  children,
+  style,
+}: IMaskedTabBarLabel): React.JSX.Element => {
+  const { palette, fontSize, fontWeight } =
+    useMaskedTabBar("MaskedTabBar.Label");
+  const layer = useMaskedTabLayer();
+
+  return (
+    <Text
+      numberOfLines={1}
+      style={[
+        {
+          fontSize,
+          fontWeight,
+          color: layer === "active" ? palette.active : palette.inactive,
+        } as TextStyle,
+        style,
+      ]}
+    >
+      {children}
+    </Text>
+  );
+};
+
+const MaskedTabBarIcon: React.FC<IMaskedTabBarIcon> &
+  React.FunctionComponent<IMaskedTabBarIcon> = ({
+  children,
+  size,
+  style,
+}: IMaskedTabBarIcon): React.JSX.Element => {
+  const { palette, iconSize } = useMaskedTabBar("MaskedTabBar.Icon");
+  const layer = useMaskedTabLayer();
+  const active = layer === "active";
+  const resolvedSize = size ?? iconSize;
+
+  const content =
+    typeof children === "function"
+      ? children({
+          color: active ? palette.active : palette.inactive,
+          size: resolvedSize,
+          active,
+        })
+      : children;
+
+  return (
+    <View
+      style={[
+        styles.icon,
+        { width: resolvedSize, height: resolvedSize },
+        style,
+      ]}
+    >
+      {content}
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  root: {
+    alignSelf: "stretch",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  list: {
+    flex: 1,
+    justifyContent: "center",
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: "100%",
+  },
+  clip: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    overflow: "hidden",
+  },
+  trigger: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: DEFAULT_TRIGGER_GAP,
+    paddingHorizontal: DEFAULT_TRIGGER_PADDING_X,
+    height: "100%",
+  },
+  icon: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  disabled: {
+    opacity: 0.4,
+  },
+});
+
+const MaskedTabBar = createCompoundComponent(
+  "MaskedTabBar",
+  memo(MaskedTabBarRoot),
+  {
+    List: createCompoundComponent("MaskedTabBar.List", MaskedTabBarList),
+    Trigger: createCompoundComponent(
+      "MaskedTabBar.Trigger",
+      MaskedTabBarTrigger,
+    ),
+    Label: createCompoundComponent("MaskedTabBar.Label", MaskedTabBarLabel),
+    Icon: createCompoundComponent("MaskedTabBar.Icon", MaskedTabBarIcon),
+  },
+);
+
+export {
+  MaskedTabBar,
+  MaskedTabBarRoot,
+  MaskedTabBarList,
+  MaskedTabBarTrigger,
+  MaskedTabBarLabel,
+  MaskedTabBarIcon,
+};
+export type {
+  IMaskedTabBarRoot,
+  IMaskedTabBarList,
+  IMaskedTabBarTrigger,
+  IMaskedTabBarLabel,
+  IMaskedTabBarIcon,
+  IMaskedTabBarPalette,
+  IMaskedTabIconState,
+  TMaskedTabBarTheme,
+} from "./types";
+export default MaskedTabBar;

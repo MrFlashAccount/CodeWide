@@ -19,6 +19,8 @@ export type ThreadChatWindowSnapshot = {
   earliestSealedOrdinal: number | null;
   error: string | null;
   historyEpoch: number;
+  /** Request that actually installed the resident window. A pending seek still shows the old rows. */
+  installedRequestKey: string | null;
   latestSealedOrdinal: number | null;
   /** Range membership, order, sealing, or lifecycle changed. */
   layoutRevision: number;
@@ -34,7 +36,7 @@ export type ThreadChatWindowSnapshot = {
 
 export type LoadedThreadChatWindow = Omit<
   ThreadChatWindowSnapshot,
-  "status" | "backendRefreshing" | "error" | "layoutRevision" | "revision"
+  "status" | "backendRefreshing" | "error" | "layoutRevision" | "revision" | "installedRequestKey"
 > & {
   rows: readonly ThreadDetailRow[];
 };
@@ -58,6 +60,7 @@ export type ThreadChatModel = {
   confirmBackendRefresh: (connectionId: string, threadId: string) => void;
   failWindow: (request: ThreadChatWindowRequest, generation: number, cause: unknown) => void;
   forgetConnection: (connectionId: string) => void;
+  isCurrentWindow: (request: ThreadChatWindowRequest, generation: number) => boolean;
   publishChanges: (
     changes: readonly (
       | { type: "insert" | "update"; value: ThreadDetailRow }
@@ -394,6 +397,10 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     changedRowIdsByScope.set(scope, ids);
   };
 
+  const isCurrentWindow = (request: ThreadChatWindowRequest, generation: number): boolean =>
+    !closed &&
+    generations.get(threadChatScope(request.connectionId, request.threadId)) === generation;
+
   const commitWindowNow = (
     request: ThreadChatWindowRequest,
     generation: number,
@@ -401,8 +408,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   ): boolean => {
     const scope = threadChatScope(request.connectionId, request.threadId);
     if (
-      closed ||
-      generations.get(scope) !== generation ||
+      !isCurrentWindow(request, generation) ||
       threadChatRequestKey(activeRequests.get(scope)) !== threadChatRequestKey(request)
     ) {
       return false;
@@ -418,6 +424,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         ...loadedWindow,
         backendRefreshing: previous.backendRefreshing,
         error: null,
+        installedRequestKey: loaded.requestKey,
         layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
         revision: previous.revision + (rowsChanged ? 1 : 0),
         status: "ready",
@@ -678,6 +685,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
           ...loadedWindow,
           backendRefreshing: previous.backendRefreshing,
           error: null,
+          installedRequestKey: previous.installedRequestKey,
           layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
           revision: previous.revision + (rowsChanged ? 1 : 0),
           status: "ready",
@@ -736,6 +744,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         node.set(next);
       }
     },
+    isCurrentWindow,
     publishChanges(changes) {
       if (closed || changes.length === 0) {
         return;
@@ -954,6 +963,7 @@ function emptyWindow(scope: string): ThreadChatWindowSnapshot {
     earliestSealedOrdinal: null,
     error: null,
     historyEpoch: 0,
+    installedRequestKey: null,
     latestSealedOrdinal: null,
     layoutRevision: 0,
     liveRowIds: [],

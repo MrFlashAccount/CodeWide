@@ -215,6 +215,60 @@ pub(super) fn log_response_headers(
     );
 }
 
+/// Logs a request whose future is dropped before any response or transport
+/// error arrives: a cancelled recording or the losing side of a hedge.
+pub(super) struct PendingRequest {
+    request_id: u64,
+    started: Instant,
+    upload_probe: UploadProbe,
+    network_probe: Arc<RequestNetworkProbe>,
+    attempt: usize,
+    reason: &'static str,
+    answered: bool,
+}
+
+impl PendingRequest {
+    pub(super) fn new(
+        request_id: u64,
+        started: Instant,
+        upload_probe: UploadProbe,
+        network_probe: Arc<RequestNetworkProbe>,
+        attempt: usize,
+        reason: &'static str,
+    ) -> Self {
+        Self {
+            request_id,
+            started,
+            upload_probe,
+            network_probe,
+            attempt,
+            reason,
+            answered: false,
+        }
+    }
+
+    pub(super) fn answered(mut self) {
+        self.answered = true;
+    }
+}
+
+impl Drop for PendingRequest {
+    fn drop(&mut self) {
+        if self.answered {
+            return;
+        }
+        info!(
+            status = "dictation-openai-request-abandoned",
+            request_id = self.request_id,
+            request_elapsed_ms = elapsed_millis(self.started.elapsed()),
+            connect_total_ms = ?self.network_probe.connect_total_ms(),
+            audio_source_last_chunk_ms = ?self.upload_probe.last_chunk_ms(),
+            attempt = self.attempt,
+            reason = self.reason,
+        );
+    }
+}
+
 pub(super) fn log_request_failure(
     error: &reqwest::Error,
     upload_probe: &UploadProbe,

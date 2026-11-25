@@ -24,9 +24,14 @@ class MainActivity : ReactActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     NativeStartupTrace.markActivityStarted()
     NativeStartupTrace.registerContentMarker()
+    SplashScreenManager.preventAutoHideCalled = true
     SplashScreenManager.registerOnActivity(this)
-    SplashExitAnimation.install(this)
+    // Let Android dismiss the starting window itself:
+    // transferring its logo to this window can cover an already visible app frame.
+    splashScreen.clearOnExitAnimationListener()
     super.onCreate(null)
+    releaseSplashOnFirstSurface(window.decorView, SplashScreenManager::hide)
+    window.decorView.viewTreeObserver.registerFrameCommitCallback { NativeStartupTrace.markFirstFrameCommitted() }
     surfaceDisplayMetrics.synchronize()
   }
 
@@ -40,13 +45,13 @@ class MainActivity : ReactActivity() {
     WindowDiagnostics.capture("configuration_before")
     super.onConfigurationChanged(newConfig)
     WindowDiagnostics.capture("configuration_react")
-    surfaceDisplayMetrics.synchronize()
+    surfaceDisplayMetrics.onWindowChanged(reactHost?.currentReactContext)
     WindowDiagnostics.capture("configuration_activity")
   }
 
   override fun onResume() {
     super.onResume()
-    surfaceDisplayMetrics.synchronize()
+    surfaceDisplayMetrics.onWindowChanged(reactHost?.currentReactContext)
     WindowDiagnostics.attach(this)
   }
 

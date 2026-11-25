@@ -196,6 +196,8 @@ pub enum IndexError {
         offset: u64,
         source: serde_json::Error,
     },
+    #[error(transparent)]
+    Segment(Box<crate::segment::SegmentSourceError>),
 }
 
 type ActiveSummary<S> = (u64, String, S);
@@ -609,7 +611,7 @@ pub fn index_fully<S: IndexSource>(
     Ok(report)
 }
 
-fn file_state_matches(
+pub(crate) fn file_state_matches(
     file: &File,
     state: FileState,
     device: u64,

@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import type { ReactElement } from "react";
+import { ComposerDock } from "./ComposerDock";
 import { Pressable, View } from "react-native";
 import { ComposerAttachmentTray } from "../../rendering/ComposerAttachmentTray";
 import { colors, controlHitSlop, iconSize } from "../../theme";
@@ -17,31 +17,41 @@ import { ComposerGoalAttachment } from "../goal/ComposerGoalAttachment";
 
 /** Composes the V1 message editor, context controls, and submission actions. */
 export function ComposerFeature(props: ComposerFeatureProps) {
+  const restoringDraft = props.restoringDraft === true;
+  const catalogControls = props.catalogControls ?? null;
   return (
-    <View style={styles.composerDock} testID="composer-dock">
-      <ComposerContextStrip
-        applyModelSettings={props.applyModelSettings}
-        closeQuickControlMenu={props.closeQuickControlMenu}
-        controlError={props.controlError}
-        controls$={props.controls$}
-        controlsResourceId={props.controlsResourceId}
-        cwd={props.cwd}
-        leadingContextChips={props.leadingContextChips}
-        newChat={props.newChat}
-        onLoadControls={props.onLoadControls}
-        openControls={props.openControls}
-        openQuickControlMenu={props.openQuickControlMenu}
-        readOnly={props.readOnly}
-        remoteThread={props.remoteThread}
-        selectedEffort={props.selectedEffort}
-        selectedModel={props.selectedModel}
-        selectedPermissions={props.selectedPermissions}
-        selectedPersonality={props.selectedPersonality}
-        selectedServiceTier={props.selectedServiceTier}
-        selectPermissions={props.selectPermissions}
-        toolContextChips={props.toolContextChips}
-        workspaceResources={props.workspaceResources}
-      />
+    <ComposerDock
+      controls={
+        (!restoringDraft || catalogControls !== null) && (
+          <ComposerContextStrip
+            applyModelSettings={props.applyModelSettings}
+            catalogControls={catalogControls}
+            closeQuickControlMenu={props.closeQuickControlMenu}
+            controlError={props.controlError}
+            controls$={props.controls$}
+            controlsResourceId={props.controlsResourceId}
+            cwd={props.cwd}
+            detailCursor={props.detailCursor ?? 0}
+            leadingContextChips={restoringDraft ? null : props.leadingContextChips}
+            newChat={props.newChat}
+            onLoadControls={props.onLoadControls}
+            openControls={props.openControls}
+            openQuickControlMenu={props.openQuickControlMenu}
+            readOnly={props.readOnly || restoringDraft}
+            remoteThread={props.remoteThread}
+            selectedEffort={props.selectedEffort}
+            selectedModel={props.selectedModel}
+            selectedPermissions={props.selectedPermissions}
+            selectedPersonality={props.selectedPersonality}
+            selectedServiceTier={props.selectedServiceTier}
+            selectPermissions={props.selectPermissions}
+            toolContextChips={restoringDraft ? null : props.toolContextChips}
+            workspaceResources={props.workspaceResources}
+          />
+        )
+      }
+      restoringDraft={restoringDraft}
+    >
       {!props.readOnly && (
         <>
           {props.queuedComposerEdit !== null && (
@@ -149,6 +159,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
                 handleComposerTextChange={props.handleComposerTextChange}
                 pastedAttachmentPending={props.pastedAttachmentPending}
                 pendingVoiceSelection={props.pendingVoiceSelection}
+                questionReplyActive={props.questionReplyActive === true}
                 searchComposerSuggestions={props.searchComposerSuggestions}
                 selectComposerMention={props.selectComposerMention}
                 voiceBackend={props.voiceBackend}
@@ -157,7 +168,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
                 voiceResource={props.voiceResource}
               />
               <ComposerMicrophone
-                editingQueuedMessage={props.editingQueuedMessage}
+                disabled={props.editingQueuedMessage}
                 finishVoice={props.finishVoice}
                 microphoneAccess={props.microphoneAccess}
                 microphoneButtonRef={props.microphoneButtonRef}
@@ -177,6 +188,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
                 editingQueuedMessage={props.editingQueuedMessage}
                 goalAttachmentVisible={props.goalAttachmentVisible}
                 handleDeliveryAction={props.handleDeliveryAction}
+                questionReplyActive={props.questionReplyActive === true}
                 queuedComposerEditBusy={props.queuedComposerEditBusy}
                 resumeAction={props.resumeAction}
                 sendDisabled={props.sendDisabled}
@@ -189,17 +201,6 @@ export function ComposerFeature(props: ComposerFeatureProps) {
           </View>
         </>
       )}
-    </View>
-  );
-}
-
-/** Reserves the resting composer geometry while its persisted draft is restored. */
-export function ComposerLoadingPlaceholder(): ReactElement {
-  return (
-    <View style={styles.composerDock} testID="composer-loading-placeholder">
-      <View style={styles.composer}>
-        <View style={styles.composerInputShell} />
-      </View>
-    </View>
+    </ComposerDock>
   );
 }

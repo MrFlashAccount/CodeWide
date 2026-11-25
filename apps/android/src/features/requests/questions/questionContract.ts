@@ -1,3 +1,5 @@
+import type { RemoteFileAttachment } from "@codewide/sync-client";
+
 const QUESTION_TITLE_BYTES = 512;
 import type { PendingServerRequest } from "../../../data/pending-request-types";
 import { unknownRecord } from "../../../data/unknownRecord";
@@ -10,7 +12,11 @@ export type Question = {
   readonly title: string;
 };
 /** Choice and custom text coexist so switching choices never discards typed text. */
-export type AnswerDraft = { readonly custom: string; readonly selected: number | null };
+export type AnswerDraft = {
+  readonly attachments?: RemoteFileAttachment[];
+  readonly custom: string;
+  readonly selected: number | null;
+};
 /** Stable question identity and its distinct response transport. */
 export type QuestionInteraction = {
   readonly key: string;

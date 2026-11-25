@@ -1,13 +1,31 @@
 import { open } from "@op-engineering/op-sqlite";
 import { wrapSqliteDatabase, type SqliteDatabase } from "@codewide/tanstack-db-sqlite";
-import { cacheDirectory, getInfoAsync } from "expo-file-system/legacy";
+import {
+  cacheDirectory,
+  deleteAsync,
+  getInfoAsync,
+  makeDirectoryAsync,
+} from "expo-file-system/legacy";
 import { AppState } from "react-native";
 import { appLogger } from "../observability/logger";
+import {
+  createRecoverableUiCacheConnection,
+  type UiCacheConnectionPorts,
+  type UiCacheNativeConnection,
+} from "./uiCacheConnection";
+import {
+  createUiCacheVacuum,
+  requestIncrementalAutoVacuum,
+  type UiCacheVacuum,
+} from "./uiCacheVacuum";
 
 const LIVE_COLLECTIONS = new Set(["thread-details-v2"]);
+const UI_CACHE_DATABASE_NAME = "codex-remote-ui-cache.db";
+const JOURNAL_SIDECAR_SUFFIXES = ["-journal", "-wal", "-shm"] as const;
+const FILE_URI_SCHEME = "file://";
 
-let sharedDatabase: ReturnType<typeof open> | null = null;
-let sharedSqliteDatabase: SqliteDatabase | null = null;
+let sharedUiCache: { readonly database: SqliteDatabase; readonly vacuum: UiCacheVacuum } | null =
+  null;
 let lifecycleFlushInstalled = false;
 const flushersByCollection = new Map<string, Set<() => Promise<void>>>();
 
@@ -24,25 +42,50 @@ function uiCacheDirectory(): string {
   return `${cacheDirectory}codex-remote/sqlite`;
 }
 
-function getUiCacheNativeDatabase(): ReturnType<typeof open> {
-  if (sharedDatabase !== null) {
-    return sharedDatabase;
-  }
-  const database = open({ location: uiCacheDirectory(), name: "codex-remote-ui-cache.db" });
-  // Configure the connection before any consumer can start a transaction.
-  // History memberships must never outlive their chain or referenced content.
+function uiCacheDatabaseUri(): string {
+  return `${uiCacheDirectory()}/${UI_CACHE_DATABASE_NAME}`;
+}
+
+function openUiCacheConnection(): UiCacheNativeConnection {
+  const database = open({ location: uiCacheDirectory(), name: UI_CACHE_DATABASE_NAME });
+  // Configure the connection before any consumer can start a transaction or
+  // create a table. History memberships must never outlive their chain or
+  // referenced content.
   try {
+    requestIncrementalAutoVacuum(database);
     database.executeSync("PRAGMA foreign_keys = ON");
   } catch (error) {
     database.close();
     throw error;
   }
-  sharedDatabase = database;
-  return sharedDatabase;
+  return database;
+}
+
+// The database lives in the disposable cache directory, so Android may delete
+// it under the open connection; these ports let the connection owner restore it.
+function uiCacheConnectionPorts(): UiCacheConnectionPorts {
+  const databaseUri = uiCacheDatabaseUri();
+  return {
+    databaseFileExists: async () => (await getInfoAsync(databaseUri)).exists,
+    // op-sqlite resolves `file://` locations the same way before opening them.
+    databasePath: databaseUri.startsWith(FILE_URI_SCHEME)
+      ? databaseUri.slice(FILE_URI_SCHEME.length)
+      : databaseUri,
+    open: openUiCacheConnection,
+    prepareRestoreTarget: async () => {
+      await makeDirectoryAsync(uiCacheDirectory(), { intermediates: true });
+      await Promise.all(
+        JOURNAL_SIDECAR_SUFFIXES.map(async (suffix) =>
+          deleteAsync(`${databaseUri}${suffix}`, { idempotent: true }),
+        ),
+      );
+    },
+    removeDatabaseFile: async () => deleteAsync(databaseUri, { idempotent: true }),
+  };
 }
 
 export async function getUiCacheFileDiagnostics(): Promise<UiCacheFileDiagnostics> {
-  const path = `${uiCacheDirectory()}/codex-remote-ui-cache.db`;
+  const path = uiCacheDatabaseUri();
   const [mainFileBytes, walFileBytes, shmFileBytes] = await Promise.all([
     fileSize(path),
     fileSize(`${path}-wal`),
@@ -61,10 +104,32 @@ async function fileSize(path: string): Promise<number> {
   }
 }
 
-export function getUiCacheSqliteDatabase(): SqliteDatabase {
-  sharedSqliteDatabase ??= wrapSqliteDatabase(getUiCacheNativeDatabase());
+function getSharedUiCache(): { readonly database: SqliteDatabase; readonly vacuum: UiCacheVacuum } {
+  if (sharedUiCache === null) {
+    const connection = createRecoverableUiCacheConnection(uiCacheConnectionPorts());
+    sharedUiCache = {
+      database: wrapSqliteDatabase(connection),
+      vacuum: createUiCacheVacuum(connection),
+    };
+  }
   installLifecycleFlush();
-  return sharedSqliteDatabase;
+  return sharedUiCache;
+}
+
+export function getUiCacheSqliteDatabase(): SqliteDatabase {
+  return getSharedUiCache().database;
+}
+
+/**
+ * Starts returning pages freed by cache eviction to the filesystem in bounded
+ * steps. Call after an eviction commits; never from a per-write path.
+ */
+export function scheduleUiCacheFreePageReclaim(): void {
+  void getSharedUiCache()
+    .vacuum.reclaimFreePages()
+    .catch((error: unknown) => {
+      appLogger.warnCaught({ error: error, event: "ui_cache.free_page_reclaim_failed" });
+    });
 }
 
 export function openLegacyUiCacheSqliteDatabase(): { close: () => void; database: SqliteDatabase } {
@@ -113,8 +178,18 @@ function installLifecycleFlush(): void {
     if (state === "active") {
       return;
     }
-    void flushLiveUiCacheCheckpoints().catch((error: unknown) => {
+    const flushed = flushLiveUiCacheCheckpoints().catch((error: unknown) => {
       appLogger.warnCaught({ error: error, event: "ui_cache.background_flush.failed" });
     });
+    if (state === "background") {
+      // Nothing waits on the cache while the app is hidden, so a database
+      // created before auto-vacuum pays its one full VACUUM here, not at open.
+      // It follows the flush so durable checkpoints never queue behind it.
+      void flushed
+        .then(async () => sharedUiCache?.vacuum.migrateAtIdle())
+        .catch((error: unknown) => {
+          appLogger.warnCaught({ error: error, event: "ui_cache.auto_vacuum_migration_failed" });
+        });
+    }
   });
 }

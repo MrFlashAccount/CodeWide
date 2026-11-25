@@ -1,22 +1,28 @@
+import {
+  CatalogNavigationInsetContext,
+  catalogModeBarContentInset,
+} from "../../presentation/layouts/catalogModeBarGeometry";
 import type { ThreadSidebarProps } from "./ThreadSidebarContract";
 import { ThreadSidebarHeader } from "./ThreadSidebarHeader";
 import { useThreadListViewportPaging } from "./threadListViewportPaging";
 import { LegendList } from "@legendapp/list/react-native";
-import { useState } from "react";
-import { Animated, View } from "react-native";
+import { useContext, useState } from "react";
+import { useEvent } from "../../react/useEvent";
+import { Animated, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { GestureDetector } from "react-native-gesture-handler";
 import Reanimated from "react-native-reanimated";
 import { usePerformanceExperiment } from "../../data/performance-experiments";
 import { threadSelectionKey } from "../../services/threads/threadRouteParams";
-import { NewThreadFloatingButton } from "../projects/NewThreadFloatingButton";
 import { SidebarProjectRow } from "../projects/SidebarProjectViews";
 import { SelectableThreadRow } from "./SelectableThreadRow";
-import { SidebarListFeedback } from "./SidebarListFeedback";
+import { SidebarListFeedback, ThreadListPageError } from "./SidebarListFeedback";
 import { sidebarRows } from "./sidebarRows";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { ThreadListExperimentSuspended } from "./ThreadListBoundary";
+import { useThreadListFabModel } from "./threadListFabModel";
 import { ThreadListRouteTransition } from "./ThreadListRouteTransition";
 import { ThreadListPullBackdrop } from "./ThreadListPullBackdrop";
+import { useThreadListFabScroll } from "./useThreadListFabScroll";
 import { threadMatchesFilter } from "./threadListFilters";
 import { useThreadListPullGesture } from "./threadListSearchPull";
 import {
@@ -43,7 +49,6 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     onArchive,
     onLoadMore,
     onLoadMoreProject,
-    onNewThread,
     onOffsetChange,
     onOpenProject,
     onTogglePin,
@@ -60,7 +65,6 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     serverScope,
     threadNavigation,
     threads,
-    width,
   } = props;
 
   const projectSource = useProjectSidebarThreads(
@@ -95,9 +99,16 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     project === null ? onLoadMore : projectSource.loadMore,
   );
   const pullSearch = useThreadListPullGesture(props.onOpenSearch, initialOffset, listKey);
+  const bottom = useContext(CatalogNavigationInsetContext);
+  const fabModel = useThreadListFabModel();
+  const attachFabScroll = useThreadListFabScroll(fabModel);
+  const handleListScroll = useEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    pullSearch.onScroll(event);
+    scroll.onScroll();
+  });
 
   return (
-    <View style={[styles.threadSidebar, { width }]} testID="thread-list-pane">
+    <View style={styles.threadSidebar} testID="thread-list-pane">
       {props.headerVisible === false ? null : (
         <ThreadSidebarHeader props={props} setQuery={setQuery} />
       )}
@@ -111,6 +122,7 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
             ) : (
               <Reanimated.View style={styles.threadListSuspended}>
                 <LegendList
+                  contentContainerStyle={{ paddingBottom: catalogModeBarContentInset + bottom }}
                   data={scroll.rows}
                   dataKey={`desktop-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
                   drawDistance={320}
@@ -130,9 +142,11 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
                     />
                   }
                   ListFooterComponent={
-                    scroll.rows.length > 0 &&
-                    mode === "active" &&
-                    !scroll.rows.some((row) => row.kind === "thread") ? (
+                    paging.failure !== null ? (
+                      <ThreadListPageError message={paging.failure} onRetry={paging.retry} />
+                    ) : scroll.rows.length > 0 &&
+                      mode === "active" &&
+                      !scroll.rows.some((row) => row.kind === "thread") ? (
                       <SidebarListFeedback
                         archived={false}
                         key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
@@ -147,10 +161,11 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
                   onLayout={paging.onLayout}
                   onMomentumScrollBegin={scroll.onMomentumScrollBegin}
                   onMomentumScrollEnd={scroll.onMomentumScrollEnd}
-                  onScroll={pullSearch.onScroll}
+                  onScroll={handleListScroll}
                   onScrollBeginDrag={scroll.onScrollBeginDrag}
                   onScrollEndDrag={scroll.onScrollEndDrag}
                   recycleItems
+                  ref={attachFabScroll}
                   renderItem={({ item }) =>
                     item.kind === "header" ? (
                       <SidebarSectionHeader title={item.title} />
@@ -201,9 +216,6 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
         </ThreadListRouteTransition>
         {searchContent === null && <ThreadListPullBackdrop />}
       </View>
-      {searchContent === null && mode === "active" && (
-        <NewThreadFloatingButton onPress={onNewThread} projectName={project?.name ?? null} />
-      )}
     </View>
   );
 }

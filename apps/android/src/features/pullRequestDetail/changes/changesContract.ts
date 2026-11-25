@@ -1,0 +1,48 @@
+import type { PullRequestScreenProps } from "../pullRequestScreenContract";
+import type { Observable } from "@legendapp/state";
+
+import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
+import type { PullRequestOverview } from "../../../data/forgePullRequestContract";
+import type { ForgeResources } from "../../../data/forgeResources";
+import type { ThreadId } from "../../../data/reviewContract";
+import type { ReviewResources } from "../../../data/reviewResources";
+import type { AppVoiceInputRuntime } from "../../../ui/VoiceInputRuntime";
+import type { ReviewTargetCapabilities } from "../../review/reviewTargetCapabilities";
+import type { PullRequestScreenState } from "../pullRequestScreenModel";
+import type { PullRequestDetailWorkspaceCapabilities } from "../workspaceCapabilities";
+
+/** Everything the Changes tab needs from its screen. */
+export type PullRequestChangesProps = {
+  readonly agentThread: {
+    readonly threadId: ThreadId;
+    readonly title: string;
+  } | null;
+  readonly attachFile?: PullRequestScreenProps["navigation"]["attachFile"];
+  readonly capabilities: PullRequestDetailWorkspaceCapabilities;
+  readonly connectionId: string;
+  readonly describeThread: (threadId: ThreadId) => string;
+  readonly fileActions: ReadonlyMap<string, readonly ActionDescriptor[]>;
+  readonly floatingActions: (review: React.ReactNode) => React.ReactNode;
+  readonly forge: Pick<ForgeResources, "fileContent" | "files">;
+  readonly host: string;
+  readonly model: Observable<PullRequestScreenState>;
+  readonly nowMs: number;
+  readonly offline: boolean;
+  readonly onRun: (action: ActionDescriptor) => void;
+  readonly onStale: () => void;
+  readonly overview: PullRequestOverview;
+  /** Capabilities the PR account's plugin declares; empty until the accounts snapshot loads. */
+  readonly providerCapabilities: readonly string[];
+  /** The PR app bar titled with this route's section. */
+  readonly renderAppBar: (
+    section: string,
+    trailing: React.ReactNode,
+    backToFiles?: () => void,
+  ) => React.JSX.Element;
+  readonly review: Pick<ReviewResources, "drafts" | "guide">;
+  readonly reviewCapabilities: ReviewTargetCapabilities;
+  readonly tablet: boolean;
+  readonly verdicts: readonly ActionDescriptor[];
+  /** The app's retained voice input for line comment dictation; `null` hides it. */
+  readonly voiceRuntime: AppVoiceInputRuntime | null;
+};

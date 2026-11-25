@@ -19,17 +19,33 @@ describe("Android host update ownership", () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
     const connection: StoredConnection = {
-      displayName: "Host", enabled: true, endpoint: "wss://host.example", iconId: "server", id: "server",
-      lastError: null, lastErrorAt: null, sortOrder: 0, state: "connecting", token: "",
+      displayName: "Host",
+      enabled: true,
+      endpoint: "wss://host.example",
+      iconId: "server",
+      id: "server",
+      lastError: null,
+      lastErrorAt: null,
+      sortOrder: 0,
+      state: "connecting",
+      token: "",
     };
-    const transport = createHostUpdateTransport({
-      currentConnections: () => [connection],
-      connectionTransport: () => ({ baseUrl: "https://pinned.example/cap", transport: urlTransport }),
-      scopedHttpAuthorization: async () => authorization.promise,
-    }, { requestTimeoutMilliseconds: 10 });
-    const outcome = transport.apply("server", "fingerprint", "key").catch(error => error);
+    const transport = createHostUpdateTransport(
+      {
+        currentConnections: () => [connection],
+        connectionTransport: () => ({
+          baseUrl: "https://pinned.example/cap",
+          transport: urlTransport,
+        }),
+        scopedHttpAuthorization: async () => authorization.promise,
+      },
+      { requestTimeoutMilliseconds: 10 },
+    );
+    const outcome = transport.apply("server", "fingerprint", "key").catch((error) => error);
     await vi.advanceTimersByTimeAsync(10);
-    expect(await outcome).toEqual(expect.objectContaining({ message: expect.stringContaining("in time") }));
+    expect(await outcome).toEqual(
+      expect.objectContaining({ message: expect.stringContaining("in time") }),
+    );
     authorization.resolve("Bearer scoped");
     await Promise.resolve();
     await Promise.resolve();
@@ -38,17 +54,36 @@ describe("Android host update ownership", () => {
 
   it("bounds a stalled HTTP body so operation polling can resume", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: () => new Promise(() => undefined) })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, json: () => new Promise(() => undefined) })),
+    );
     const connection: StoredConnection = {
-      displayName: "Host", enabled: true, endpoint: "wss://host.example", iconId: "server", id: "server",
-      lastError: null, lastErrorAt: null, sortOrder: 0, state: "live", token: "",
+      displayName: "Host",
+      enabled: true,
+      endpoint: "wss://host.example",
+      iconId: "server",
+      id: "server",
+      lastError: null,
+      lastErrorAt: null,
+      sortOrder: 0,
+      state: "live",
+      token: "",
     };
-    const transport = createHostUpdateTransport({
-      currentConnections: () => [connection],
-      connectionTransport: () => ({ baseUrl: "https://pinned.example/cap", transport: urlTransport }),
-      scopedHttpAuthorization: async () => "Bearer scoped",
-    }, { requestTimeoutMilliseconds: 10 });
-    const outcome = transport.readOperation("server", "operation-00000000000000000000").catch(error => error);
+    const transport = createHostUpdateTransport(
+      {
+        currentConnections: () => [connection],
+        connectionTransport: () => ({
+          baseUrl: "https://pinned.example/cap",
+          transport: urlTransport,
+        }),
+        scopedHttpAuthorization: async () => "Bearer scoped",
+      },
+      { requestTimeoutMilliseconds: 10 },
+    );
+    const outcome = transport
+      .readOperation("server", "operation-00000000000000000000")
+      .catch((error) => error);
     await vi.advanceTimersByTimeAsync(10);
     const error: unknown = await outcome;
     // A timeout says nothing about the update: an active operation keeps waiting.
@@ -60,7 +95,11 @@ describe("Android host update ownership", () => {
     // The route set is the private Companion/Relay HTTP contract; the Relay
     // updater reuses the same transport through its own V1 base path.
     for (const basePath of [undefined, "/v1/relay-update"] as const) {
-      const requests: { readonly method: string; readonly url: string; readonly auth: string | null }[] = [];
+      const requests: {
+        readonly method: string;
+        readonly url: string;
+        readonly auth: string | null;
+      }[] = [];
       vi.stubGlobal(
         "fetch",
         vi.fn(async (url: string, init?: RequestInit) => {
@@ -87,7 +126,10 @@ describe("Android host update ownership", () => {
       const transport = createHostUpdateTransport(
         {
           currentConnections: () => [connection],
-          connectionTransport: () => ({ baseUrl: "https://pinned.example/cap", transport: urlTransport }),
+          connectionTransport: () => ({
+            baseUrl: "https://pinned.example/cap",
+            transport: urlTransport,
+          }),
           scopedHttpAuthorization: async () => "Bearer scoped",
         },
         basePath === undefined ? {} : { basePath },
@@ -103,7 +145,11 @@ describe("Android host update ownership", () => {
         { auth: "Bearer scoped", method: "GET", url: `https://pinned.example/cap${root}` },
         { auth: "Bearer scoped", method: "POST", url: `https://pinned.example/cap${root}/check` },
         { auth: "Bearer scoped", method: "POST", url: `https://pinned.example/cap${root}/apply` },
-        { auth: "Bearer scoped", method: "GET", url: `https://pinned.example/cap${root}/operations/op%2F1` },
+        {
+          auth: "Bearer scoped",
+          method: "GET",
+          url: `https://pinned.example/cap${root}/operations/op%2F1`,
+        },
         {
           auth: "Bearer scoped",
           method: "POST",

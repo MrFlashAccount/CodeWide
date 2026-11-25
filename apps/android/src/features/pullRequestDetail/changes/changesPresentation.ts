@@ -1,0 +1,213 @@
+/**
+ * Pure projections of a PR files page for the Changes tab: recorded-patch and
+ * whole-file editor documents, viewed counts and labels, draft comments and
+ * hunk lookup.
+ */
+import type { PullRequestFile } from "../../../data/forgeMutationContract";
+import type { Hunk, HunkId } from "../../../data/reviewContract";
+import type { DraftComment } from "../../../data/reviewDraftContract";
+import type { DraftPut } from "../../../data/reviewDraftPuts";
+import {
+  codeReviewDocumentRevision,
+  type CodeReviewDocument,
+  type CodeReviewInlineComment,
+  type CodeReviewPatch,
+} from "../../review/editor/editorBridge";
+
+const PATCH_KINDS: Readonly<Record<PullRequestFile["status"], CodeReviewPatch["kind"]>> = {
+  added: "add",
+  copied: "update",
+  modified: "update",
+  removed: "delete",
+  renamed: "update",
+};
+
+/** Recorded-patch document (`source: ""`) of one file; files without a patch get no document. */
+export function fileDocument(file: PullRequestFile): CodeReviewDocument | null {
+  if (file.patch.state !== "present") {
+    return null;
+  }
+  const patches = [{ diff: file.patch.text, kind: PATCH_KINDS[file.status] }];
+  return {
+    patches,
+    path: file.path,
+    revision: codeReviewDocumentRevision(file.path, "", patches),
+    source: "",
+  };
+}
+
+/**
+ * Whether the whole head file is worth reading for this file: it has a patch
+ * to show inline, and the head side is neither empty (removed) nor entirely
+ * the patch already (added).
+ */
+export function showsWholeFile(file: PullRequestFile): boolean {
+  return file.patch.state === "present" && file.status !== "added" && file.status !== "removed";
+}
+
+/**
+ * The whole head file with the recorded patch inline (`fullFileDiff`), or
+ * `null` when the patch's new side does not line up with `content` (for
+ * example a symlink, whose patch is its target path). The editor then keeps
+ * the recorded-patch document instead of reporting that the diff cannot be
+ * aligned. CRLF is shown as LF, as the patch lines are compared without it.
+ */
+export function wholeFileDocument(
+  file: PullRequestFile,
+  content: string,
+): CodeReviewDocument | null {
+  if (file.patch.state !== "present") {
+    return null;
+  }
+  const source = content.replaceAll("\r\n", "\n");
+  if (!patchMatchesSource(file.patch.text, source)) {
+    return null;
+  }
+  const patches = [{ diff: file.patch.text, kind: PATCH_KINDS[file.status] }];
+  return {
+    fullFileDiff: true,
+    patches,
+    path: file.path,
+    revision: codeReviewDocumentRevision(file.path, source, patches),
+    source,
+  };
+}
+
+const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(?<start>\d+)(?:,(?<count>\d+))? @@/u;
+const TRAILING_CARRIAGE_RETURN = /\r$/u;
+/** Old-side lines and the "no newline at end of file" note: not part of the head file. */
+const OLD_SIDE_MARKERS: ReadonlySet<string> = new Set(["-", "\\"]);
+/** Context and added lines; an empty line is context whose leading space was trimmed. */
+const NEW_SIDE_MARKERS: ReadonlySet<string> = new Set(["+", " ", ""]);
+
+/** Every hunk's new side (context and additions) appears in `source` at its stated line. */
+function patchMatchesSource(patch: string, source: string): boolean {
+  const lines = source.split("\n");
+  let next = 0;
+  let remaining = 0;
+  let hunks = 0;
+  for (const raw of patch.split("\n")) {
+    const header = hunkHeader(raw);
+    if (header !== null) {
+      hunks += 1;
+      next = header.start;
+      remaining = header.count;
+      continue;
+    }
+    const marker = raw.slice(0, 1);
+    if (remaining === 0 || OLD_SIDE_MARKERS.has(marker)) {
+      continue;
+    }
+    if (
+      !NEW_SIDE_MARKERS.has(marker) ||
+      lines[next] !== raw.slice(1).replace(TRAILING_CARRIAGE_RETURN, "")
+    ) {
+      return false;
+    }
+    next += 1;
+    remaining -= 1;
+  }
+  return hunks > 0;
+}
+
+/** A hunk header's zero-based new-side start and new-side line count. */
+function hunkHeader(raw: string): { readonly count: number; readonly start: number } | null {
+  const groups = HUNK_HEADER.exec(raw)?.groups;
+  if (groups === undefined) {
+    return null;
+  }
+  return {
+    count: groups.count === undefined ? 1 : Number(groups.count),
+    start: Math.max(0, Number(groups.start) - 1),
+  };
+}
+
+/** The hunk containing a line on one side, for a draft anchor. */
+export function hunkAt(file: PullRequestFile, line: number, side: "new" | "old"): Hunk | null {
+  if (file.patch.state !== "present") {
+    return null;
+  }
+  return (
+    file.patch.hunks.find((hunk) => {
+      const start = side === "new" ? hunk.newStart : hunk.oldStart;
+      const length = side === "new" ? hunk.newLines : hunk.oldLines;
+      return line >= start && line < start + Math.max(1, length);
+    }) ?? null
+  );
+}
+
+/** First new-side line of each hunk id in the loaded files. */
+export function hunkLocations(
+  files: readonly PullRequestFile[],
+): ReadonlyMap<HunkId, { readonly line: number; readonly path: string }> {
+  const locations = new Map<HunkId, { readonly line: number; readonly path: string }>();
+  for (const file of files) {
+    for (const hunk of file.patch.state === "present" ? file.patch.hunks : []) {
+      locations.set(hunk.id, {
+        line: Math.max(1, hunk.newStart),
+        path: file.path,
+      });
+    }
+  }
+  return locations;
+}
+
+/**
+ * Drafts of one file as inline editor comments: saved drafts, then the new
+ * ones not saved yet (their text shimmers) or refused (with the reason).
+ */
+export function draftEditorComments(
+  drafts: readonly DraftComment[],
+  puts: readonly DraftPut[],
+  path: string,
+): readonly CodeReviewInlineComment[] {
+  const comments: CodeReviewInlineComment[] = [];
+  for (const draft of drafts) {
+    if (draft.anchor.kind !== "file" && draft.anchor.path === path) {
+      comments.push({
+        body: draft.body,
+        editable: canEditDraft(draft),
+        id: draft.id,
+        line: draft.anchor.startLine,
+        path: draft.anchor.path,
+        side: draft.anchor.side,
+        state: "saved",
+      });
+    }
+  }
+  for (const put of puts) {
+    const { anchor, body, id } = put.draft;
+    if (anchor.kind === "file" || anchor.path !== path) {
+      continue;
+    }
+    comments.push(
+      put.status === "failed"
+        ? {
+            body,
+            error: put.error,
+            id,
+            line: anchor.startLine,
+            path: anchor.path,
+            side: anchor.side,
+            state: "failed",
+          }
+        : {
+            body,
+            id,
+            line: anchor.startLine,
+            path: anchor.path,
+            side: anchor.side,
+            state: "pending",
+          },
+    );
+  }
+  return comments;
+}
+
+/** Mirrors the Companion's editable delivery states for a body update. */
+export function canEditDraft(draft: DraftComment): boolean {
+  if (draft.destination === "agent") {
+    return draft.agent.state !== "sent";
+  }
+  return draft.pr.state !== "published" && draft.pr.state !== "submitting";
+}

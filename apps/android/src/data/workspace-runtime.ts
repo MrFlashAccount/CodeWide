@@ -74,6 +74,8 @@ import { createThreadListStream } from "./threadListStream";
 import { createThreadSyncReconnect } from "./thread-sync-reconnect";
 import { createThreadSyncRemoteLoader } from "./thread-sync-remote-loader";
 import { createThreadSyncRuntime } from "./thread-sync-runtime";
+import { hydratePeleDiagramRendererPreference } from "./peleDiagramRendererPreference";
+import { hydratePaneSplitPreferences } from "./paneSplitPreferences";
 import { hydrateTimelineRowPremeasurementPreference } from "./timelineRowPremeasurementPreference";
 import {
   createThreadUiStateDatabase,
@@ -99,6 +101,7 @@ import {
 import { createVoiceAssistantModelCatalog } from "./voiceAssistantModelCatalog";
 import { hostDeclaresCapability } from "./agentProviders";
 import { createAgentProvidersResource } from "./agentProvidersResource";
+import { forgeSnapshotCache } from "./forgeSnapshotCache";
 import {
   createWorkspaceResourceDatabase,
   type WorkspaceResourceDatabase,
@@ -244,6 +247,8 @@ async function startWorkspaceRuntime(): Promise<void> {
     await Promise.all([
       globalSupervisorAttention.ready,
       hydrateGlobalVoiceOrbStylePreference(),
+      hydratePeleDiagramRendererPreference(),
+      hydratePaneSplitPreferences(),
       hydrateTimelineRowPremeasurementPreference(),
       hydrateVoiceHandoffPreference(),
       details.prepare(),
@@ -489,6 +494,7 @@ export async function deleteLocalConnectionData(connectionId: string): Promise<v
   await snapshot.resources?.deleteConnection(connectionId);
   await deleteConnectionQuestionDrafts(connectionId);
   await purgeCachedConnectionAttachments(connectionId);
+  await forgeSnapshotCache.deleteConnection(connectionId);
 }
 
 function requireConnectionDataReady(snapshot: WorkspaceRuntimeSnapshot): void {
@@ -639,7 +645,6 @@ const workspaceThreadSync = createThreadSyncRuntime({
   getDetails: () => workspaceRuntime.snapshot.threadDetails,
   getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
   getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
-  loadTurnControls: async (connectionId, cwd) => loadTurnControls(connectionId, cwd),
   readInvalidationArchived: (key) => workspaceCatalog.readInvalidationArchived(key),
   refreshSubagents: async (connectionId, threadId) =>
     workspaceCatalog.refreshSubagents(connectionId, threadId),

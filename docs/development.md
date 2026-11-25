@@ -22,7 +22,6 @@ features a thread's provider does not declare. See [docs/agent-providers.md](age
 
 ## Commands
 
-
 ```sh
 pnpm install
 pnpm typecheck
@@ -70,8 +69,10 @@ The `dev.codexremote.app` package identity and related legacy storage, service,
 and deep-link aliases are retained intentionally. They let existing installs
 upgrade to CodeWide without losing local state or breaking saved links.
 
-Android releases are native APKs only: there is no OTA publishing. Any change
-reaches phones through a new APK published by CI.
+Production Android releases are native APKs only: there is no production OTA
+publishing. Any production change reaches phones through a new APK published by CI.
+The separate Preview package is the sole exception: its local release-candidate
+one-shot publishes a signed OTA baseline beside its APK on the candidate origin.
 
 ## Update and Metro endpoints
 
@@ -103,6 +104,76 @@ build, runs the release checks, builds, verifies and scans the signed arm64
 APK, restores the checked-in versions, and prints the result as JSON. Without
 `--version` it uses the next patch version; without `--version-code` it
 increments the checked-in version code. It never publishes the APK.
+
+For a standalone test build that can be installed beside production and the
+Metro-backed debug app, build the Preview variant:
+
+```sh
+./scripts/build-android-apk --preview [--version-code N]
+```
+
+Preview uses the package `dev.codexremote.app.preview`, the label
+`CodeWide Preview`, and a fixed visible version `0.0.0.0`. Android orders its
+upgrades only by `versionCode`; by default the command derives a monotonic code
+from seconds since 2026-01-01, while `--version-code` allows an explicit higher
+value. Preview is a bundled, optimized, offline-capable build. Direct Preview
+builds have updates disabled unless `CODEWIDE_UPDATE_URL` is explicitly supplied;
+the release-candidate one-shot always supplies its zrok-backed `/api/updates`
+endpoint and publishes a signed baseline for the same native runtime. Preview
+intentionally uses its own stable development key because it is a separate
+non-production application. The one-shot command creates that key
+once under the user's CodeWide data directory and reuses it so later APKs
+upgrade the installed Preview. Production signing material is not read or
+passed to its Gradle build.
+
+The local release-candidate environment has exactly three operator-facing
+one-shots. Run the first two in this order for a complete local test release:
+
+```sh
+./scripts/release-candidate-companion
+./scripts/release-candidate-android
+```
+
+The default stable Preview origin is
+`https://codewide-rc-download-p4186.zrok-safe-share.garin.dev/`. From the
+`integration/release-candidate` context, an unqualified request to publish,
+release or deploy the current test build means the complete two-command Preview
+release above; it never selects a production release. A production release must
+be named explicitly and still runs only through its production workflow.
+
+The one-shot is also the complete evidence boundary for an agent-driven
+candidate release. The agent starts it, waits silently on that same process,
+and reports its final JSON. It must not surround a successful one-shot with
+separate Git, test, service, HTTP, manifest or checksum checks, and it must not
+repeat a successful release merely to verify it independently. Separate
+diagnostics begin only when the one-shot itself reports a failing stage.
+
+The first command validates, builds, atomically replaces and verifies the
+running Companion. The second runs the complete Preview APK gate, publishes a
+signed Expo update for that exact native runtime, and then publishes the APK,
+checksum, manifest and static page to the same zrok-backed origin. It verifies
+the public update manifest, launch asset, settled no-update directive, APK
+manifest and APK hash before succeeding. Do not reconstruct either sequence
+from its lower-level commands.
+
+The published APK filename contains its monotonic version code, for example
+`CodeWide-Preview-25534195.apk`. The download page reads the same filename and
+APK publication timestamp from the verified public manifest. OTA publication
+updates the manifest timestamp without changing the APK publication timestamp.
+
+After that baseline exists, a JavaScript-, TypeScript- or bundled-asset-only
+change can be published to its existing native runtime with:
+
+```sh
+./scripts/release-candidate-android-ota
+```
+
+The OTA one-shot runs the Android release gates, reads the runtime from the
+published Preview manifest, signs and publishes the bundle, updates the public
+candidate manifest and verifies the public endpoint. Native Android, native
+dependency, update-certificate or native application-configuration changes
+must use `release-candidate-android` with a new version code instead. Do not
+reconstruct the OTA sequence from its lower-level commands.
 
 The low-level Gradle/signing variables below remain available for debugging or
 nonstandard builds:
@@ -183,3 +254,39 @@ smoke, lifecycle and layout plan. Select a device with `--serial` and an APK wit
 `--apk`; upgrade coverage additionally uses `--suite upgrade --previous-apk`. Source checks are
 not device evidence. The retired two-generation Appium runner no longer certifies
 releases; no replacement live-conversation E2E coverage is claimed.
+
+## Local Android emulator for agents
+
+On Linux x86_64 with KVM, run the following from the checkout with its pnpm dependencies installed.
+The launcher uses Python 3.11+, JDK 17, the project's Android build SDK and Android command-line tools.
+Accept the Google SDK licenses during SDK setup. On first use it installs Callstack agent-device
+0.21.39 locally, provisions the API 35 Google APIs image with sdkmanager if needed, and creates
+a dedicated Pixel 5 AVD. Reserve loopback ports 5584/5585 (emulator), 8194 (Metro), and
+18767 (test Companion).
+
+```sh
+pnpm dev:android:agent
+./scripts/android-agent/device snapshot -i
+./scripts/android-agent/device screenshot /tmp/codewide.png
+```
+
+The launcher builds and installs the x86_64 debug APK, grants notification permission on this
+AVD, opens the app and waits for its UI. Metro stays running. JS/TS edits use Fast Refresh;
+rerun the launcher after a native change. The emulator accesses Metro through adb reverse.
+
+```sh
+pnpm test:android:notifications
+pnpm dev:android:agent --stop
+```
+
+The notifications command also starts the lab on its own. It builds the local Companion with Cargo,
+pairs the dedicated debug app with a synthetic provider, exercises the settings and the Android
+notification shade, restarts the app to check persistence, and prints the Markdown report path.
+It uses the English UI of the dedicated AVD and restores the three event modes to their defaults
+on success. App and emulator state persist between runs. The temporary provider and Companion
+stop when the test exits. The stop command terminates the emulator and Metro started by this checkout.
+
+Use `CODEWIDE_ANDROID_LAB` for the AVD, private test identity, tool cache, logs, and reports
+(default `$XDG_DATA_HOME/codewide-android-lab`, falling back to `~/.local/share/codewide-android-lab`).
+Set `ANDROID_HOME` for the build SDK and optionally `CODEWIDE_EMULATOR_SDK` for a separate
+runtime SDK. Set `CODEWIDE_TEST_COMPANION` to an absolute executable path to use a prebuilt Companion.

@@ -1,5 +1,5 @@
 import { StyleSheet } from "react-native";
-import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
+import { colors, radii, spacing, touchTarget } from "../../theme";
 
 export const styles = StyleSheet.create({
   mobileIdentity: {
@@ -11,10 +11,9 @@ export const styles = StyleSheet.create({
     flex: 1,
     overflow: "hidden",
   },
+  // Layout only; `CatalogTitle` owns the typography shared by every catalog.
   mobileTitle: {
-    color: colors.text,
     flexShrink: 1,
-    ...typeScale.title,
   },
   mobileTitleGrow: {
     flex: 1,

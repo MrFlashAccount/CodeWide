@@ -19,6 +19,7 @@ use futures_util::SinkExt;
 use portable_pty::{Child, CommandBuilder, ExitStatus, MasterPty, PtySize, native_pty_system};
 use serde::Deserialize;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, mpsc, watch};
+use workspace_io::WorkspaceIo;
 
 use crate::auth::AuthorizationChange;
 
@@ -57,9 +58,13 @@ pub struct TerminalQuery {
 pub enum TerminalError {
     InvalidSize,
     InvalidCwd,
+    /// The working directory's mount does not answer.
+    WorkspaceUnavailable,
     InvalidThread,
     ThreadNotFound,
-    ThreadResolutionFailed { reason: String },
+    ThreadResolutionFailed {
+        reason: String,
+    },
     SessionThreadMismatch,
     InvalidSession,
     SessionNotFound,
@@ -67,7 +72,10 @@ pub enum TerminalError {
     AuthorizationUnavailable,
     SessionLimitReached,
     ReplayUnavailable,
-    SpawnFailed { stage: &'static str, reason: String },
+    SpawnFailed {
+        stage: &'static str,
+        reason: String,
+    },
 }
 
 impl TerminalError {
@@ -84,6 +92,7 @@ impl TerminalError {
             Self::SessionLimitReached => StatusCode::TOO_MANY_REQUESTS,
             Self::SessionThreadMismatch => StatusCode::UNPROCESSABLE_ENTITY,
             Self::ReplayUnavailable => StatusCode::CONFLICT,
+            Self::WorkspaceUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::ThreadResolutionFailed { .. } | Self::SpawnFailed { .. } => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
@@ -95,6 +104,7 @@ impl TerminalError {
         match self {
             Self::InvalidSize => "terminal_size_invalid",
             Self::InvalidCwd => "terminal_cwd_invalid",
+            Self::WorkspaceUnavailable => "terminal_workspace_unavailable",
             Self::InvalidThread => "terminal_thread_invalid",
             Self::ThreadNotFound => "terminal_thread_not_found",
             Self::ThreadResolutionFailed { .. } => "terminal_thread_resolution_failed",
@@ -128,6 +138,9 @@ impl fmt::Display for TerminalError {
         match self {
             Self::InvalidSize => formatter.write_str("terminal size is invalid"),
             Self::InvalidCwd => formatter.write_str("terminal working directory is invalid"),
+            Self::WorkspaceUnavailable => {
+                formatter.write_str("terminal working directory does not respond")
+            }
             Self::InvalidThread => formatter.write_str("terminal thread id is invalid"),
             Self::ThreadNotFound => formatter.write_str("terminal thread was not found"),
             Self::ThreadResolutionFailed { reason } => {
@@ -879,13 +892,38 @@ fn validate_size(cols: Option<u16>, rows: Option<u16>) -> Result<PtySize, Termin
     })
 }
 
-fn resolve_cwd(raw: Option<&str>) -> Result<PathBuf, TerminalError> {
-    let candidate = raw
-        .filter(|value| !value.is_empty() && value.len() <= 4096)
+/// Asks the working directory's mount once, off the runtime, before a
+/// terminal is spawned there: spawning enters the directory synchronously, so
+/// a hung mount must be refused here. Other failures are left to the spawn,
+/// which reports an invalid directory.
+///
+/// # Errors
+/// [`TerminalError::WorkspaceUnavailable`] when the mount does not answer.
+pub async fn check_workspace(raw: Option<&str>) -> Result<(), TerminalError> {
+    let Some(candidate) = requested_cwd(raw) else {
+        return Ok(());
+    };
+    match WorkspaceIo::shared().metadata(&candidate).await {
+        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+            Err(TerminalError::WorkspaceUnavailable)
+        }
+        Ok(_) | Err(_) => Ok(()),
+    }
+}
+
+fn requested_cwd(raw: Option<&str>) -> Option<PathBuf> {
+    raw.filter(|value| !value.is_empty() && value.len() <= 4096)
         .map(PathBuf::from)
+}
+
+fn resolve_cwd(raw: Option<&str>) -> Result<PathBuf, TerminalError> {
+    let candidate = requested_cwd(raw)
         .or_else(|| env::var_os("HOME").map(PathBuf::from))
         .or_else(|| env::current_dir().ok())
         .ok_or(TerminalError::InvalidCwd)?;
+    if WorkspaceIo::shared().is_unavailable(&candidate) {
+        return Err(TerminalError::WorkspaceUnavailable);
+    }
     let canonical = candidate
         .canonicalize()
         .map_err(|_| TerminalError::InvalidCwd)?;

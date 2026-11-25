@@ -15,10 +15,12 @@ import { useContext } from "react";
 import { Linking, Pressable } from "react-native";
 import { useEvent } from "../../../react/useEvent";
 import { boundedJsonStringify } from "../../../rendering/bounded-json";
+import { useMarkdownLocalLinkHandler } from "../../../rendering/MarkdownLinkHandler";
 import { isSafeHttpUrl } from "../../../rendering/http-link";
 import { collapsedCodePreview } from "../../../rendering/native-code-block";
 import { formatDuration } from "../../../ui/number-format";
 import { AppText as Text } from "../../../ui/Typography";
+import { blockContentDocument } from "../content/blockContentDocument";
 import { EXPANDED_BODY_CHARS } from "../content/contentLimits";
 import { LargeContentViewerContext } from "../content/contentViewerContext";
 import { Card, usePersistentExpansion } from "../turns/Card";
@@ -32,15 +34,15 @@ export const TOOL_RESULT_MAX_HEIGHT = 400;
 
 export function ToolCallProtocolBlock({ block, getTransferAccess }: ToolCallProtocolBlockInput) {
   const openContent = useContext(LargeContentViewerContext);
-  const content = protocolCopyText(block);
+  const document = blockContentDocument({
+    block,
+    getTransferAccess: getTransferAccess ?? null,
+    inline: { presentation: "text", text: protocolCopyText(block) },
+    title: block.title,
+  });
   const openResult = useEvent(() => {
-    if (openContent !== null && content !== "") {
-      openContent({
-        kind: "inline",
-        presentation: "text",
-        text: content,
-        title: block.title,
-      });
+    if (openContent !== null && document !== null) {
+      openContent(document);
     }
   });
   return (
@@ -48,10 +50,8 @@ export function ToolCallProtocolBlock({ block, getTransferAccess }: ToolCallProt
       icon="extension-puzzle-outline"
       title={block.title}
       {...(block.status === null ? {} : { status: block.status })}
-      collapsible
       copyText={() => protocolCopyText(block)}
-      initiallyExpanded={false}
-      {...(openContent !== null && content !== ""
+      {...(openContent !== null && document !== null
         ? { onOpen: openResult, openLabel: `Open ${block.title} output` }
         : {})}
     >
@@ -172,13 +172,15 @@ function containsTerminalControlSequences(value: string): boolean {
 }
 
 function ToolResourceLink({ label, uri }: ToolResourceLinkInput) {
+  const openThreadLink = useMarkdownLocalLinkHandler();
   const canOpen = isSafeHttpUrl(uri);
+  const open = useEvent(() => {
+    if (openThreadLink?.(uri) !== true) {
+      Linking.openURL(uri).catch(() => undefined);
+    }
+  });
   return (
-    <Pressable
-      disabled={!canOpen}
-      onPress={canOpen ? () => void Linking.openURL(uri) : undefined}
-      style={styles.searchResult}
-    >
+    <Pressable disabled={!canOpen} onPress={canOpen ? open : undefined} style={styles.searchResult}>
       <Text numberOfLines={1} style={styles.menuActionTitle}>
         {label}
       </Text>

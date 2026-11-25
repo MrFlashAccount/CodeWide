@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useState, type ReactElement } from "react";
+import type { ReactElement } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 
 import { useEvent } from "../react/useEvent";
@@ -31,14 +31,7 @@ export function FullscreenCodeBlock({
   readonly variant?: NativeCodeVariant;
 }): ReactElement {
   const [copied, copy] = useCopyFeedback(value);
-  const [viewportHeight, setViewportHeight] = useState(0);
   const close = useEvent(onClose);
-  const captureViewportHeight = useEvent(
-    ({ nativeEvent }: { nativeEvent: { layout: { height: number } } }) => {
-      const nextHeight = Math.max(0, Math.floor(nativeEvent.layout.height));
-      setViewportHeight((current) => (current === nextHeight ? current : nextHeight));
-    },
-  );
   return (
     <View style={styles.root} testID="fullscreen-code-block">
       <FullscreenCodeBlockHeader
@@ -47,18 +40,17 @@ export function FullscreenCodeBlock({
         onClose={close}
         onCopy={copy}
       />
-      <View onLayout={captureViewportHeight} style={styles.viewport}>
-        {viewportHeight > 0 && (
-          <NativeCodeBlock
-            embeddedInParentScroll={false}
-            fillAvailableWidth
-            language={language}
-            maxHeight={viewportHeight}
-            truncate={false}
-            value={value}
-            variant={variant}
-          />
-        )}
+      {/* Layout sizes the code viewport to the modal body; rows past it scroll natively. */}
+      <View style={styles.viewport}>
+        <NativeCodeBlock
+          embeddedInParentScroll={false}
+          fillAvailableWidth
+          fillParentHeight
+          language={language}
+          truncate={false}
+          value={value}
+          variant={variant}
+        />
       </View>
     </View>
   );

@@ -11,6 +11,33 @@ import { contentReviewNativeModule } from "../src/rendering/content-review-nativ
 const target = { id: "answer-1", label: "Completed agent response", reference: "item-1" };
 
 describe("content review", () => {
+  it("attaches a video point with its timestamp and stable source reference", () => {
+    const attachment = serializeContentReviewAttachment([
+      {
+        id: "video-pin",
+        createdAt: 1,
+        body: "The result becomes blurry here",
+        anchor: {
+          kind: "video",
+          target: {
+            id: "video-1",
+            label: "comparison.mp4",
+            reference: "scoped:attachments:comparison.mp4",
+          },
+          timeSeconds: 67.2346,
+          x: 0.25,
+          y: 0.75,
+        },
+      },
+    ]);
+
+    expect(attachment).toContain("Comment 1 · video point");
+    expect(attachment).toContain("Time: **01:07.235**");
+    expect(attachment).toContain("Point: **(25.0%, 75.0%)** from the video top-left.");
+    expect(attachment).toContain("Reference: `scoped:attachments:comparison.mp4`");
+    expect(attachment).toContain("The result becomes blurry here");
+  });
+
   it("attaches image pin coordinates and comments without treating the image as a Mermaid diagram", () => {
     const image = { id: "image-1", label: "Screenshot", reference: "scoped:attachments:shot.png" };
     const attachment = serializeContentReviewAttachment([

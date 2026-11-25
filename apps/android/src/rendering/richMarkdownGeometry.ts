@@ -11,7 +11,7 @@ import {
 
 import { controlSize, iconSize, layoutSize, spacing, typeScale } from "../theme";
 import { productFonts } from "../ui/product-fonts";
-import { looksLikeAsciiDiagram } from "./ascii-diagram";
+import { isExplicitAsciiDiagram } from "./ascii-diagram";
 import { isRemoteFileHref, remoteFileKind } from "./document-preview";
 import { safeImageUri } from "./image-source";
 import {
@@ -406,7 +406,7 @@ function measureCode(
 ): RichMarkdownBlockHeight {
   const resolvedLanguage = language ?? "text";
   const diagram =
-    resolvedLanguage.toLocaleLowerCase() === "mermaid" || looksLikeAsciiDiagram(value, language);
+    resolvedLanguage.toLocaleLowerCase() === "mermaid" || isExplicitAsciiDiagram(language);
   if (diagram) {
     if (value.length <= MAX_INLINE_DIAGRAM_SOURCE_CHARS) {
       return exactHeight(

@@ -1,4 +1,6 @@
-import { render, waitFor } from "@testing-library/react-native";
+import { DownloadManagerProvider } from "../src/data/DownloadManagerProvider";
+import { createTestDownloadManager } from "./downloads.fixture";
+import { fireEvent, render, waitFor } from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { UserMessageContent } from "../src/features/conversation/turns/UserMessageContent";
@@ -6,6 +8,8 @@ import { ImagePreviewHost } from "../src/rendering/ImagePreviewHost";
 import { DocumentPreviewHost } from "../src/rendering/DocumentPreviewHost";
 import { AppFullscreenOverlayProvider } from "../src/ui/AppFullscreenOverlay";
 import { AppNoticeProvider } from "../src/ui/AppNotice";
+import { MessageAttachmentCard } from "../src/rendering/MessageAttachmentCard";
+import { ThreadCodeDocumentContext } from "../src/rendering/ThreadCodeDocumentContext";
 import { urlTransport } from "../src/native/urlTransport";
 
 // Native private-file downloads are outside this layout test; retain the real
@@ -23,21 +27,23 @@ it("keeps file cards at the left while centering the image inside its cover prev
         insets: { bottom: 0, left: 0, right: 0, top: 24 },
       }}
     >
-      <AppNoticeProvider>
-        <AppFullscreenOverlayProvider>
-          <ImagePreviewHost>
-            <DocumentPreviewHost>
-              <UserMessageContent
-                content={[
-                  { type: "image", url: "data:image/png;base64,iVBORw0KGgo=" },
-                  { type: "mention", name: "plan.md", path: "/tmp/plan.md" },
-                  { type: "text", text: "Проверь картинку и план.", text_elements: [] },
-                ]}
-              />
-            </DocumentPreviewHost>
-          </ImagePreviewHost>
-        </AppFullscreenOverlayProvider>
-      </AppNoticeProvider>
+      <DownloadManagerProvider manager={createTestDownloadManager()}>
+        <AppNoticeProvider>
+          <AppFullscreenOverlayProvider>
+            <ImagePreviewHost>
+              <DocumentPreviewHost>
+                <UserMessageContent
+                  content={[
+                    { type: "image", url: "data:image/png;base64,iVBORw0KGgo=" },
+                    { type: "mention", name: "plan.md", path: "/tmp/plan.md" },
+                    { type: "text", text: "Проверь картинку и план.", text_elements: [] },
+                  ]}
+                />
+              </DocumentPreviewHost>
+            </ImagePreviewHost>
+          </AppFullscreenOverlayProvider>
+        </AppNoticeProvider>
+      </DownloadManagerProvider>
     </SafeAreaProvider>,
   );
 
@@ -63,23 +69,68 @@ it("shows an attached SVG in the image gallery", async () => {
         insets: { bottom: 0, left: 0, right: 0, top: 24 },
       }}
     >
-      <AppNoticeProvider>
-        <AppFullscreenOverlayProvider>
-          <ImagePreviewHost>
-            <DocumentPreviewHost>
-              <UserMessageContent
-                content={[{ type: "mention", name: "drawing.svg", path: "/tmp/drawing.svg" }]}
-                getTransferAccess={async () => ({ authorization: "test", baseUrl: "https://example.test", transport: urlTransport, })}
-              />
-            </DocumentPreviewHost>
-          </ImagePreviewHost>
-        </AppFullscreenOverlayProvider>
-      </AppNoticeProvider>
+      <DownloadManagerProvider manager={createTestDownloadManager()}>
+        <AppNoticeProvider>
+          <AppFullscreenOverlayProvider>
+            <ImagePreviewHost>
+              <DocumentPreviewHost>
+                <UserMessageContent
+                  content={[{ type: "mention", name: "drawing.svg", path: "/tmp/drawing.svg" }]}
+                  getTransferAccess={async () => ({
+                    authorization: "test",
+                    baseUrl: "https://example.test",
+                    transport: urlTransport,
+                  })}
+                />
+              </DocumentPreviewHost>
+            </ImagePreviewHost>
+          </AppFullscreenOverlayProvider>
+        </AppNoticeProvider>
+      </DownloadManagerProvider>
     </SafeAreaProvider>,
   );
 
   await waitFor(() => {
     expect(view.getByTestId("user-image-gallery")).toBeTruthy();
     expect(view.getByLabelText("Open Image drawing.svg")).toBeTruthy();
+  });
+});
+
+it("opens a trace card in its owning conversation with the original scoped file", () => {
+  const open = jest.fn();
+  const access = async () => ({
+    authorization: "fixture",
+    baseUrl: "https://example.test",
+    transport: urlTransport,
+  });
+  const view = render(
+    <DownloadManagerProvider manager={createTestDownloadManager()}>
+      <AppNoticeProvider>
+        <AppFullscreenOverlayProvider>
+          <ImagePreviewHost>
+            <DocumentPreviewHost>
+              <ThreadCodeDocumentContext.Provider value={open}>
+                <MessageAttachmentCard
+                  attachment={{
+                    kind: "file",
+                    name: "capture.pftrace",
+                    source: { type: "scoped", rootId: "attachments", path: "uploads/opaque" },
+                  }}
+                  getAccess={access}
+                />
+              </ThreadCodeDocumentContext.Provider>
+            </DocumentPreviewHost>
+          </ImagePreviewHost>
+        </AppFullscreenOverlayProvider>
+      </AppNoticeProvider>
+    </DownloadManagerProvider>,
+  );
+  fireEvent.press(view.getByLabelText("Open capture.pftrace"));
+  expect(open).toHaveBeenCalledWith({
+    getTransferAccess: access,
+    kind: "perfetto",
+    name: "capture.pftrace",
+    path: "uploads/opaque",
+    source: { kind: "scoped", rootId: "attachments", path: "uploads/opaque" },
   });
 });

@@ -24,6 +24,7 @@ type Props = Pick<
   | "voiceController"
   | "searchComposerSuggestions"
   | "selectComposerMention"
+  | "questionReplyActive"
   | "editingQueuedMessage"
   | "voiceBackend"
   | "voiceResource"
@@ -42,6 +43,7 @@ export function ComposerEditor({
   handleComposerTextChange,
   pastedAttachmentPending,
   pendingVoiceSelection,
+  questionReplyActive,
   searchComposerSuggestions,
   selectComposerMention,
   voiceBackend,
@@ -82,7 +84,13 @@ export function ComposerEditor({
         search={searchComposerSuggestions}
         {...(getTransferAccess === undefined ? {} : { getTransferAccess: getStableTransferAccess })}
         onSelectMention={selectComposerMention}
-        placeholder={editingQueuedMessage ? "Edit queued message…" : "Message the agent…"}
+        placeholder={
+          editingQueuedMessage
+            ? "Edit queued message…"
+            : questionReplyActive === true
+              ? "Ответить на вопрос…"
+              : "Message the agent…"
+        }
         style={styles.composerInput}
       />
     </PrivateImageAccessProvider>

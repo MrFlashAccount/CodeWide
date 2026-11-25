@@ -6,11 +6,13 @@ import { ComposerControlChips } from "./settings/ComposerControlChips";
 type Props = Pick<
   ComposerFeatureProps,
   | "applyModelSettings"
+  | "catalogControls"
   | "controls$"
   | "newChat"
   | "workspaceResources"
   | "controlsResourceId"
   | "cwd"
+  | "detailCursor"
   | "remoteThread"
   | "readOnly"
   | "selectedModel"
@@ -29,11 +31,13 @@ type Props = Pick<
 >;
 export function ComposerContextStrip({
   applyModelSettings,
+  catalogControls,
   closeQuickControlMenu,
   controlError,
   controls$,
   controlsResourceId,
   cwd,
+  detailCursor,
   leadingContextChips,
   newChat,
   onLoadControls,
@@ -60,8 +64,10 @@ export function ComposerContextStrip({
     >
       {leadingContextChips}
       <ComposerControlChips
+        catalogControls={catalogControls ?? null}
         controls$={controls$}
         cwd={cwd}
+        detailCursor={detailCursor ?? 0}
         error={controlError}
         newChat={newChat}
         onApplySettings={applyModelSettings}

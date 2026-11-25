@@ -1,10 +1,10 @@
 import type { RenderBlock } from "@codewide/renderers";
-import type { MarkdownDocumentBlock } from "../../../rendering/markdown-document-blocks";
+import type { ChatMarkdownBlock } from "../../../rendering/markdownListGroups";
 import type { ActiveTurnSequencePart } from "../../../rendering/turn-sequence";
 
 export type VirtualizedTurnPart =
   | {
-      readonly block: MarkdownDocumentBlock;
+      readonly block: ChatMarkdownBlock;
       readonly kind: "markdownBlock";
       readonly response: RenderBlock;
       readonly streaming: boolean;

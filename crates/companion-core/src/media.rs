@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
 
@@ -42,6 +42,7 @@ pub struct MediaProxyService {
     cache: Arc<Mutex<MediaCache>>,
     materialization_slots: Arc<Semaphore>,
     transfer_slots: Arc<Semaphore>,
+    private_source: Arc<RwLock<Option<Arc<dyn PrivateMediaSource>>>>,
 }
 
 #[derive(Default)]
@@ -79,6 +80,25 @@ pub struct MaterializedImage {
     pub expires_at: u64,
     #[serde(skip)]
     pub reused: bool,
+}
+
+/// What a credentialed media source decided about one image URL.
+pub enum PrivateMedia {
+    /// The source does not own the URL; it is fetched anonymously.
+    NotOwned,
+    /// The image bytes, read with the owner's credential.
+    Fetched(Vec<u8>),
+    /// The source owned the URL and failed; there is no anonymous retry.
+    Failed(MediaError),
+}
+
+/// A source of images that need an account's credential, such as
+/// forge-hosted images in pull request comments. The credential stays with
+/// the source; this service receives bytes only and applies its own size,
+/// type and cache rules to them.
+#[async_trait::async_trait]
+pub trait PrivateMediaSource: Send + Sync {
+    async fn fetch(&self, url: &Url) -> PrivateMedia;
 }
 
 pub(crate) struct MediaImageSource {
@@ -126,7 +146,44 @@ impl MediaProxyService {
             cache: Arc::new(Mutex::new(MediaCache::default())),
             materialization_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_MATERIALIZATIONS)),
             transfer_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSFERS)),
+            private_source: Arc::default(),
         }
+    }
+
+    /// Routes owned image URLs through `source` instead of the anonymous
+    /// fetch; every other URL keeps the anonymous path.
+    pub fn set_private_source(&self, source: Arc<dyn PrivateMediaSource>) {
+        match self.private_source.write() {
+            Ok(mut slot) => *slot = Some(source),
+            Err(poisoned) => *poisoned.into_inner() = Some(source),
+        }
+    }
+
+    fn private_source(&self) -> Option<Arc<dyn PrivateMediaSource>> {
+        match self.private_source.read() {
+            Ok(slot) => slot.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// The private source's bytes for an owned URL, else the anonymous
+    /// fetch. Both paths share the image size and type rules.
+    async fn download(&self, source_url: &str) -> Result<(Vec<u8>, &'static str), MediaError> {
+        if let Some(source) = self.private_source() {
+            let url = Url::parse(source_url).map_err(|_| MediaError::InvalidUrl)?;
+            match source.fetch(&url).await {
+                PrivateMedia::NotOwned => {}
+                PrivateMedia::Fetched(bytes) => {
+                    if bytes.len() > MAX_IMAGE_BYTES {
+                        return Err(MediaError::TooLarge);
+                    }
+                    let content_type = detect_image_type(&bytes).ok_or(MediaError::Unsupported)?;
+                    return Ok((bytes, content_type));
+                }
+                PrivateMedia::Failed(error) => return Err(error),
+            }
+        }
+        download_image(source_url, 0).await
     }
 
     #[cfg(test)]
@@ -135,6 +192,7 @@ impl MediaProxyService {
             cache: Arc::new(Mutex::new(MediaCache::default())),
             materialization_slots: Arc::new(Semaphore::new(materializations)),
             transfer_slots: Arc::new(Semaphore::new(transfers)),
+            private_source: Arc::default(),
         }
     }
 
@@ -161,7 +219,7 @@ impl MediaProxyService {
             .try_acquire_owned()
             .map_err(|_| MediaError::Capacity)?;
         let mut cancellation = self.owner_cancellation(owner);
-        let download = download_image(&source_url, 0);
+        let download = self.download(&source_url);
         let (bytes, content_type) = tokio::select! {
             biased;
             changed = cancellation.changed() => {
@@ -1118,6 +1176,67 @@ mod tests {
         assert!(valid_media_id("abcdefghijklmnopqrstuvwxyz012345"));
         assert!(!valid_media_id("../abcdefghijklmnopqrstuvwxyz012345"));
         assert!(!valid_media_id("short"));
+    }
+
+    /// Owns `forge.test`: a PNG for `/ok.png`, a failure for anything else.
+    struct ForgeImages {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl PrivateMediaSource for ForgeImages {
+        async fn fetch(&self, url: &Url) -> PrivateMedia {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match (url.host_str(), url.path()) {
+                (Some("forge.test"), "/ok.png") => {
+                    PrivateMedia::Fetched(vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0])
+                }
+                (Some("forge.test"), "/text") => PrivateMedia::Fetched(b"not an image".to_vec()),
+                (Some("forge.test"), _) => PrivateMedia::Failed(MediaError::TooLarge),
+                _ => PrivateMedia::NotOwned,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn owned_urls_use_the_private_source_and_keep_cache_and_type_rules()
+    -> Result<(), MediaError> {
+        let service = MediaProxyService::new();
+        let source = Arc::new(ForgeImages {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        service.set_private_source(source.clone());
+        let first = service
+            .materialize_for_owner("device-a", "https://forge.test/ok.png")
+            .await?;
+        let again = service
+            .materialize_for_owner("device-a", "https://forge.test/ok.png#frag")
+            .await?;
+        assert_eq!(first.id, again.id);
+        assert!(again.reused);
+        assert_eq!(source.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let served = service.serve_for_owner("device-a", &first.id, true)?;
+        assert_eq!(served.headers()[header::CONTENT_TYPE], "image/png");
+        assert!(matches!(
+            service
+                .materialize_for_owner("device-a", "https://forge.test/text")
+                .await,
+            Err(MediaError::Unsupported)
+        ));
+        assert!(matches!(
+            service
+                .materialize_for_owner("device-a", "https://forge.test/huge.png")
+                .await,
+            Err(MediaError::TooLarge)
+        ));
+        // Not owned: the anonymous path still refuses an insecure URL itself.
+        assert!(matches!(
+            service
+                .materialize_for_owner("device-a", "http://example.test/a.png")
+                .await,
+            Err(MediaError::InsecureUrl)
+        ));
+        Ok(())
     }
 
     #[tokio::test]

@@ -1,6 +1,9 @@
+import { useSelector } from "@legendapp/state/react";
+import type { Observable } from "@legendapp/state";
+import type { ReactElement } from "react";
 import { View } from "react-native";
 import { recordThreadNavigationVisualEvent } from "../../../data/thread-navigation-metrics";
-import { TimelineMotionContext } from "../../../rendering/FluidLayoutFrame";
+import { TimelineMotionContext } from "../../../rendering/TimelineMotionContext";
 import { spacing } from "../../../theme";
 import { CommitOnChangeProbe, EveryCommitProbe } from "../../../ui/CommitProbe";
 import {
@@ -28,6 +31,7 @@ export function ConversationTimelineSurface({
   draftConnectionId,
   draftThreadId,
   fullscreenCovered,
+  gestureActive$,
   historyActivityModel,
   historyActivityResourceId,
   historyViewport,
@@ -44,7 +48,6 @@ export function ConversationTimelineSurface({
   timeline,
   timelineContent,
   timelineDidLoad,
-  timelineGestureActive,
   timelineModelReady,
   timelinePositioned,
   timelineViewportRef,
@@ -109,18 +112,18 @@ export function ConversationTimelineSurface({
           turnCount={remoteThread?.turns.length ?? 0}
           visible={timelinePositioned}
         >
-          <TimelineMotionContext.Provider
-            value={
+          <TimelineMotion
+            enabled={
               timelineDidLoad &&
-              !timelineGestureActive &&
               !fullscreenCovered &&
               historyViewport.containsLatest &&
               !awayFromLatest &&
               !threadSearchActive
             }
+            gestureActive$={gestureActive$}
           >
             {timelineContent}
-          </TimelineMotionContext.Provider>
+          </TimelineMotion>
         </ThreadTimelineNavigationCommit>
       </MessageListBoundary>
       {timelineModelReady && (
@@ -146,6 +149,22 @@ export function ConversationTimelineSurface({
         </View>
       )}
     </View>
+  );
+}
+
+// Only the idle live tail animates. History need not subscribe to gesture transitions.
+function TimelineMotion({
+  children,
+  enabled,
+  gestureActive$,
+}: {
+  readonly children: ReactElement;
+  readonly enabled: boolean;
+  readonly gestureActive$: Observable<boolean>;
+}) {
+  const allowed = useSelector(() => enabled && !gestureActive$.get());
+  return (
+    <TimelineMotionContext.Provider value={allowed}>{children}</TimelineMotionContext.Provider>
   );
 }
 

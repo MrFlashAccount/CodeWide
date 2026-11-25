@@ -3,6 +3,7 @@ import { fireEvent, render } from "@testing-library/react-native";
 import type { StoredThreadSummary } from "../src/data/thread-summary-types";
 import { colors, radii } from "../src/theme";
 import { SubagentWorkspace } from "../src/features/agents/SubagentWorkspace";
+import { projectSubagentLineage } from "../src/features/agents/lineageProjection";
 
 const summary: StoredThreadSummary = {
   connectionId: "buddy",
@@ -29,9 +30,11 @@ it("uses the thread-sidebar geometry and real subagent preview", () => {
   const view = render(
     <SubagentWorkspace
       compact={false}
+      detailOpen
       masterWidth={320}
       onLayout={jest.fn()}
-      subagents={[summary]}
+      restoreFocusThreadId={null}
+      subagents={projectSubagentLineage([summary], "parent-1", "Release planning")}
       selected={summary}
       onSelect={jest.fn()}
       onClose={jest.fn()}
@@ -44,7 +47,9 @@ it("uses the thread-sidebar geometry and real subagent preview", () => {
     nativeEvent: { layout: { width: 1_000 } },
   });
 
-  const row = view.getByLabelText("Open subagent Builder");
+  const row = view.getByLabelText(
+    "Open subagent Builder, child of Release planning, depth 1, 1 unread message",
+  );
   expect(row.props.accessibilityState).toEqual({ selected: true });
   expect(row).toHaveStyle({
     height: 64,
@@ -57,5 +62,8 @@ it("uses the thread-sidebar geometry and real subagent preview", () => {
   expect(view.queryByText("worker · idle")).toBeNull();
   expect(view.getByLabelText("1 unread message")).toBeVisible();
   expect(view.getByLabelText("1 subagent")).toBeVisible();
+  const sectionLabel = view.getByText("Release planning");
+  expect(sectionLabel).toBeVisible();
+  expect(view.getByTestId("subagent-lineage-section")).toHaveStyle({ height: 32 });
   expect(view.queryByText("newest activity first")).toBeNull();
 });

@@ -1,9 +1,4 @@
-const UNICODE_CONNECTOR_PATTERN = /[┌┐└┘├┤┬┴┼│─━┃╭╮╯╰╱╲]/gu;
-const UNICODE_ARROW_PATTERN = /[▲▼◀▶←→↑↓]/gu;
-const ASCII_CONNECTOR_PATTERN = /(?:[-=+|.']{3,}|(?:<[-=]+|[-=]+>))/gu;
-const ASCII_ARROW_PATTERN = /(?:<[-=]+|[-=]+>|\^[ |+]*$|^[ |+]*v)/gmu;
-
-const PLAIN_TEXT_LANGUAGES = new Set(["", "text", "txt", "plaintext", "plain", "ascii", "diagram"]);
+const EXPLICIT_ASCII_DIAGRAM_LANGUAGES = new Set(["ascii", "bob", "diagram", "svgbob"]);
 const SVGBOB_CELL_WIDTH = 8;
 const SVG_TEXT_PATTERN = /<text\b([^>]*)>([\s\S]*?)<\/text>/gu;
 
@@ -16,40 +11,13 @@ type SvgTextFragment = {
   y: number;
 };
 
-/**
- * Detects diagrams conservatively so source code never silently changes
- * presentation. Unicode box drawing is a strong signal; ASCII-only diagrams
- * additionally require an untyped/plain-text fence.
- */
-export function looksLikeAsciiDiagram(
-  source: string,
-  language: string | null | undefined,
-): boolean {
-  const lines = source.replaceAll(/\r\n?/gu, "\n").split("\n");
-  if (lines.length < 4 || source.length > 128 * 1024) {
-    return false;
-  }
-
-  const unicodeConnectors = source.match(UNICODE_CONNECTOR_PATTERN)?.length ?? 0;
-  const unicodeArrows = source.match(UNICODE_ARROW_PATTERN)?.length ?? 0;
-  const connectorLines = lines.filter((line) => /[┌┐└┘├┤┬┴┼│─━┃╭╮╯╰╱╲]/u.test(line)).length;
-  if (unicodeConnectors >= 4 && unicodeArrows >= 1 && connectorLines >= 3) {
-    return true;
-  }
-
+/** Returns whether the Markdown fence explicitly requests Svgbob rendering. */
+export function isExplicitAsciiDiagram(language: string | null | undefined): boolean {
   const normalizedLanguage = (language ?? "")
     .trim()
     .toLocaleLowerCase()
     .replace(/^language-/u, "");
-  if (!PLAIN_TEXT_LANGUAGES.has(normalizedLanguage)) {
-    return false;
-  }
-  const asciiConnectors = source.match(ASCII_CONNECTOR_PATTERN)?.length ?? 0;
-  const asciiArrows = source.match(ASCII_ARROW_PATTERN)?.length ?? 0;
-  const asciiConnectorLines = lines.filter((line) =>
-    /(?:[-=+|.']{3,}|(?:<[-=]+|[-=]+>))/u.test(line),
-  ).length;
-  return asciiConnectors >= 3 && asciiArrows >= 1 && asciiConnectorLines >= 3;
+  return EXPLICIT_ASCII_DIAGRAM_LANGUAGES.has(normalizedLanguage);
 }
 
 function decodeXmlText(value: string): string {

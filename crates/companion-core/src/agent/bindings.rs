@@ -862,7 +862,6 @@ mod tests {
         assert_eq!(bindings.provider_of(&id("claude-session")?).await?, None);
         let registry = ProviderRegistry::single(
             crate::agent::testing::FakeProvider::new("codex", discovery_capabilities()).into_arc(),
-            Vec::new(),
         );
         assert_eq!(
             bindings.route(&registry, &id("claude-session")?).await?,
@@ -994,7 +993,7 @@ mod tests {
             directory.path().join("state.redb"),
         )?));
         let lone = FakeProvider::new("codex", discovery_capabilities()).into_arc();
-        let single = ProviderRegistry::single(lone.clone(), Vec::new());
+        let single = ProviderRegistry::single(lone.clone());
         assert_eq!(
             bindings.route(&single, &id("cli-thread")?).await?,
             ThreadRoute::Provisional(ProviderId::from_static("codex"))
@@ -1005,14 +1004,10 @@ mod tests {
         let mut second = FakeProvider::new("other", discovery_capabilities());
         second.owned = vec!["other-thread".into()];
         let second = second.into_arc();
-        let registry = ProviderRegistry::new(
-            vec![
-                first.clone() as Arc<dyn AgentProvider>,
-                second.clone() as Arc<dyn AgentProvider>,
-            ],
-            &ProviderId::from_static("codex"),
-            Vec::new(),
-        )?;
+        let registry = ProviderRegistry::new(vec![
+            first.clone() as Arc<dyn AgentProvider>,
+            second.clone() as Arc<dyn AgentProvider>,
+        ])?;
         assert_eq!(
             bindings.route(&registry, &id("other-thread")?).await?,
             ThreadRoute::Bound(ProviderId::from_static("other"))

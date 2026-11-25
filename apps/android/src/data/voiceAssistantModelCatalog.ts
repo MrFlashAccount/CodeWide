@@ -1,7 +1,7 @@
 import { observable, type Observable } from "@legendapp/state";
 
 import type { TurnControlsValue } from "./turn-controls-types";
-import { primaryProviderModels } from "./turnControlsAgentProviders";
+import { defaultProviderModels } from "./turnControlsAgentProviders";
 
 type VoiceAssistantModel = TurnControlsValue["models"][number];
 
@@ -41,7 +41,7 @@ export type VoiceAssistantModelCatalog = {
 
 /**
  * Model-owned resource for the Voice Assistant picker; RPC data never lives in component state.
- * The hidden supervisor thread runs on the host's primary provider, so only its models are offered.
+ * The hidden supervisor thread runs on the host's default provider, so only its models are offered.
  * The snapshot is keyed by the server: a refresh for another server never shows, and a failed
  * refresh never keeps, the previous server's models.
  */
@@ -88,7 +88,7 @@ export function createVoiceAssistantModelCatalog(
     }
     try {
       const models = await load(connectionId);
-      snapshot$.value.set({ connectionId, models: primaryProviderModels(models), status: "ready" });
+      snapshot$.value.set({ connectionId, models: defaultProviderModels(models), status: "ready" });
     } catch (error) {
       failed(connectionId, carried)(error);
     }

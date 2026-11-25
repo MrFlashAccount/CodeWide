@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { looksLikeAsciiDiagram, repairSvgbobUnicodeText, themedAsciiDiagramSvg } from "../src/rendering/ascii-diagram";
+import { isExplicitAsciiDiagram, repairSvgbobUnicodeText, themedAsciiDiagramSvg } from "../src/rendering/ascii-diagram";
 import { renderSvgbob } from "@codewide/rendering-core/ascii";
 
 const generatedArchitecture = `                 TypeScript source
@@ -19,19 +19,18 @@ const generatedArchitecture = `                 TypeScript source
                         ▼
         contracts / diagnostics / fixes`;
 
-describe("ASCII diagram detection", () => {
-  it("recognizes generated box-drawing diagrams without a language tag", () => {
-    expect(looksLikeAsciiDiagram(generatedArchitecture, null)).toBe(true);
-  });
+describe("ASCII diagram selection", () => {
+  it("renders only explicitly tagged ASCII diagram fences", () => {
+    expect(isExplicitAsciiDiagram("ascii")).toBe(true);
+    expect(isExplicitAsciiDiagram("bob")).toBe(true);
+    expect(isExplicitAsciiDiagram("diagram")).toBe(true);
+    expect(isExplicitAsciiDiagram("svgbob")).toBe(true);
+    expect(isExplicitAsciiDiagram("language-svgbob")).toBe(true);
 
-  it("recognizes conservative plain-ASCII diagrams", () => {
-    expect(looksLikeAsciiDiagram("+-----+\n| API |---> worker\n+-----+\n   |\n   v", "text")).toBe(true);
-  });
-
-  it("does not steal ordinary source code or prose", () => {
-    expect(looksLikeAsciiDiagram("type Step = {\n  from: string;\n  to: string;\n};", "typescript")).toBe(false);
-    expect(looksLikeAsciiDiagram("first\n---\nsecond\n---\nthird", "text")).toBe(false);
-    expect(looksLikeAsciiDiagram("a -> b\nc -> d\ne -> f\ng -> h", "typescript")).toBe(false);
+    expect(isExplicitAsciiDiagram(null)).toBe(false);
+    expect(isExplicitAsciiDiagram("text")).toBe(false);
+    expect(isExplicitAsciiDiagram("plaintext")).toBe(false);
+    expect(isExplicitAsciiDiagram("typescript")).toBe(false);
   });
 
   it("adds a dark transparent theme to Svgbob output", () => {

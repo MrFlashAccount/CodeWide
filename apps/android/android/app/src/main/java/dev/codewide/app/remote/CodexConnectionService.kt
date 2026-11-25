@@ -11,7 +11,6 @@ import android.graphics.Color
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
@@ -35,6 +34,7 @@ import java.util.concurrent.TimeUnit
 
 class CodexConnectionService : Service() {
 
+  private lateinit var agentNotifications: AgentNotifications
   private lateinit var frameStore: NativeFrameStore
   private lateinit var commandStore: NativeCommandStore
   private lateinit var credentialsStore: NativeSessionCredentialsStore
@@ -134,7 +134,8 @@ class CodexConnectionService : Service() {
     val initialNetwork = connectivityManager.activeNetwork
     if (initialNetwork == null) networkState.absent() else networkState.available(initialNetwork)
     createNotificationChannel()
-    createActivityNotificationChannel()
+    agentNotifications = AgentNotifications(this)
+    agentNotifications.createChannel()
     startForeground(NOTIFICATION_ID, notification())
     connectivityManager.registerDefaultNetworkCallback(networkCallback, handler)
     processNativeAuthorityLifecycle.access {
@@ -589,18 +590,6 @@ class CodexConnectionService : Service() {
     )
   }
 
-  private fun createActivityNotificationChannel() {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-    val manager = getSystemService(NotificationManager::class.java)
-    manager.createNotificationChannel(
-      NotificationChannel(ACTIVITY_CHANNEL_ID, "Codex turn updates", NotificationManager.IMPORTANCE_DEFAULT).apply {
-        description = "Completion and failure updates for remote Codex turns"
-        setShowBadge(true)
-        lockscreenVisibility = Notification.VISIBILITY_PRIVATE
-      }
-    )
-  }
-
   private fun notification(): Notification {
     val connectedServers = sessions.size
     val activeTurns = sessions.values.sumOf { it.activeThreadCount() }
@@ -638,82 +627,6 @@ class CodexConnectionService : Service() {
   private fun notificationBuilder(channelId: String): NotificationCompat.Builder =
     NotificationCompat.Builder(this, channelId).setColor(Color.WHITE)
 
-  private fun notifyTurnFinished(connectionId: String, threadId: String, failed: Boolean) {
-    val deepLink = Uri.Builder()
-      .scheme("codewide")
-      .authority("thread")
-      .appendQueryParameter("savedServerId", connectionId)
-      .appendQueryParameter("connectionId", connectionId)
-      .appendQueryParameter("threadId", threadId)
-      .build()
-    val openThread = PendingIntent.getActivity(
-      this,
-      ("$connectionId\u0000$threadId").hashCode(),
-      Intent(Intent.ACTION_VIEW, deepLink, this, MainActivity::class.java)
-        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
-    val publicVersion = notificationBuilder(ACTIVITY_CHANNEL_ID)
-      .setSmallIcon(R.drawable.ic_stat_codewide)
-      .setContentTitle("CodeWide")
-      .setContentText("A remote turn finished")
-      .build()
-    val notification = notificationBuilder(ACTIVITY_CHANNEL_ID)
-      .setSmallIcon(R.drawable.ic_stat_codewide)
-      .setContentTitle(if (failed) "Agent turn failed" else "Agent turn completed")
-      .setContentText("Tap to open the thread")
-      .setContentIntent(openThread)
-      .setAutoCancel(true)
-      .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-      .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-      .setPublicVersion(publicVersion)
-      .build()
-    getSystemService(NotificationManager::class.java).notify(("turn:$connectionId\u0000$threadId").hashCode(), notification)
-  }
-
-  private fun notifyApproval(connectionId: String, threadId: String?, requestId: String) {
-    val intent = (if (threadId.isNullOrBlank()) {
-      Intent(this, MainActivity::class.java)
-    } else {
-      val deepLink = Uri.Builder()
-        .scheme("codewide")
-        .authority("thread")
-        .appendQueryParameter("savedServerId", connectionId)
-        .appendQueryParameter("connectionId", connectionId)
-        .appendQueryParameter("threadId", threadId)
-        .build()
-      Intent(Intent.ACTION_VIEW, deepLink, this, MainActivity::class.java)
-    }).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-    val openApproval = PendingIntent.getActivity(
-      this,
-      ("approval:$connectionId\u0000$requestId").hashCode(),
-      intent,
-      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
-    val publicVersion = notificationBuilder(ACTIVITY_CHANNEL_ID)
-      .setSmallIcon(R.drawable.ic_stat_codewide)
-      .setContentTitle("CodeWide")
-      .setContentText("A remote session needs attention")
-      .build()
-    val notification = notificationBuilder(ACTIVITY_CHANNEL_ID)
-      .setSmallIcon(R.drawable.ic_stat_codewide)
-      .setContentTitle("Agent needs approval")
-      .setContentText("Open the thread to review the request")
-      .setContentIntent(openApproval)
-      .setAutoCancel(true)
-      .setOnlyAlertOnce(true)
-      .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-      .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-      .setPublicVersion(publicVersion)
-      .build()
-    getSystemService(NotificationManager::class.java)
-      .notify(("approval:$connectionId\u0000$requestId").hashCode(), notification)
-  }
-
-  private fun cancelApprovalNotification(connectionId: String, requestId: String) {
-    getSystemService(NotificationManager::class.java)
-      .cancel(("approval:$connectionId\u0000$requestId").hashCode())
-  }
 
   private inner class Session(
     val id: String,
@@ -735,7 +648,7 @@ class CodexConnectionService : Service() {
     private var outboxDrainRunning = false
     private var outboxWakeRunnable: Runnable? = null
     private var startupTelemetrySent = false
-    private var splashExitTelemetrySent = false
+    private var firstFrameTelemetrySent = false
     private val activeThreads = ConcurrentHashMap.newKeySet<String>()
     private val pendingApprovals = ConcurrentHashMap.newKeySet<String>()
     private val outboxLifecycleWake = NativeOutboxLifecycleWake(
@@ -1357,7 +1270,7 @@ class CodexConnectionService : Service() {
       outboxWakeRunnable = null
       socket?.close(1000, reason)
       socket = null
-      pendingApprovals.forEach { cancelApprovalNotification(id, it) }
+      pendingApprovals.forEach { agentNotifications.cancelInput(id, it) }
       pendingApprovals.clear()
       protocolEngine.close(reason)
     }
@@ -1387,11 +1300,11 @@ class CodexConnectionService : Service() {
               pendingApprovals.add(requestKey)
               if (!previous.contains(requestKey)) {
                 val threadId = request.optJSONObject("params")?.optString("threadId")?.takeIf { it.isNotBlank() }
-                notifyApproval(id, threadId, requestKey)
+                agentNotifications.needsInput(id, threadId, requestKey)
               }
             }
           }
-          previous.filterNot(pendingApprovals::contains).forEach { cancelApprovalNotification(id, it) }
+          previous.filterNot(pendingApprovals::contains).forEach { agentNotifications.cancelInput(id, it) }
           if (previous != pendingApprovals) updateNotification()
           return
         }
@@ -1412,7 +1325,7 @@ class CodexConnectionService : Service() {
             changed = wasActive
             if (wasActive) {
               val status = params?.optJSONObject("turn")?.optString("status").orEmpty()
-              notifyTurnFinished(id, threadId, status == "failed")
+              agentNotifications.turnFinished(id, threadId, status == "failed")
             }
           }
           "item/commandExecution/requestApproval",
@@ -1424,7 +1337,7 @@ class CodexConnectionService : Service() {
             if (requestId != null && requestId !== JSONObject.NULL) {
               val requestKey = nativeServerRequestKey(requestId)
               changed = pendingApprovals.add(requestKey)
-              if (changed) notifyApproval(id, threadId, requestKey)
+              if (changed) agentNotifications.needsInput(id, threadId, requestKey)
             }
           }
           "serverRequest/resolved" -> {
@@ -1432,7 +1345,7 @@ class CodexConnectionService : Service() {
             if (requestId != null && requestId !== JSONObject.NULL) {
               val requestKey = nativeServerRequestKey(requestId)
               changed = pendingApprovals.remove(requestKey)
-              cancelApprovalNotification(id, requestKey)
+              agentNotifications.cancelInput(id, requestKey)
             }
           }
         }
@@ -1496,18 +1409,13 @@ class CodexConnectionService : Service() {
           tags = mapOf("startKind" to "cold"),
         ))
       }
-      val exit = timing.splashExit ?: return
-      if (splashExitTelemetrySent) return
-      splashExitTelemetrySent = true
+      val firstFrameMs = timing.applicationEntryToFirstFrameMs ?: return
+      if (firstFrameTelemetrySent) return
+      firstFrameTelemetrySent = true
       emitTelemetry(NativeTelemetryMetric(
-        "app.splash_removed",
-        values = mapOf(
-          "contentToExitMs" to exit.contentToExitMs,
-          "animationStartDelayMs" to exit.animationStartDelayMs,
-          "animationDurationMs" to exit.animationDurationMs,
-          "applicationEntryToSplashRemovedMs" to exit.applicationEntryToSplashRemovedMs,
-        ),
-        tags = mapOf("startKind" to "cold", "outcome" to if (exit.cancelled) "cancelled" else "completed"),
+        "app.first_frame_committed",
+        values = mapOf("applicationEntryToFirstFrameMs" to firstFrameMs),
+        tags = mapOf("startKind" to "cold"),
       ))
     }
 
@@ -1537,7 +1445,6 @@ class CodexConnectionService : Service() {
     const val ACTION_STOP_ALL = "dev.codexremote.app.STOP_ALL"
     const val EXTRA_CONNECTION_ID = "connection_id"
     private const val CHANNEL_ID = "codewide_connections"
-    private const val ACTIVITY_CHANNEL_ID = "codewide_turn_updates"
     private const val NOTIFICATION_ID = 4107
     private const val CREDENTIAL_HTTP_TIMEOUT_MS = 12_000L
     private const val TRANSFER_IDLE_TIMEOUT_MS = 30_000L

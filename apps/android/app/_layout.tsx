@@ -4,7 +4,7 @@ import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { useFonts } from "expo-font";
 import { Slot, type ErrorBoundaryProps } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -35,15 +35,7 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
 }
 
 export function SuspenseFallback() {
-  return (
-    <View style={styles.boot} testID="root-suspense-state">
-      <View style={styles.bootMark}>
-        <Text style={styles.bootPrompt}>›</Text>
-        <View style={styles.bootCursor} />
-      </View>
-      <Text style={styles.bootTitle}>CodeWide</Text>
-    </View>
-  );
+  return null;
 }
 
 export default function RootLayout() {
@@ -65,15 +57,7 @@ function RootApplication() {
     "RobotoFlex-SemiBold": require("../assets/fonts/RobotoFlex-SemiBold.ttf"),
   });
   if (!fontsLoaded && fontError === null) {
-    return (
-      <View style={styles.boot} testID="root-boot-state">
-        <View style={styles.bootMark}>
-          <Text style={styles.bootPrompt}>›</Text>
-          <View style={styles.bootCursor} />
-        </View>
-        <Text style={styles.bootTitle}>CodeWide</Text>
-      </View>
-    );
+    return null;
   }
 
   return (
@@ -98,42 +82,4 @@ function RootApplication() {
 
 const styles = StyleSheet.create({
   application: { backgroundColor: APPLICATION_BACKGROUND, flex: 1 },
-  boot: {
-    alignItems: "center",
-    backgroundColor: APPLICATION_BACKGROUND,
-    flex: 1,
-    gap: 12,
-    justifyContent: "center",
-  },
-  bootMark: {
-    alignItems: "center",
-    borderColor: "#f4f4f5",
-    borderRadius: 36,
-    borderWidth: 2,
-    flexDirection: "row",
-    height: 72,
-    justifyContent: "center",
-    width: 72,
-  },
-  bootPrompt: {
-    color: "#f4f4f5",
-    fontSize: 34,
-    fontWeight: "400",
-    lineHeight: 38,
-    marginLeft: -2,
-    marginTop: -3,
-  },
-  bootCursor: {
-    backgroundColor: "#58c7ff",
-    borderRadius: 2,
-    height: 3,
-    marginLeft: 2,
-    marginTop: 14,
-    width: 14,
-  },
-  bootTitle: {
-    color: "#f4f4f5",
-    fontSize: 16,
-    fontWeight: "600",
-  },
 });

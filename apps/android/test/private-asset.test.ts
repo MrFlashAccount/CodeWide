@@ -17,7 +17,8 @@ describe("private asset transport", () => {
 
   it("uses the compressed text path without attachment-cache HEAD and refreshes once", async () => {
     const getAccess = vi.fn(async (forceRefresh = false) => ({
-      baseUrl: "https://companion.example", transport: urlTransport,
+      baseUrl: "https://companion.example",
+      transport: urlTransport,
       authorization: forceRefresh ? "Bearer fresh" : "Bearer stale",
     }));
     const requests: Array<{ url: string; authorization: string | null; range: string | null }> = [];
@@ -79,7 +80,8 @@ describe("private asset transport", () => {
     const capability = "a".repeat(43);
 
     await fetchPrivateAsset({ kind: "path", path: "/tmp/example.txt" }, async () => ({
-      baseUrl: `http://127.0.0.1:41234/${capability}`, transport: urlTransport,
+      baseUrl: `http://127.0.0.1:41234/${capability}`,
+      transport: urlTransport,
       authorization: "Bearer token",
     }));
 
@@ -104,7 +106,8 @@ describe("private asset transport", () => {
     vi.stubGlobal("fetch", request);
     const id = "a".repeat(64);
     const loaded = await readPrivateAssetText({ kind: "content", id }, async () => ({
-      baseUrl: "https://companion.example", transport: urlTransport,
+      baseUrl: "https://companion.example",
+      transport: urlTransport,
       authorization: "Bearer token",
     }));
     expect(loaded.text).toBe("tool output");
@@ -133,7 +136,11 @@ describe("private asset transport", () => {
 
     const loaded = await readPrivateAssetText(
       { kind: "scoped", rootId: "workspace", path: "docs/readme.md" },
-      async () => ({ baseUrl: "https://companion.example", transport: urlTransport, authorization: "Bearer token" }),
+      async () => ({
+        baseUrl: "https://companion.example",
+        transport: urlTransport,
+        authorization: "Bearer token",
+      }),
       { limit: Number.MAX_SAFE_INTEGER },
     );
 
@@ -150,7 +157,8 @@ describe("private asset transport", () => {
     );
     await expect(
       readPrivateAssetText({ kind: "path", path: "/repo/binary.txt" }, async () => ({
-        baseUrl: "https://companion.example", transport: urlTransport,
+        baseUrl: "https://companion.example",
+        transport: urlTransport,
         authorization: "Bearer token",
       })),
     ).rejects.toBeInstanceOf(UnsupportedPrivateTextFormatError);
@@ -183,7 +191,8 @@ describe("private asset transport", () => {
   it("uses distinct transformed-image routes and cache identities", async () => {
     const getAccess = async () => ({
       authorization: "Bearer token",
-      baseUrl: "https://companion.example", transport: urlTransport,
+      baseUrl: "https://companion.example",
+      transport: urlTransport,
       cacheScope: "saved-server",
     });
     const scoped = { kind: "scoped" as const, path: "images/shot.png", rootId: "workspace" };
@@ -219,28 +228,54 @@ describe("private asset transport", () => {
     );
   });
 
-  it("keeps materialized remote media separate from projected content", async () => {
-    const mediaId = "d".repeat(64);
-    const request = vi.fn(async () => Response.json({ id: mediaId }));
-    vi.stubGlobal("fetch", request);
-    const resolved = await resolvePrivateAssetRequest(
-      { kind: "remote", url: "https://images.example/shot.png" },
-      async () => ({
-        authorization: "Bearer token",
-        baseUrl: "https://companion.example", transport: urlTransport,
-      }),
-      { imageVariant: "preview" },
-    );
+  it.each(["preview", "detail", "original"] as const)(
+    "reads %s using the opaque Companion media handle",
+    async (variant) => {
+      const mediaId = "aZ0_9-Cb".repeat(4);
+      const request = vi.fn(async () => Response.json({ id: mediaId }));
+      vi.stubGlobal("fetch", request);
+      const resolved = await resolvePrivateAssetRequest(
+        { kind: "remote", url: "https://images.example/shot.png" },
+        async () => ({
+          authorization: "Bearer token",
+          baseUrl: "https://companion.example",
+          transport: urlTransport,
+        }),
+        { imageVariant: variant },
+      );
 
-    expect(request).toHaveBeenCalledOnce();
-    expect(String(request.mock.calls[0]?.[0])).toBe(
-      "https://companion.example/v1/media/materialize",
-    );
-    expect(resolved.cacheIdentity).toBe(`media:${mediaId}:image:preview`);
-    expect(resolved.uri).toBe(
-      `https://companion.example/v1/image-previews/media/${mediaId}?variant=preview`,
-    );
-  });
+      expect(request).toHaveBeenCalledOnce();
+      expect(String(request.mock.calls[0]?.[0])).toBe(
+        "https://companion.example/v1/media/materialize",
+      );
+      const original = variant === "original";
+      expect(resolved.cacheIdentity).toBe(
+        original ? `media:${mediaId}` : `media:${mediaId}:image:${variant}`,
+      );
+      expect(resolved.uri).toBe(
+        original
+          ? `https://companion.example/v1/media/${mediaId}`
+          : `https://companion.example/v1/image-previews/media/${mediaId}?variant=${variant}`,
+      );
+    },
+  );
+
+  it.each(["d".repeat(64), `${"a".repeat(31)}/`])(
+    "rejects invalid handles from materialization",
+    async (id) => {
+      vi.stubGlobal("fetch", async () => Response.json({ id }));
+      await expect(
+        resolvePrivateAssetRequest(
+          { kind: "remote", url: "https://images.example/shot.png" },
+          async () => ({
+            authorization: "Bearer token",
+            baseUrl: "https://companion.example",
+            transport: urlTransport,
+          }),
+        ),
+      ).rejects.toThrow("Private asset response is invalid");
+    },
+  );
 
   it("downloads scoped files through the same authenticated reader", async () => {
     const request = vi.fn(async () => new Response("file", { status: 200 }));
@@ -248,7 +283,11 @@ describe("private asset transport", () => {
 
     await fetchPrivateAsset(
       { kind: "scoped", rootId: "workspace", path: "docs/readme.md" },
-      async () => ({ baseUrl: "https://companion.example", transport: urlTransport, authorization: "Bearer token" }),
+      async () => ({
+        baseUrl: "https://companion.example",
+        transport: urlTransport,
+        authorization: "Bearer token",
+      }),
       { headers: { range: "bytes=0-3" } },
     );
 
@@ -268,7 +307,11 @@ describe("private asset transport", () => {
 
     await fetchPrivateAsset(
       { kind: "scoped", rootId: "attachments", path: "drawing.png", cacheRevision: "42" },
-      async () => ({ baseUrl: "https://companion.example", transport: urlTransport, authorization: "Bearer token" }),
+      async () => ({
+        baseUrl: "https://companion.example",
+        transport: urlTransport,
+        authorization: "Bearer token",
+      }),
     );
 
     expect(String(request.mock.calls[0]?.[0])).toBe(
@@ -278,7 +321,8 @@ describe("private asset transport", () => {
 
   it("refreshes authorization for resumable upload requests", async () => {
     const getAccess = vi.fn(async (forceRefresh = false) => ({
-      baseUrl: "https://companion.example", transport: urlTransport,
+      baseUrl: "https://companion.example",
+      transport: urlTransport,
       authorization: forceRefresh ? "Bearer fresh" : "Bearer stale",
     }));
     const request = vi.fn(
@@ -305,7 +349,8 @@ describe("private asset transport", () => {
     const request = vi.fn(async () => new Response(null, { status: 404 }));
     vi.stubGlobal("fetch", request);
     const getAccess = async () => ({
-      baseUrl: "https://companion.example", transport: urlTransport,
+      baseUrl: "https://companion.example",
+      transport: urlTransport,
       authorization: "Bearer token",
     });
 

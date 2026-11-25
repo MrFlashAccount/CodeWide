@@ -3,7 +3,6 @@ import type { RpcClient } from "@codewide/sync-client";
 import type { TransferAccess } from "./private-transfer";
 import type { ThreadDetailDatabase } from "./thread-detail-database-contract";
 import type { ThreadSummaryDatabase } from "./thread-summary-database";
-import type { TurnControlsValue } from "./turn-controls-types";
 import type { createWorkspaceSession } from "./workspace-session";
 
 export type ThreadWindow = { nextCursor: string | null | undefined; thread: Thread };
@@ -33,7 +32,6 @@ export type ThreadSyncAuthority = {
   getDetails: () => ThreadDetailDatabase | null;
   getSession: (connectionId: string) => RpcClient | undefined;
   getSummaries: () => ThreadSummaryDatabase | null;
-  loadTurnControls: (connectionId: string, cwd: string) => Promise<TurnControlsValue>;
   readInvalidationArchived: (key: string) => boolean | undefined;
   refreshSubagents: (connectionId: string, threadId: string) => Promise<void>;
   refreshThreadCatalog: (connectionId: string, force: boolean) => Promise<void>;

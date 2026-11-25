@@ -99,11 +99,11 @@ export function AppListRowContent(props: AppListRowProps) {
           accessibilityHint={props.accessibilityHint}
           accessibilityLabel={props.accessibilityLabel ?? props.title}
           accessibilityRole={
-            props.onPress === undefined
+            props.onPress === undefined && props.onLongPress === undefined
               ? undefined
               : props.selected === undefined
                 ? "button"
-                : "radio"
+                : (props.selectionRole ?? "radio")
           }
           accessibilityState={{
             busy: props.trailingBusy === true,
@@ -111,8 +111,12 @@ export function AppListRowContent(props: AppListRowProps) {
             ...(props.expanded === undefined ? {} : { expanded: props.expanded }),
             ...(props.selected === undefined ? {} : { checked: props.selected }),
           }}
-          accessible={props.onPress !== undefined}
-          disabled={props.disabled === true || props.onPress === undefined}
+          accessible={props.onPress !== undefined || props.onLongPress !== undefined}
+          disabled={
+            props.disabled === true ||
+            (props.onPress === undefined && props.onLongPress === undefined)
+          }
+          onLongPress={props.onLongPress}
           onPress={props.onPress}
           style={({ pressed }) => [
             styles.row,
@@ -155,6 +159,7 @@ export function AppListRowContent(props: AppListRowProps) {
               )}
               <AppText
                 numberOfLines={props.multiline === true ? 2 : 1}
+                shimmering={props.shimmering === true}
                 style={[styles.title, props.danger === true && styles.danger]}
               >
                 {props.title}

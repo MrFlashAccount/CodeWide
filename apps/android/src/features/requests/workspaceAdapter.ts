@@ -44,7 +44,7 @@ export function createRequestsWorkspaceAdapter({
       commandId: request.commandId,
       connectionId: request.connectionId,
       mode: request.mode,
-      options: {},
+      options: request.options ?? {},
       text: request.text,
       threadId: request.threadId,
     });

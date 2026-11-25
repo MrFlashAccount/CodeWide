@@ -3,6 +3,7 @@ package dev.codewide.app.rendering
 import android.os.Looper
 import android.view.View
 import android.view.ViewTreeObserver
+import com.facebook.react.bridge.ReactContext
 
 /** Owns metric synchronization for one surface, including RN's later rotation/layout writes. */
 internal class SurfaceDisplayMetrics {
@@ -39,6 +40,12 @@ internal class SurfaceDisplayMetrics {
       // Only a changed snapshot requests layout: the next traversal must converge to a no-op.
       current.requestLayout()
     }
+  }
+
+  /** Window bounds can change behind the lock screen, before the next surface traversal. */
+  fun onWindowChanged(context: ReactContext?) {
+    synchronize()
+    ReactWindowDimensions.publishChanges(context)
   }
 
   fun dispose() {

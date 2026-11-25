@@ -1,4 +1,5 @@
-//! Durable, lossless diagnostic reports, separate from bounded numeric telemetry.
+//! Durable, lossless diagnostic reports, separate from bounded numeric telemetry. Each
+//! device archive is trimmed to a report count and age as new reports arrive.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -8,6 +9,7 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::Mutex,
+    time::{Duration, SystemTime},
 };
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -96,24 +98,59 @@ pub enum DiagnosticStoreError {
     Json(#[from] serde_json::Error),
 }
 
+/// How much each device's archive keeps; older reports are removed as new ones arrive.
+#[derive(Clone, Copy, Debug)]
+pub struct DiagnosticRetention {
+    pub max_reports_per_device: usize,
+    pub max_age: Duration,
+}
+
+impl Default for DiagnosticRetention {
+    fn default() -> Self {
+        Self {
+            max_reports_per_device: 2_000,
+            max_age: Duration::from_hours(14 * 24),
+        }
+    }
+}
+
 pub struct DiagnosticStore {
     directory: PathBuf,
+    retention: DiagnosticRetention,
     commit_lock: Mutex<()>,
 }
 
 impl DiagnosticStore {
-    /// Opens a private archive. Reports are retained until explicitly removed by the host owner.
+    /// Opens a private archive with the default retention.
     ///
     /// # Errors
     /// Returns an error if the private archive cannot be created.
     pub fn open(directory: impl AsRef<Path>) -> Result<Self, DiagnosticStoreError> {
+        Self::open_with_retention(directory, DiagnosticRetention::default())
+    }
+
+    /// Opens a private archive and trims every device archive to `retention`.
+    ///
+    /// # Errors
+    /// Returns an error if the private archive cannot be created.
+    pub fn open_with_retention(
+        directory: impl AsRef<Path>,
+        retention: DiagnosticRetention,
+    ) -> Result<Self, DiagnosticStoreError> {
         let directory = directory.as_ref().to_path_buf();
         private_directory(&directory)?;
         if let Some(parent) = directory.parent() {
             fs::File::open(parent)?.sync_all()?;
         }
+        for device in fs::read_dir(&directory)? {
+            let device = device?;
+            if device.file_type()?.is_dir() {
+                trim_device_archive(&device.path(), retention, SystemTime::now(), None);
+            }
+        }
         Ok(Self {
             directory,
+            retention,
             commit_lock: Mutex::new(()),
         })
     }
@@ -192,6 +229,13 @@ impl DiagnosticStore {
         fs::rename(pending.path(), &destination)?;
         fs::File::open(&device_directory)?.sync_all()?;
         fs::File::open(&self.directory)?.sync_all()?;
+        // The receipt is already durable; trimming never withholds it.
+        trim_device_archive(
+            &device_directory,
+            self.retention,
+            SystemTime::now(),
+            Some(report_id),
+        );
         Ok(receipt)
     }
 
@@ -261,6 +305,44 @@ fn validate_report(report: &DiagnosticReport, report_id: &str) -> Result<(), Dia
     Ok(())
 }
 
+/// Removes the reports beyond `retention` from one device archive, oldest first, except
+/// `keep`. A report's age is its directory's modification time, set when it was published.
+/// Failures are logged and retried by the next trim.
+fn trim_device_archive(
+    device_directory: &Path,
+    retention: DiagnosticRetention,
+    now: SystemTime,
+    keep: Option<&str>,
+) {
+    let entries = match fs::read_dir(device_directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            tracing::warn!(%error, "diagnostic archive could not be listed for trimming");
+            return;
+        }
+    };
+    let mut reports: Vec<(SystemTime, PathBuf)> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| valid_report_id(&entry.file_name().to_string_lossy()))
+        .filter_map(|entry| {
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            Some((modified, entry.path()))
+        })
+        .collect();
+    reports.sort_unstable_by_key(|report| std::cmp::Reverse(report.0));
+    let oldest_allowed = now.checked_sub(retention.max_age);
+    for (index, (modified, path)) in reports.iter().enumerate() {
+        let kept = keep.is_some_and(|id| path.file_name().is_some_and(|name| name == id));
+        let expired = oldest_allowed.is_some_and(|limit| *modified < limit);
+        if kept || (index < retention.max_reports_per_device && !expired) {
+            continue;
+        }
+        if let Err(error) = fs::remove_dir_all(path) {
+            tracing::warn!(%error, "expired diagnostic report could not be removed");
+        }
+    }
+}
+
 fn valid_report_id(id: &str) -> bool {
     id.len() == 36
         && id.bytes().enumerate().all(|(i, b)| {
@@ -302,7 +384,14 @@ mod tests {
     type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
     const ID: &str = "a070bca3-7b4b-4f16-96a0-c31b4956fe66";
     fn spool(store: &DiagnosticStore, message: &str) -> TestResult<tempfile::NamedTempFile> {
-        let report = serde_json::json!({"version":1,"reportId":ID,"occurredAtUnixMs":123,
+        spool_report(store, ID, message)
+    }
+    fn spool_report(
+        store: &DiagnosticStore,
+        id: &str,
+        message: &str,
+    ) -> TestResult<tempfile::NamedTempFile> {
+        let report = serde_json::json!({"version":1,"reportId":id,"occurredAtUnixMs":123,
             "appVersion":"test","source":"javascript","event":"render.root.failed","level":"error",
             "err":{"name":"Error","message":message,"stack":format!("Error: {message}\n at render")},
             "fields":{"requestId":"request-opaque"}});
@@ -336,6 +425,69 @@ mod tests {
         ));
         assert_eq!(store.list()?.len(), 1);
         assert!(!store.report_path("device-b", ID)?.exists());
+        Ok(())
+    }
+    fn report_id(index: u8) -> String {
+        format!("a070bca3-7b4b-4f16-96a0-c31b4956fe{index:02x}")
+    }
+    fn age(store: &DiagnosticStore, id: &str, seconds_ago: u64) -> TestResult<()> {
+        let directory = store
+            .report_path("device-a", id)?
+            .parent()
+            .ok_or("report has no directory")?
+            .to_path_buf();
+        fs::File::open(directory)?
+            .set_modified(SystemTime::now() - Duration::from_secs(seconds_ago))?;
+        Ok(())
+    }
+    #[test]
+    fn each_device_keeps_only_its_newest_reports() -> TestResult<()> {
+        let root = tempfile::tempdir()?;
+        let retention = DiagnosticRetention {
+            max_reports_per_device: 2,
+            max_age: Duration::from_hours(1),
+        };
+        let store = DiagnosticStore::open_with_retention(root.path(), retention)?;
+        for index in 0..4_u8 {
+            let id = report_id(index);
+            store.commit("device-a", &id, &spool_report(&store, &id, "message")?)?;
+            age(&store, &id, u64::from(40 - index * 10))?;
+        }
+        let other = report_id(9);
+        store.commit(
+            "device-b",
+            &other,
+            &spool_report(&store, &other, "message")?,
+        )?;
+
+        let kept: Vec<String> = store
+            .list()?
+            .into_iter()
+            .filter(|entry| entry.device_id == "device-a")
+            .map(|entry| entry.receipt.report_id)
+            .collect();
+        assert_eq!(kept, vec![report_id(2), report_id(3)]);
+        assert!(store.report_path("device-b", &other)?.exists());
+        Ok(())
+    }
+    #[test]
+    fn expired_reports_are_removed_when_the_archive_opens() -> TestResult<()> {
+        let root = tempfile::tempdir()?;
+        let retention = DiagnosticRetention {
+            max_reports_per_device: 100,
+            max_age: Duration::from_hours(1),
+        };
+        let store = DiagnosticStore::open_with_retention(root.path(), retention)?;
+        let (stale, fresh) = (report_id(1), report_id(2));
+        store.commit("device-a", &stale, &spool_report(&store, &stale, "old")?)?;
+        store.commit("device-a", &fresh, &spool_report(&store, &fresh, "new")?)?;
+        age(&store, &stale, 7_200)?;
+        drop(store);
+
+        let store = DiagnosticStore::open_with_retention(root.path(), retention)?;
+
+        assert!(!store.report_path("device-a", &stale)?.exists());
+        assert!(store.report_path("device-a", &fresh)?.exists());
         Ok(())
     }
     #[test]

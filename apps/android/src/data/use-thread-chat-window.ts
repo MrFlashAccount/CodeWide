@@ -16,18 +16,7 @@ function useThreadChatWindowResource(
   input: ThreadChatWindowRequest | null,
   suspendUntilReady: boolean,
 ): ReturnType<ThreadDetailDatabase["windowResource"]> | null {
-  const enabled = input !== null;
-  const connectionId = input?.connectionId ?? "";
-  const threadId = input?.threadId ?? "";
-  const anchorTurnId = input?.anchorTurnId ?? null;
-  const resource =
-    database === null || !enabled
-      ? null
-      : database.windowResource({
-          anchorTurnId,
-          connectionId,
-          threadId,
-        });
+  const resource = database === null || input === null ? null : database.windowResource(input);
   useSyncExternalStore(
     resource?.retain ?? emptyRetain,
     resource?.retentionSnapshot ?? emptyRetentionSnapshot,
@@ -50,22 +39,20 @@ function emptyRetentionSnapshot(): number {
 export function useThreadChatWindow(
   database: ThreadDetailDatabase | null,
   input: ThreadChatWindowRequest | null,
-  suspendUntilReady = true,
+  mode: "deferred" | "progressive" | "suspend" = "suspend",
 ): ThreadChatWindowView | null {
-  useThreadChatWindowResource(database, input, suspendUntilReady);
-  const enabled = input !== null;
-  const connectionId = input?.connectionId ?? "";
-  const threadId = input?.threadId ?? "";
+  useThreadChatWindowResource(database, mode === "deferred" ? null : input, mode === "suspend");
   const snapshot = useSelector(() => {
-    if (database === null || !enabled) {
+    if (database === null || input === null) {
       return null;
     }
-    const node = database.chat.window$(connectionId, threadId);
+    const node = database.chat.window$(input.connectionId, input.threadId);
     const layoutRevision = node.layoutRevision.get();
     const revision = node.revision.get();
     const status = node.status.get();
     const error = node.error.get();
-    return { ...node.peek(), error, layoutRevision, revision, status };
+    const installedRequestKey = node.installedRequestKey.get();
+    return { ...node.peek(), error, installedRequestKey, layoutRevision, revision, status };
   });
 
   if (database === null || snapshot === null) {

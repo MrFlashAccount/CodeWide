@@ -4,7 +4,6 @@ import { projectThreadListKey } from "../features/threadList/projectThreadList";
 import { effectiveThreadListFilter } from "../features/threadList/threadListFilters";
 import { THREAD_LIST_PAGE_SIZE } from "../features/threadList/threadListModel";
 import { useEvent } from "../react/useEvent";
-import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import { useWorkspaceListRouteResources } from "./workspaceListRouteResources";
 
 /** Presents project content below the persistent catalog header. */
@@ -14,14 +13,10 @@ export function ProjectThreadListRoute({
   readonly project: SidebarProject;
 }): React.JSX.Element {
   const resources = useWorkspaceListRouteResources();
-  const workspace = useWorkspaceRouteResources();
   const state = resources.list.projectListState;
   const mode = state.projectListMode;
   const scopeKey = projectThreadListKey(project, mode);
   const close = resources.list.projectSelection.closeSidebarProject;
-  const createThread = useEvent((): void => {
-    workspace.openNewThread(project.connectionId, project.path);
-  });
   const loadMoreProject = useEvent((limit: number): void => {
     state.setProjectListLimits((limits) => ({
       ...limits,
@@ -43,7 +38,6 @@ export function ProjectThreadListRoute({
           archivedThreads: [],
           catalogState: { status: "loading" },
           filter: effectiveThreadListFilter(mode, state.projectListFilter),
-          globalVoice: resources.globalVoice,
           headerVisible: false,
           initialOffset: offset.read(scopeKey),
           mode,
@@ -55,8 +49,8 @@ export function ProjectThreadListRoute({
           onManageProjects: resources.openProjects,
           onManageTerminals: resources.openTerminals,
           onModeChange: state.setProjectListMode,
-          onNewThread: createThread,
           onOffsetChange: changeOffset,
+          onOpenDownloads: resources.openDownloads,
           onOpenProject: resources.openSidebarProject,
           onOpenSearch: resources.openGlobalSearch,
           onQueryChange: changeQuery,

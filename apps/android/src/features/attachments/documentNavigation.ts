@@ -1,3 +1,5 @@
+import { useContext } from "react";
+import { OpenForgeLinkContext } from "../../services/threads/openForgeLink";
 import { useEvent } from "../../react/useEvent";
 /** V1 documentNavigation owner, extracted without changing interaction or resource lifetime. */
 import {
@@ -6,32 +8,24 @@ import {
 } from "../../rendering/DocumentPreviewHost";
 
 import type { GetTransferAccess } from "../../data/private-transfer";
-import { isAttachmentVideo } from "../../rendering/AttachmentVideoPreview";
+import { isAttachmentVideo } from "../../rendering/videoPreview";
 import { resolvePreviewableDocumentLink } from "../../rendering/document-preview";
 import { parseLoopbackLink, type LoopbackLinkTarget } from "../../rendering/loopback-link";
 import { useAppDialog } from "../../ui/AppDialog";
 
 export function useDocumentNavigation(
+  connectionId: string | null,
   cwd: string,
   getTransferAccess: GetTransferAccess | undefined,
   getStableTransferAccess: GetTransferAccess,
   onOpenLoopbackLink: ((target: LoopbackLinkTarget) => Promise<void>) | undefined,
   openDocument: (request: DocumentPreviewRequest) => void,
 ) {
+  const openForgeLink = useContext(OpenForgeLinkContext);
   const dialog = useAppDialog();
   const downloadDocument = useDocumentDownload();
 
-  const openDocumentLinkFromCwd = useEvent((href: string, sourceCwd: string) => {
-    const loopback = parseLoopbackLink(href);
-    if (loopback !== null && onOpenLoopbackLink !== undefined) {
-      void onOpenLoopbackLink(loopback).catch((error: unknown) => {
-        dialog.alert(
-          "Could not open localhost",
-          error instanceof Error ? error.message : "The forwarded URL could not be opened.",
-        );
-      });
-      return true;
-    }
+  const openLocalPreview = useEvent((href: string, sourceCwd: string): boolean => {
     if (getTransferAccess === undefined) {
       return false;
     }
@@ -48,6 +42,22 @@ export function useDocumentNavigation(
       openDocument(request);
     }
     return true;
+  });
+  const openDocumentLinkFromCwd = useEvent((href: string, sourceCwd: string) => {
+    const loopback = parseLoopbackLink(href);
+    if (loopback !== null && onOpenLoopbackLink !== undefined) {
+      void onOpenLoopbackLink(loopback).catch((error: unknown) => {
+        dialog.alert(
+          "Could not open localhost",
+          error instanceof Error ? error.message : "The forwarded URL could not be opened.",
+        );
+      });
+      return true;
+    }
+    if (openLocalPreview(href, sourceCwd)) {
+      return true;
+    }
+    return openForgeLink?.(href, connectionId) === true;
   });
 
   const openThreadDocumentLink = useEvent((href: string) => openDocumentLinkFromCwd(href, cwd));

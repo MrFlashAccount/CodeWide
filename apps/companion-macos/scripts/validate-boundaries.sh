@@ -30,6 +30,19 @@ else
   [ "$result" -eq 1 ] || exit "$result"
 fi
 
+# Contents/Helpers may hold exactly one Rust helper, the built-in GitHub forge
+# plugin (plus the E2E-only unregister helper). The companion itself never
+# ships as a helper.
+helpers=$(grep -oE '"\$helpers_dir/[A-Za-z0-9_.-]+"' "$mac_root/scripts/build-app.sh" | LC_ALL=C sort -u | tr '\n' ' ')
+if [ "$helpers" != '"$helpers_dir/CodeWideE2EUnregister" "$helpers_dir/codewide-forge-github" ' ]; then
+  echo "build-app.sh installs unexpected helpers: $helpers" >&2
+  exit 1
+fi
+if grep -nE 'Helpers/codewide-companion"?$' "$mac_root/scripts/build-app.sh" | grep -v 'test ! -e' >/dev/null; then
+  echo "build-app.sh must never ship codewide-companion as a helper." >&2
+  exit 1
+fi
+
 if command -v xmllint >/dev/null 2>&1; then
   xmllint --noout \
     "$mac_root/Resources/Info.plist" \

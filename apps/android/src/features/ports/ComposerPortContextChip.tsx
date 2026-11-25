@@ -38,10 +38,15 @@ export function ComposerPortContextChipView({
   snapshot: ReturnType<typeof useNativePortForwarding>;
 }): React.JSX.Element | null {
   const initialLoading = snapshot.profilesStatus === "loading" && snapshot.profiles.length === 0;
-  if (!initialLoading && snapshot.profiles.length === 0) {
+  // Native profiles follow the current inventory, so these are exactly the
+  // sheet's active forwards: excluded and unavailable ones do not count.
+  const active = snapshot.profiles.filter(
+    ({ preference, status }) => preference !== "excluded" && status !== "unavailable",
+  );
+  if (!initialLoading && active.length === 0) {
     return null;
   }
-  const label = initialLoading ? "Loading ports…" : `Ports: ${String(snapshot.profiles.length)}`;
+  const label = initialLoading ? "Loading ports…" : `Ports: ${String(active.length)}`;
   return (
     <Pressable
       accessibilityLabel={label}
@@ -52,7 +57,7 @@ export function ComposerPortContextChipView({
     >
       <InlineIcon
         color={
-          !initialLoading && snapshot.profiles.some(({ status }) => status === "live")
+          !initialLoading && active.some(({ status }) => status === "live")
             ? colors.green
             : colors.textMuted
         }
@@ -66,7 +71,7 @@ export function ComposerPortContextChipView({
           label="Ports"
           loading={snapshot.profilesStatus === "loading"}
           testID="composer-ports-label"
-          value={snapshot.profiles.length}
+          value={active.length}
         />
       )}
     </Pressable>

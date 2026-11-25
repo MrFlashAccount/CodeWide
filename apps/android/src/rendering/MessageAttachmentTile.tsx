@@ -22,6 +22,16 @@ interface MessageAttachmentGridProps {
 
 /** Shows at most two attachment rows while additional columns scroll horizontally. */
 export function MessageAttachmentGrid(props: MessageAttachmentGridProps) {
+  if (props.children.length <= 2) {
+    return (
+      <View
+        style={[styles.grid, styles.singleColumn, props.style]}
+        testID="message-attachment-grid"
+      >
+        {props.children}
+      </View>
+    );
+  }
   return (
     <TwoRowHorizontalScroller
       items={props.children}
@@ -81,6 +91,9 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontFamily: productFonts.medium,
     fontWeight: typeWeight.regular,
+  },
+  singleColumn: {
+    gap: spacing.xxs,
   },
   subtitle: {
     ...typeScale.caption,

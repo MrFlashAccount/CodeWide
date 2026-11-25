@@ -3,13 +3,15 @@
 //! `start_item` builds the in-progress item from a `tool_use` input (so the
 //! client sees the command or diff before any approval), `complete_item`
 //! builds the final item from the matching `tool_result` and the structured
-//! `toolUseResult`. Tools without a dedicated neutral item become
+//! `toolUseResult`. Shell calls (`Bash`, `Monitor`, a `TaskStop` of a shell
+//! task) are `command` items (`shell_tools`). Tools without a dedicated
+//! neutral item become
 //! `toolCall {namespace: "claude"}`; the companion's client tools become
 //! `toolCall {namespace: null}` with their bare name. Pure.
 
 use agent_core::model::{
-    AgentItem, AppThreadId, CallStatus, ExecutionStatus, ItemId, McpToolResult, PlanStep,
-    PlanStepStatus, WebSearchAction,
+    AgentItem, AppThreadId, BackgroundCommand, BackgroundCommandState, CallStatus, ExecutionStatus,
+    ItemId, McpToolResult, PlanStep, PlanStepStatus, WebSearchAction,
 };
 use serde_json::Value;
 
@@ -22,8 +24,8 @@ use super::{
     diffs::{completed_diff, input_diff},
     frames::ToolResultBlock,
     json::{JsonRecord, arr_of, record, str_of},
+    shell_tools::{ShellTool, StoppedShellCommand, StoppedShellTask},
 };
-use crate::background_tasks::BackgroundTaskId;
 
 const MIB: usize = 1024 * 1024;
 /// Bash output kept on the item: the last 1 MiB.
@@ -203,7 +205,7 @@ pub fn start_item(call: &ToolCallInput, context: &ToolContext<'_>) -> Option<Age
         return None;
     }
     let item_id = ItemId::parse(&call.id)?;
-    if call.name == "Bash" {
+    if ShellTool::of(&call.name).is_some() {
         return Some(AgentItem::Command {
             item_id,
             provenance: None,
@@ -215,7 +217,7 @@ pub fn start_item(call: &ToolCallInput, context: &ToolContext<'_>) -> Option<Age
             output: None,
             exit_code: None,
             duration_ms: None,
-            background_task_id: None,
+            background: None,
         });
     }
     if is_subagent_tool(&call.name) {
@@ -281,20 +283,18 @@ fn bash_output(result: &ToolResultBlock, tool_use_result: &Value) -> String {
     result.text.clone()
 }
 
-/// The background task a `Bash` call started: the structured result's
-/// `backgroundTaskId`, when it has Claude's id shape.
-fn background_task_id(tool_use_result: &Value) -> Option<String> {
-    record(tool_use_result)
-        .and_then(|structured| str_of(structured, "backgroundTaskId"))
-        .and_then(BackgroundTaskId::parse)
-        .map(BackgroundTaskId::into_string)
-}
-
 /// How a started tool call ended.
+const MS_PER_SECOND: i64 = 1000;
+
 pub struct ToolOutcome<'a> {
     /// The thread the call ran in; names a spawned sub-agent's thread.
     pub app_thread_id: &'a AppThreadId,
+    /// The session's working directory: the `cwd` of a call that becomes a
+    /// `command` only once it completes.
+    pub cwd: &'a str,
     pub duration_ms: i64,
+    /// When the call started (Unix milliseconds): a background task's start.
+    pub started_at_ms: i64,
     pub result: &'a ToolResultBlock,
     pub status: ExecutionStatus,
     /// The structured `toolUseResult`, when the record carried it.
@@ -306,6 +306,48 @@ fn call_status(status: ExecutionStatus) -> CallStatus {
         CallStatus::Completed
     } else {
         CallStatus::Failed
+    }
+}
+
+/// Final item of a generic tool call: the call with its output, or a
+/// `command` (same item id) for a `TaskStop` that stopped a shell task,
+/// since only the result tells a shell task apart.
+fn complete_tool_call(
+    started: AgentItem,
+    call: &ToolCallInput,
+    outcome: &ToolOutcome<'_>,
+) -> AgentItem {
+    let AgentItem::ToolCall {
+        item_id,
+        provenance,
+        namespace,
+        tool,
+        arguments,
+        ..
+    } = started
+    else {
+        return started;
+    };
+    if let Some(stopped) = StoppedShellTask::of(&call.name, outcome.tool_use_result) {
+        return StoppedShellCommand {
+            item_id,
+            provenance,
+            stopped,
+            cwd: outcome.cwd,
+            status: outcome.status,
+            duration_ms: outcome.duration_ms,
+        }
+        .into_item(MAX_COMMAND_OUTPUT_BYTES);
+    }
+    AgentItem::ToolCall {
+        item_id,
+        provenance,
+        namespace,
+        tool,
+        arguments,
+        output: Some(keep_tail(&outcome.result.text, MAX_TOOL_OUTPUT_BYTES)),
+        status: call_status(outcome.status),
+        duration_ms: Some(outcome.duration_ms),
     }
 }
 
@@ -351,7 +393,19 @@ pub fn complete_item(
             )),
             exit_code: completed.then_some(0),
             duration_ms: Some(outcome.duration_ms),
-            background_task_id: background_task_id(outcome.tool_use_result),
+            // A launch is running until a report or the live session says
+            // otherwise (`super::background_commands`).
+            background: ShellTool::of(&call.name)
+                .and_then(|tool| tool.started_task_id(outcome.tool_use_result))
+                .map(|task_id| BackgroundCommand {
+                    task_id,
+                    started_at: outcome.started_at_ms.div_euclid(MS_PER_SECOND),
+                    description: str_of(&call.input, "description")
+                        .map(str::trim)
+                        .filter(|description| !description.is_empty())
+                        .map(ToOwned::to_owned),
+                    state: BackgroundCommandState::Running,
+                }),
         },
         AgentItem::FileChange {
             item_id,
@@ -368,23 +422,7 @@ pub fn complete_item(
             },
             status: outcome.status,
         },
-        AgentItem::ToolCall {
-            item_id,
-            provenance,
-            namespace,
-            tool,
-            arguments,
-            ..
-        } => AgentItem::ToolCall {
-            item_id,
-            provenance,
-            namespace,
-            tool,
-            arguments,
-            output: Some(keep_tail(&outcome.result.text, MAX_TOOL_OUTPUT_BYTES)),
-            status: call_status(outcome.status),
-            duration_ms: Some(outcome.duration_ms),
-        },
+        AgentItem::ToolCall { .. } => complete_tool_call(started, call, outcome),
         AgentItem::McpToolCall {
             item_id,
             provenance,
@@ -482,7 +520,7 @@ fn with_execution_status(item: AgentItem, status: ExecutionStatus) -> AgentItem 
             output,
             exit_code,
             duration_ms,
-            background_task_id,
+            background,
             ..
         } => AgentItem::Command {
             item_id,
@@ -493,7 +531,7 @@ fn with_execution_status(item: AgentItem, status: ExecutionStatus) -> AgentItem 
             output,
             exit_code,
             duration_ms,
-            background_task_id,
+            background,
         },
         AgentItem::FileChange {
             item_id,
@@ -546,7 +584,7 @@ pub fn block_item_id(message_id: &str, block_index: usize) -> Option<ItemId> {
 
 #[cfg(test)]
 mod tests {
-    use agent_core::model::{AgentItem, AppThreadId, ExecutionStatus};
+    use agent_core::model::{AgentItem, AppThreadId, BackgroundCommandState, ExecutionStatus};
     use serde_json::{Value, json};
 
     use super::{
@@ -585,19 +623,22 @@ mod tests {
             &call,
             &ToolOutcome {
                 app_thread_id: &thread,
+                cwd: "/w",
                 duration_ms: 3,
+                started_at_ms: 1_760_000_100_000,
                 result: &result,
                 status: ExecutionStatus::Completed,
                 tool_use_result,
             },
         ) {
             AgentItem::Command {
-                background_task_id,
-                output,
-                ..
+                background, output, ..
             } => {
                 assert_eq!(output.as_deref(), Some(text));
-                Ok(background_task_id)
+                Ok(background.map(|background| {
+                    assert_eq!(background.state, BackgroundCommandState::Running);
+                    background.task_id
+                }))
             }
             _ => Err("not a command item"),
         }

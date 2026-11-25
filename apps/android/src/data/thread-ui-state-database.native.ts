@@ -2,7 +2,7 @@ import type { ThreadUiStateDatabase } from "./thread-ui-state-database-contract"
 import { unknownRecord } from "./unknownRecord";
 
 export type { ThreadUiStateDatabase } from "./thread-ui-state-database-contract";
-import { MAX_TURN_TEXT_CHARS } from "@codewide/sync-client";
+import { MAX_TURN_ATTACHMENTS, MAX_TURN_TEXT_CHARS } from "@codewide/sync-client";
 import { observable, type Observable } from "@legendapp/state";
 import { IR, type LoadSubsetOptions } from "@tanstack/db";
 
@@ -356,12 +356,15 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
       offset,
       historyAnchorTurnId,
       historyAnchorOffsetPx,
+      historyAnchorRowKey,
     ) {
       const value = boundedScrollOffset(offset) ?? 0;
       await patch(connectionId, threadId, (draft) => {
         draft.scrollOffset = value;
         draft.historyAnchorTurnId = boundedHistoryAnchor(historyAnchorTurnId);
         draft.historyAnchorOffsetPx = boundedHistoryAnchorOffset(historyAnchorOffsetPx);
+        draft.historyAnchorRowKey =
+          draft.historyAnchorTurnId === null ? null : (historyAnchorRowKey ?? null);
       });
     },
     async upsertAttachment(connectionId, threadId, attachment, isCurrent) {
@@ -375,6 +378,9 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
         }
         const index = draft.attachments.findIndex((item) => item.id === value.id);
         if (index < 0) {
+          if (draft.attachments.length >= MAX_TURN_ATTACHMENTS) {
+            throw new Error("The message already has the maximum number of attachments");
+          }
           draft.attachments.push(value);
         } else {
           draft.attachments[index] = value;

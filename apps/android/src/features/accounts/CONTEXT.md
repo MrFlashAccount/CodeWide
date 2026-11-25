@@ -2,7 +2,7 @@
 
 TypeScript/TSX owns account login/profile interactions and usage presentation. The existing account database, V1 account endpoints and refresh deduplication remain lower-owned. M1 source migration is implemented; actual device sign-in has not been exercised here.
 
-Public surfaces: `AccountPoolEditor` and `AccountPoolProps`, `ProviderAccounts`, `UsageMenu`/`ContextRing`, `WorkspaceAccountUsageMenu`, and `CostBreakdownMenu`. Workspace supplies qualified account commands; no broad runtime object enters the feature. Private profile rows, login sheet, `accountLogin`, `accountUsage` and session summary compose these public surfaces.
+Public surfaces: `AccountPoolEditor` and `AccountPoolProps`, `ProviderAccounts`, `UsageMenu`/`ContextRing`, `WorkspaceAccountUsageMenu`, and the cost menu and anchor trigger (`CostBreakdownMenu`, `useCostBreakdownTrigger`). Workspace supplies qualified account commands; no broad runtime object enters the feature. Private profile rows, login sheet, `accountLogin`, `accountUsage` and session summary compose these public surfaces.
 
 Profile operation pending/error remains with the account editor. Login/code feedback belongs to the mounted login hook. Explicit close cancels the server login; unmount clears only the copied-code timer. A changed profile-ID snapshot hides completed login feedback without adding cancellation. Copied feedback expires after the existing 2400 ms delay. Usage reads use the same live database query, retain stale/error snapshots, and refresh on existing open intent; there is no fetch effect or duplicate cache.
 
@@ -16,7 +16,7 @@ M7 capability closure: `workspaceCapabilities.ts` exposes only this owner's qual
 
 `ContextRingView` renders the existing context percentage and SVG geometry from the menu owner; it introduces no state or platform reads.
 
-`CostBreakdownMenu` exports the conversation-scoped `CostBreakdownMenuProvider`. ConversationLayout installs it for both main and read-only timelines. Closed rows retain only ordinary RN triggers; one lazily mounted native popup owns the selected estimate. Estimate updates reach the open body without broadcasting popup state to all rows. Source removal, dismissal and window changes retire the request; stale measurement and dismissal callbacks cannot replace a newer selection.
+`CostBreakdownMenu` exports the conversation-scoped `CostBreakdownMenuProvider`. ConversationLayout installs it for both main and read-only timelines. React and native footer rows use the same public `useCostBreakdownTrigger` hook to supply the visible price anchor; one lazily mounted native popup owns the selected estimate. Estimate updates reach the open body without broadcasting popup state to all rows. Source removal, dismissal and window changes retire the request; stale measurement and dismissal callbacks cannot replace a newer selection.
 
 Provider scoping: a conversation passes no account database for a thread whose agent lacks `accounts.rateLimits` (`threadAgentAccounts`), so its header keeps the context ring and reads no account pool. `WorkspaceAccountUsageMenu` titles the account section with the pool owner's provider in multi-provider mode ("Codex accounts": the thread's own provider, or the `accounts.pool` provider of the server's provider list).
 

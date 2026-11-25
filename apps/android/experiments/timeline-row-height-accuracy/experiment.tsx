@@ -285,6 +285,7 @@ function TimelineRowView({
           placement={row.placement}
           presentation={presentation}
           requestPrompt={null}
+          trailingTasks={row.trailingTasks}
           turn={row.item}
         />
       </View>

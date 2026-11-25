@@ -140,13 +140,6 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingTop: spacing.xs,
   },
-  headerIcon: {
-    alignItems: "center",
-    borderRadius: radii.large,
-    height: touchTarget,
-    justifyContent: "center",
-    width: touchTarget,
-  },
   headerMenuAnchor: {
     flexShrink: 0,
     height: touchTarget,

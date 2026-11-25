@@ -7,6 +7,7 @@ import {
   threadSummaryProjectionCursor,
   type StoredThreadSummary,
 } from "./thread-summary-types";
+import { readThreadCatalogControls } from "./threadCatalogControls";
 import { readThreadAgent } from "./threadAgent";
 import { threadPinFromSnapshot } from "./threadPinState";
 import { unknownRecord } from "./unknownRecord";
@@ -327,6 +328,7 @@ export function serverRowSummary(
     agentNickname: thread.agentNickname,
     agentRole: thread.agentRole,
     archived: meta.archived,
+    catalogControls: readThreadCatalogControls(thread, meta.cursor),
     connectionId,
     cwd: thread.cwd,
     name: thread.name,

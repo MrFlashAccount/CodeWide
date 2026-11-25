@@ -107,6 +107,7 @@ export function storedThreadToListItem(thread: StoredThreadSummary): ThreadListI
     agentBadge: threadAgentBadge(thread),
     agentProvider: threadAgentBadgeProvider(thread),
     archived: thread.archived,
+    catalogControls: thread.catalogControls ?? null,
     id: thread.remoteThreadId,
     needsAttention: threadNeedsAttention(thread),
     pinned: thread.pinned,

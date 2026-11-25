@@ -8,7 +8,12 @@
 //! converts a v1 journal; a file it cannot read is skipped and logged, never
 //! repaired.
 
-use std::{collections::HashMap, io, path::Path};
+use std::{
+    collections::HashMap,
+    io,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, PoisonError},
+};
 
 use agent_core::model::{AgentTurn, AppThreadId, NativeSessionCodewide, NativeThreadOrigin};
 use tracing::warn;
@@ -52,9 +57,9 @@ impl HostThread {
 }
 
 /// Every host thread, by each session of its chain.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct HostThreads {
-    by_session: HashMap<String, HostThread>,
+    by_session: HashMap<String, Arc<HostThread>>,
 }
 
 impl HostThreads {
@@ -81,20 +86,91 @@ impl HostThreads {
                     continue;
                 }
             };
-            let thread = host_thread(state, directory);
-            for session_id in thread.session_ids.iter() {
-                threads
-                    .by_session
-                    .insert(session_id.to_owned(), thread.clone());
-            }
+            threads.insert(&Arc::new(host_thread(state, directory)));
         }
         threads
+    }
+
+    fn insert(&mut self, thread: &Arc<HostThread>) {
+        for session_id in thread.session_ids.iter() {
+            self.by_session
+                .insert(session_id.to_owned(), thread.clone());
+        }
     }
 
     /// The host thread whose chain contains `session_id`.
     #[must_use]
     pub fn owner_of(&self, session_id: &str) -> Option<&HostThread> {
-        self.by_session.get(session_id)
+        self.by_session.get(session_id).map(AsRef::as_ref)
+    }
+
+    /// The host thread whose chain contains `session_id`, shared.
+    #[must_use]
+    pub fn owner(&self, session_id: &str) -> Option<Arc<HostThread>> {
+        self.by_session.get(session_id).cloned()
+    }
+}
+
+/// The size and modification time of a `state.json`.
+type Stamp = (u64, std::time::SystemTime);
+
+/// A thread directory as last read: the stamp of its state file, and the
+/// thread when the file named one.
+type ReadThread = (Option<Stamp>, Option<Arc<HostThread>>);
+
+/// The host threads, read again only where a `state.json` changed: a
+/// directory listing and one `stat` per thread, plus a read of each state
+/// file whose size or modification time moved.
+pub struct HostStateCache {
+    journal_directory: PathBuf,
+    read: Mutex<HashMap<AppThreadId, ReadThread>>,
+}
+
+impl HostStateCache {
+    #[must_use]
+    pub fn new(journal_directory: PathBuf) -> Self {
+        Self {
+            journal_directory,
+            read: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The host threads as their files say now.
+    #[must_use]
+    pub fn threads(&self) -> HostThreads {
+        let directories = match ThreadDirectory::list(&self.journal_directory) {
+            Ok(directories) => directories.collect::<Vec<_>>(),
+            Err(err) => {
+                if err.kind() != io::ErrorKind::NotFound {
+                    warn!(err = %err, "Claude host thread directory is unreadable");
+                }
+                Vec::new()
+            }
+        };
+        let mut read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut seen = HashMap::with_capacity(directories.len());
+        for directory in directories {
+            let id = directory.app_thread_id().clone();
+            let stamp = directory.state_stamp();
+            let thread = match read.remove(&id) {
+                Some((known, thread)) if known == stamp && stamp.is_some() => thread,
+                _ => match directory.read_state() {
+                    Ok(Some(state)) => Some(Arc::new(host_thread(state, directory))),
+                    Ok(None) => None,
+                    Err(err) => {
+                        warn!(err = %err, thread_id = %id, "Claude host thread state is unreadable");
+                        None
+                    }
+                },
+            };
+            seen.insert(id, (stamp, thread));
+        }
+        *read = seen;
+        let mut threads = HostThreads::default();
+        for thread in read.values().filter_map(|(_, thread)| thread.as_ref()) {
+            threads.insert(thread);
+        }
+        threads
     }
 }
 

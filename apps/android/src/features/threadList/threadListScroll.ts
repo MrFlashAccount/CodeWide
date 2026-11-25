@@ -13,12 +13,19 @@ type FrozenThreadListRows<Row> = {
 type ThreadListScrollController<Row> = {
   readonly onMomentumScrollBegin: () => void;
   readonly onMomentumScrollEnd: ThreadListScrollSettlement;
+  /** Keeps a gesture's order frozen while it still scrolls. */
+  readonly onScroll: () => void;
   readonly onScrollBeginDrag: () => void;
   readonly onScrollEndDrag: ThreadListScrollSettlement;
   readonly rows: readonly Row[];
 };
 
 const MOMENTUM_START_GRACE_MS = 100;
+/**
+ * A gesture whose end event never arrives (a wrapping gesture took the touch)
+ * releases its frozen order after this long without a scroll event.
+ */
+const IDLE_RELEASE_MS = 1500;
 
 /** Keeps the visible chat anchored while live activity reorders rows above it. */
 export const THREAD_LIST_VISIBLE_CONTENT_POSITION = { data: true, size: false } as const;
@@ -32,7 +39,11 @@ function useThreadListScrollSettlement(
   });
 }
 
-/** Defers live reordering during a gesture while admitting newly loaded tail rows. */
+/**
+ * Defers live reordering during a gesture while admitting newly loaded tail
+ * rows. Only the order is frozen: every row shows its latest content, so an
+ * unread mark or preview never waits for the gesture to settle.
+ */
 export function useThreadListScrollController<Row>(
   rows: readonly Row[],
   scopeKey: string,
@@ -43,6 +54,7 @@ export function useThreadListScrollController<Row>(
 ): ThreadListScrollController<Row> {
   const [frozenRows, setFrozenRows] = useState<FrozenThreadListRows<Row> | null>(null);
   const releaseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const idleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settleScrollOffset = useThreadListScrollSettlement(onOffsetChange);
 
   const cancelPendingRelease = useEvent(() => {
@@ -51,13 +63,30 @@ export function useThreadListScrollController<Row>(
       releaseTimeoutRef.current = null;
     }
   });
-  const freezeRows = useEvent(() => {
-    cancelPendingRelease();
-    setFrozenRows((current) => (current?.scopeKey === scopeKey ? current : { rows, scopeKey }));
+  const cancelIdleRelease = useEvent(() => {
+    if (idleTimeoutRef.current !== null) {
+      clearTimeout(idleTimeoutRef.current);
+      idleTimeoutRef.current = null;
+    }
   });
   const releaseRows = useEvent(() => {
     cancelPendingRelease();
+    cancelIdleRelease();
     setFrozenRows(null);
+  });
+  const armIdleRelease = useEvent(() => {
+    cancelIdleRelease();
+    idleTimeoutRef.current = setTimeout(releaseRows, IDLE_RELEASE_MS);
+  });
+  const freezeRows = useEvent(() => {
+    cancelPendingRelease();
+    armIdleRelease();
+    setFrozenRows((current) => (current?.scopeKey === scopeKey ? current : { rows, scopeKey }));
+  });
+  const onScroll = useEvent(() => {
+    if (idleTimeoutRef.current !== null) {
+      armIdleRelease();
+    }
   });
   const onScrollEndDrag = useEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     settleScrollOffset(event);
@@ -69,16 +98,36 @@ export function useThreadListScrollController<Row>(
     releaseRows();
   });
 
-  useEffect(() => cancelPendingRelease, [cancelPendingRelease]);
+  useEffect(
+    () => () => {
+      cancelPendingRelease();
+      cancelIdleRelease();
+    },
+    [cancelPendingRelease, cancelIdleRelease],
+  );
 
   return {
     onMomentumScrollBegin: freezeRows,
     onMomentumScrollEnd,
+    onScroll,
     onScrollBeginDrag: freezeRows,
     onScrollEndDrag,
     rows:
-      frozenRows?.scopeKey === scopeKey ? appendLoadedTail(frozenRows.rows, rows, keyFor) : rows,
+      frozenRows?.scopeKey === scopeKey
+        ? appendLoadedTail(withLatestContent(frozenRows.rows, rows, keyFor), rows, keyFor)
+        : rows,
   };
+}
+
+/** The frozen order with each row's latest content; the frozen array when none changed. */
+function withLatestContent<Row>(
+  frozen: readonly Row[],
+  latest: readonly Row[],
+  keyFor: (row: Row) => string,
+): readonly Row[] {
+  const byKey = new Map(latest.map((row) => [keyFor(row), row]));
+  const current = frozen.map((row) => byKey.get(keyFor(row)) ?? row);
+  return current.some((row, index) => row !== frozen[index]) ? current : frozen;
 }
 
 function appendLoadedTail<Row>(

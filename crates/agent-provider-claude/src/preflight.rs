@@ -1,4 +1,4 @@
-//! Offline check of a parsed `providers.claude` entry: whether `claude` could
+//! Offline check of the found `claude`: whether it could
 //! start under the environment the adapter gives it. It reads file metadata
 //! and at most the first line of the executable (to resolve a `#!`
 //! interpreter on the children's `PATH`); it starts no process and makes no
@@ -19,46 +19,37 @@ const SHEBANG_LIMIT: u64 = 256;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PreflightProblem {
     /// The file is missing, not a regular file, or not executable.
-    NotExecutable { field: &'static str },
+    NotExecutable,
     /// The `#!` interpreter of an executable is not found (`/usr/bin/env`
     /// interpreters are resolved on the children's `PATH`).
-    InterpreterNotFound {
-        field: &'static str,
-        interpreter: String,
-    },
+    InterpreterNotFound { interpreter: String },
 }
 
 impl std::fmt::Display for PreflightProblem {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotExecutable { field } => {
-                write!(
-                    formatter,
-                    "providers.claude.{field} is not an executable file"
-                )
-            }
-            Self::InterpreterNotFound { field, interpreter } => write!(
+            Self::NotExecutable => formatter.write_str("`claude` is not an executable file"),
+            Self::InterpreterNotFound { interpreter } => write!(
                 formatter,
-                "providers.claude.{field} needs `{interpreter}`, which is not found on the host PATH"
+                "`claude` needs `{interpreter}`, which is not found on the host PATH"
             ),
         }
     }
 }
 
-/// Checks the entry under the children's environment; `inherited_path` is
-/// the companion's own `PATH` (used when the entry configures none).
+/// Checks `claude` under the children's environment; `inherited_path` is
+/// the companion's own `PATH` (used without a login-shell `PATH`).
 #[must_use]
 pub fn preflight(config: &ClaudeConfig, inherited_path: Option<&OsStr>) -> Vec<PreflightProblem> {
-    let field = "claudeExecutable";
     let executable = &config.claude_executable;
     if !is_executable(executable) {
-        return vec![PreflightProblem::NotExecutable { field }];
+        return vec![PreflightProblem::NotExecutable];
     }
     match shebang_interpreter(executable) {
         Some(interpreter)
             if !interpreter_resolves(&interpreter, &config.search_path(inherited_path)) =>
         {
-            vec![PreflightProblem::InterpreterNotFound { field, interpreter }]
+            vec![PreflightProblem::InterpreterNotFound { interpreter }]
         }
         _ => Vec::new(),
     }
@@ -100,7 +91,6 @@ fn interpreter_resolves(interpreter: &str, search_path: &[PathBuf]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
 
     use super::*;
 
@@ -118,24 +108,26 @@ mod tests {
         let claude = root.path().join("npm/bin/claude");
         executable(&node, "\u{7f}ELF")?;
         executable(&claude, "#!/usr/bin/env node\nrequire('x')\n")?;
-        let config = |environment: serde_json::Value| {
-            ClaudeConfig::parse(
-                &json!({"claudeExecutable": claude, "environment": environment}),
-                &crate::config::ClaudeDefaults::default(),
+        let config = |login_path: Option<Vec<std::path::PathBuf>>| {
+            ClaudeConfig::with_executable(
+                claude.clone(),
+                &crate::config::ClaudeDefaults {
+                    login_path,
+                    ..crate::config::ClaudeDefaults::default()
+                },
             )
         };
         // `node` next to `claude` resolves through the directory the
         // adapter prepends, even under a minimal service PATH.
         assert_eq!(
-            preflight(&config(json!({}))?, Some(OsStr::new("/usr/bin:/bin"))),
+            preflight(&config(None)?, Some(OsStr::new("/usr/bin:/bin"))),
             []
         );
 
         std::fs::remove_file(&node)?;
         assert_eq!(
-            preflight(&config(json!({"PATH": "/nonexistent"}))?, None),
+            preflight(&config(Some(vec!["/nonexistent".into()]))?, None),
             [PreflightProblem::InterpreterNotFound {
-                field: "claudeExecutable",
                 interpreter: "node".into()
             }]
         );
@@ -147,16 +139,9 @@ mod tests {
         let root = tempfile::tempdir()?;
         let plain = root.path().join("plain");
         std::fs::write(&plain, "")?;
-        let config = ClaudeConfig::parse(
-            &json!({"claudeExecutable": plain}),
-            &crate::config::ClaudeDefaults::default(),
-        )?;
-        assert_eq!(
-            preflight(&config, None),
-            [PreflightProblem::NotExecutable {
-                field: "claudeExecutable"
-            }]
-        );
+        let config =
+            ClaudeConfig::with_executable(plain, &crate::config::ClaudeDefaults::default())?;
+        assert_eq!(preflight(&config, None), [PreflightProblem::NotExecutable]);
         Ok(())
     }
 

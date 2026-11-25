@@ -7,6 +7,8 @@ import {
   globalVoicePreviewRuntime,
   workspaceRuntime,
 } from "../../../src/data/workspace-runtime";
+import { ForgeSettingsSections } from "../../../src/features/pullRequests/ForgeSettingsSections";
+import { forgeResources } from "../../../src/data/forgeRuntime";
 import { SubscribedConnectionSettings } from "../../../src/features/settings/SettingsFeature";
 import { useHostUpdateProjection } from "../../../src/features/connections/useHostUpdateProjection";
 import { workspaceFeatures as features } from "../../../src/features/workspace/createWorkspaceFeatures";
@@ -42,7 +44,21 @@ export default function V1SettingsRoute(): React.JSX.Element {
       accountRateLimitsDatabase={resources.runtime.accountRateLimits}
       agentProviders={agentProviders}
       connections={resources.list.settingsConnections}
-      entryPage={params.section === "voice-assistant" ? "voiceAssistant" : "overview"}
+      entryPage={
+        params.section === "pull-requests"
+          ? "pullRequests"
+          : params.section === "voice-assistant"
+            ? "voiceAssistant"
+            : "overview"
+      }
+      renderPullRequests={(page) => (
+        <ForgeSettingsSections
+          capabilities={features.pullRequests}
+          connections={resources.list.settingsConnections}
+          forge={forgeResources}
+          page={page}
+        />
+      )}
       {...(params.request === undefined ? {} : { entryRequest: params.request })}
       hostUpdates={hostUpdates}
       onAddServer={() => {
@@ -55,6 +71,7 @@ export default function V1SettingsRoute(): React.JSX.Element {
       onClose={() => {
         recoverUnavailableRoute(router, "/");
       }}
+      onConsumeProviderRateLimitReset={features.accounts.consumeProviderRateLimitReset}
       onDelete={resources.connectionActions.deleteSavedConnection}
       onPreviewGlobalVoice={globalVoicePreviewRuntime.play}
       onReconnect={resources.connectionActions.reconnectSavedConnection}

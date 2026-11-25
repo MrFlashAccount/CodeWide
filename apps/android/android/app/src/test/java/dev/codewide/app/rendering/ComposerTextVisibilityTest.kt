@@ -59,6 +59,25 @@ class ComposerTextVisibilityTest {
     }
   }
 
+  @Test fun oneLineSpansTheFontAscentAndDescentWithoutFontPadding() {
+    val context = RuntimeEnvironment.getApplication()
+    DisplayMetricsHolder.initDisplayMetrics(context)
+    val editor = EnrichedMarkdownTextInputView(context)
+    editor.layoutParams = ViewGroup.LayoutParams(400, 120)
+    editor.setFontSizeFromProps(15f)
+    editor.setLineHeightFromProps(21f)
+    editor.text?.replace(0, editor.length(), "Тстстстст")
+    layout(editor)
+    // The composer centres this line box on its controls. Font padding would
+    // extend it to the font's top/bottom and draw the glyphs below that centre.
+    assertFalse(editor.includeFontPadding)
+    val metrics = editor.paint.fontMetricsInt
+    val textLayout = requireNotNull(editor.layout)
+    assertEquals(1, textLayout.lineCount)
+    assertEquals(metrics.descent - metrics.ascent, textLayout.height)
+    assertEquals(-metrics.ascent, textLayout.getLineBaseline(0))
+  }
+
   @Test fun platformControlDrawsPlainTextInTheSameHarness() {
     val context = RuntimeEnvironment.getApplication()
     val editor = AppCompatEditText(context)

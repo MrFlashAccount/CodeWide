@@ -1,3 +1,4 @@
+import { sameThreadCatalogControls } from "./threadCatalogControls";
 import {
   reportedSubagentStatesOfBatch,
   rootsWithChangedSubagentActivity,
@@ -326,6 +327,7 @@ export function createThreadSummaryDatabase(
     snapshots: SyncSnapshotThread[],
     options: {
       missingScope: (current: readonly StoredThreadSummary[]) => ReadonlySet<string>;
+      projectMembership: (summary: StoredThreadSummary) => StoredThreadSummary;
       /**
        * An index read that does not know live status (a sub-agent row without
        * `running`) keeps a live `active` and newer recency, as catalog pages do.
@@ -359,11 +361,8 @@ export function createThreadSummaryDatabase(
           excludedKeys.add(key);
           continue;
         }
-        const projected = projectThreadSummarySnapshot(
-          connectionId,
-          snapshot.thread,
-          snapshot.archived,
-          previous,
+        const projected = options.projectMembership(
+          projectThreadSummarySnapshot(connectionId, snapshot.thread, snapshot.archived, previous),
         );
         const row =
           options.retainLiveState && previous !== undefined
@@ -455,7 +454,7 @@ export function createThreadSummaryDatabase(
   };
 
   /**
-   * Sets the status of a non-primary provider's sub-agents from their
+   * Sets the status of a neutral (non-`codex.native`) provider's sub-agents from their
    * parent's `collabAgentToolCall` (see `reportedSubagentStates`); their child
    * rows have no live events of their own.
    */
@@ -867,6 +866,7 @@ export function createThreadSummaryDatabase(
               .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId)),
           ),
         // An authoritative snapshot replaces the rows it lists as they are.
+        projectMembership: preserveSubagentMembership,
         retainLiveState: false,
         throughCursor: undefined,
       });
@@ -875,6 +875,7 @@ export function createThreadSummaryDatabase(
       const projected = snapshots.filter(({ thread }) => thread.parentThreadId !== null);
       await replaceSnapshotRows(connectionId, projected, {
         missingScope: (current) => threadSummaryDescendantKeys(current, rootThreadId),
+        projectMembership: (summary) => assignSubagentMembership(summary, rootThreadId),
         retainLiveState: true,
         throughCursor: undefined,
       });
@@ -986,17 +987,31 @@ function retainLiveCatalogState(
   return page;
 }
 
+function assignSubagentMembership(
+  summary: StoredThreadSummary,
+  rootThreadId: string,
+): StoredThreadSummary {
+  summary.subagentRootThreadId = rootThreadId;
+  return summary;
+}
+
+function preserveSubagentMembership(summary: StoredThreadSummary): StoredThreadSummary {
+  return summary;
+}
+
 function sameThreadSummary(left: StoredThreadSummary, right: StoredThreadSummary): boolean {
   return (
     left.connectionId === right.connectionId &&
     left.remoteThreadId === right.remoteThreadId &&
     left.parentThreadId === right.parentThreadId &&
+    left.subagentRootThreadId === right.subagentRootThreadId &&
     left.agentNickname === right.agentNickname &&
     left.agentRole === right.agentRole &&
     left.name === right.name &&
     left.preview === right.preview &&
     left.cwd === right.cwd &&
     (left.gitOriginUrl ?? null) === (right.gitOriginUrl ?? null) &&
+    sameThreadCatalogControls(left.catalogControls ?? null, right.catalogControls ?? null) &&
     sameThreadAgent(left.codewideAgent ?? null, right.codewideAgent ?? null) &&
     left.updatedAt === right.updatedAt &&
     left.recencyAt === right.recencyAt &&
@@ -1049,6 +1064,7 @@ function summaryViewMembershipChanged(
     left.connectionId !== right.connectionId ||
     left.cwd !== right.cwd ||
     left.parentThreadId !== right.parentThreadId ||
+    left.subagentRootThreadId !== right.subagentRootThreadId ||
     left.pinned !== right.pinned ||
     left.archived !== right.archived ||
     left.deleteCommandId !== right.deleteCommandId

@@ -135,7 +135,7 @@ export type TimelineLibraryPerformance =
     };
 
 /** Content-free row category used to aggregate list measurement behavior. */
-export type TimelineRowDiagnosticKind = "item" | "turnLead" | "turnSlice";
+export type TimelineRowDiagnosticKind = "historyBeginning" | "item" | "turnLead" | "turnSlice";
 
 /** Bounded fallback categories emitted by the timeline row geometry owner. */
 export type TimelineFixedSizeFallbackReason =

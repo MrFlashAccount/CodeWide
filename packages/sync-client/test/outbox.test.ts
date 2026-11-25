@@ -11,6 +11,14 @@ it("sends the selected Fast tier on a new turn without changing a steer command"
   expect(steer.params).not.toHaveProperty("serviceTier");
 });
 
+it("keeps the selected PR with starts, queued messages and steers, outside authored input", () => {
+  for (const mode of [{ type: "start" }, { type: "queue" }, { type: "steer", expectedTurnId: "running" }] as const) {
+    const command = createTextOutboxCommand("server", "shared-thread", "Check the PR", mode, { reviewPullRequest: "selected-pr" });
+    expect(command.params.codewideReviewPullRequest).toBe("selected-pr");
+    expect(command.params.input).toEqual([{ type: "text", text: "Check the PR", text_elements: [] }]);
+  }
+});
+
 it("does not send turn/start-only overrides in a steer request", () => {
   const command = createTextOutboxCommand(
     "server",

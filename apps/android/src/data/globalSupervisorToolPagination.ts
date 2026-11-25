@@ -5,6 +5,10 @@ import {
 import type { GlobalSupervisorChatItem } from "./globalSupervisorToolRouter";
 import { unknownRecord } from "./unknownRecord";
 
+// WHY legacy `kind` literals: continuations are opaque strings returned to the
+// model and retained in the supervisor thread's history, so a cursor issued
+// before the tools gained their `codewide_` names may come back. The `kind`
+// names the cursor format, not the tool, and stays fixed with `version: 1`.
 type CatalogCursor = {
   readonly connectionId: string;
   readonly connectionOrder: readonly string[];

@@ -6,6 +6,7 @@ import { DEFAULT_SERVER_ICON_ID } from "../../../data/serverIcons";
 import { colors, iconSize } from "../../../theme";
 import { InlineEmoji } from "../../../ui/InlineIcon";
 import { leadingEmoji } from "../../../ui/ThreadTitle";
+import { ThreePanelsHeader } from "../../../ui/ThreePanelsHeader";
 import { AppText as Text } from "../../../ui/Typography";
 import { ContextRing } from "../../accounts/UsageMenu";
 import { WorkspaceAccountUsageMenu } from "../../accounts/WorkspaceAccountUsageMenu";
@@ -33,6 +34,7 @@ export function ConversationHeader({
   forkPicker,
   historyActivityModel,
   historyActivityResourceId,
+  identitySubtitle = null,
   newChat,
   onArchive,
   onBack,
@@ -54,118 +56,144 @@ export function ConversationHeader({
   threadSearchVisible,
 }: ConversationHeaderProps) {
   const openElsewhere = threadOpenElsewhere(remoteThread);
+  // Every existing thread has its menu. A sub-agent's mutating actions show disabled; a thread
+  // another app holds keeps its own narrower rule (only session actions are off).
+  const threadMenu = !newChat;
+  // The pane owns its exits (ThreePanelsHeader): a closable pane's `×` replaces the back arrow.
   return (
-    <View style={styles.conversationHeader} testID="conversation-header">
-      {compact && (
-        <Pressable accessibilityLabel="Back to threads" onPress={onBack} style={styles.headerIcon}>
-          <Ionicons color={colors.text} name="arrow-back" size={iconSize.navigation} />
-        </Pressable>
-      )}
-      <View style={[styles.conversationIdentity, !compact && styles.conversationIdentityRaised]}>
-        <View style={styles.conversationTitleRow}>
-          {leadingEmoji(thread.title) !== null && (
-            <InlineEmoji role="title" value={leadingEmoji(thread.title) ?? ""} />
-          )}
-          <Text
-            ellipsizeMode="tail"
-            numberOfLines={1}
-            style={[styles.conversationTitle, styles.conversationHeaderTitle]}
-            testID="conversation-title"
-          >
-            {thread.title.slice(leadingEmoji(thread.title)?.length ?? 0).trimStart()}
-          </Text>
-          <ConversationBackendRefreshWarning
-            connectionId={draftConnectionId}
-            model={threadChatModel}
-            threadId={draftThreadId}
+    <ThreePanelsHeader
+      back={
+        compact && onBack !== undefined
+          ? { kind: "exit", label: "Back to threads", run: onBack }
+          : null
+      }
+      menu={
+        threadMenu ? (
+          <ThreadHeaderMenu
+            archived={archived}
+            key={thread.id}
+            onOpenMenu={dismissComposerKeyboardForOverlay}
+            onRenameRequest={openThreadRename}
+            openElsewhere={openElsewhere}
+            pinned={pinned}
+            threadId={thread.id}
+            {...(onTogglePin === undefined ? {} : { onTogglePin })}
+            {...(archived
+              ? onUnarchive === undefined
+                ? {}
+                : { onUnarchive }
+              : onArchive === undefined
+                ? {}
+                : { onArchive })}
+            {...(onCompact === undefined || openElsewhere ? {} : { onCompact })}
+            {...(onFork === undefined ? {} : { onFork })}
+            {...(forkOffer === undefined ? {} : { forkOffer })}
+            {...(forkPicker === undefined ? {} : { forkPicker })}
+            {...(deleteThread === undefined || openElsewhere ? {} : { onDelete: deleteThread })}
+            readOnly={readOnly && !openElsewhere}
           />
-        </View>
-        <ConversationHistorySubtitle
-          cwd={cwd}
-          model={historyActivityModel}
-          resourceId={historyActivityResourceId}
-          server={server}
-        />
-      </View>
-      {!newChat && (
-        <Pressable
-          accessibilityLabel="Search in thread"
-          onPress={() => {
-            if (threadSearchVisible) {
-              closeThreadSearch();
-            } else {
-              setThreadSearchVisible(true);
-            }
-          }}
-          style={styles.headerIcon}
-        >
-          <Ionicons color={colors.text} name="search" size={iconSize.action} />
-        </Pressable>
-      )}
-      {!newChat && (
-        <WorkspaceAccountUsageMenu
-          align="end"
-          compactionCount={sessionCompactionCount}
-          currentUsage={currentUsage}
-          database={accountRateLimitsDatabase}
-          placement="bottom"
-          providerLimits={providerLimits}
-          servers={[
-            {
-              iconId: server?.iconId ?? DEFAULT_SERVER_ICON_ID,
-              id: server?.id ?? "active-server",
-              name: server?.name ?? "Server",
-            },
-          ]}
-          thread={remoteThread ?? null}
-          {...(onRefreshAccountRateLimits === undefined
-            ? {}
-            : { onRefresh: onRefreshAccountRateLimits })}
-        >
-          <Pressable
-            accessibilityLabel={
-              accountRateLimitsDatabase === null
-                ? "Context usage"
-                : "Context usage and account limits"
-            }
-            style={styles.headerIcon}
-          >
-            <ContextRing
-              percent={contextUsageFromProjection(currentUsage)?.usedPercent ?? 0}
-              size={iconSize.action}
+        ) : null
+      }
+      style={styles.conversationHeader}
+      testID="conversation-header"
+      title={
+        <View style={[styles.conversationIdentity, !compact && styles.conversationIdentityRaised]}>
+          <View style={styles.conversationTitleRow}>
+            {leadingEmoji(thread.title) !== null && (
+              <InlineEmoji role="title" value={leadingEmoji(thread.title) ?? ""} />
+            )}
+            <Text
+              ellipsizeMode="tail"
+              numberOfLines={1}
+              style={[styles.conversationTitle, styles.conversationHeaderTitle]}
+              testID="conversation-title"
+            >
+              {thread.title.slice(leadingEmoji(thread.title)?.length ?? 0).trimStart()}
+            </Text>
+            <ConversationBackendRefreshWarning
+              connectionId={draftConnectionId}
+              model={threadChatModel}
+              threadId={draftThreadId}
             />
-          </Pressable>
-        </WorkspaceAccountUsageMenu>
-      )}
-      {/* A thread another app holds keeps its menu; other read-only threads (sub-agents) have none. */}
-      {(!readOnly || openElsewhere) && !newChat && (
-        <ThreadHeaderMenu
-          archived={archived}
-          key={thread.id}
-          onOpenMenu={dismissComposerKeyboardForOverlay}
-          onRenameRequest={openThreadRename}
-          openElsewhere={openElsewhere}
-          pinned={pinned}
-          threadId={thread.id}
-          {...(onTogglePin === undefined ? {} : { onTogglePin })}
-          {...(archived
-            ? onUnarchive === undefined
-              ? {}
-              : { onUnarchive }
-            : onArchive === undefined
-              ? {}
-              : { onArchive })}
-          {...(onCompact === undefined || openElsewhere ? {} : { onCompact })}
-          {...(onFork === undefined ? {} : { onFork })}
-          {...(forkOffer === undefined ? {} : { forkOffer })}
-          {...(forkPicker === undefined ? {} : { forkPicker })}
-          {...(deleteThread === undefined || openElsewhere ? {} : { onDelete: deleteThread })}
-        />
-      )}
-      {/* Outside the menu gate: a message's "Fork" opens the sheet in a read-only thread too. */}
-      {onFork !== undefined && forkPicker !== undefined && (
-        <ThreadForkSheet onFork={onFork} picker={forkPicker} />
-      )}
-    </View>
+          </View>
+          {identitySubtitle === null ? (
+            <ConversationHistorySubtitle
+              cwd={cwd}
+              model={historyActivityModel}
+              resourceId={historyActivityResourceId}
+              server={server}
+            />
+          ) : (
+            <Text
+              accessibilityLabel={identitySubtitle}
+              ellipsizeMode="middle"
+              numberOfLines={1}
+              style={styles.conversationIdentitySubtitle}
+              testID="conversation-identity-subtitle"
+            >
+              {identitySubtitle}
+            </Text>
+          )}
+        </View>
+      }
+      trailing={
+        <>
+          {!newChat && (
+            <Pressable
+              accessibilityLabel="Search in thread"
+              onPress={() => {
+                if (threadSearchVisible) {
+                  closeThreadSearch();
+                } else {
+                  setThreadSearchVisible(true);
+                }
+              }}
+              style={styles.headerIcon}
+            >
+              <Ionicons color={colors.text} name="search" size={iconSize.action} />
+            </Pressable>
+          )}
+          {!newChat && (
+            <WorkspaceAccountUsageMenu
+              align="end"
+              compactionCount={sessionCompactionCount}
+              currentUsage={currentUsage}
+              database={accountRateLimitsDatabase}
+              placement="bottom"
+              providerLimits={providerLimits}
+              servers={[
+                {
+                  iconId: server?.iconId ?? DEFAULT_SERVER_ICON_ID,
+                  id: server?.id ?? "active-server",
+                  name: server?.name ?? "Server",
+                },
+              ]}
+              thread={remoteThread ?? null}
+              {...(onRefreshAccountRateLimits === undefined
+                ? {}
+                : { onRefresh: onRefreshAccountRateLimits })}
+            >
+              <Pressable
+                accessibilityLabel={
+                  accountRateLimitsDatabase === null
+                    ? "Context usage"
+                    : "Context usage and account limits"
+                }
+                style={styles.headerIcon}
+              >
+                <ContextRing
+                  percent={contextUsageFromProjection(currentUsage)?.usedPercent ?? 0}
+                  size={iconSize.action}
+                />
+              </Pressable>
+            </WorkspaceAccountUsageMenu>
+          )}
+          {/* Outside the menu gate: a message's "Fork" opens the sheet in a read-only thread too. */}
+          {onFork !== undefined && forkPicker !== undefined && (
+            <ThreadForkSheet onFork={onFork} picker={forkPicker} />
+          )}
+        </>
+      }
+    />
   );
 }

@@ -14,6 +14,9 @@ import { TOKEN_SYMBOL } from "../../../ui/token-display";
 import { AppText as Text } from "../../../ui/Typography";
 import { CostBreakdownMenu } from "../../accounts/CostBreakdownMenu";
 import { styles } from "./TurnFooter.styles";
+import { CompletedFooter } from "./CompletedFooter";
+import { supportsCompletedFooter } from "./completedFooterSupport";
+import { tokenUsageLabel } from "./tokenUsageLabel";
 
 export const TURN_FOOTER_MIN_HEIGHT = 20;
 
@@ -22,6 +25,8 @@ export interface TurnFooterProps {
   readonly completedAt: number | null;
   readonly diff?: string;
   readonly durationMs: number | null;
+  /** A sealed wide bubble supplies an external width for the native footer. */
+  readonly fullWidth?: boolean;
   /** The model the turn ran on, when known; names the model in the unpriced-cost hint. */
   readonly model?: string | null;
   readonly status: "completed" | "interrupted" | "failed" | "inProgress";
@@ -32,50 +37,64 @@ export function TurnFooter(props: TurnFooterProps) {
   const { completedAt, diff = "", durationMs, model = null, status, usage = null } = props;
   const tokenUsage = usage?.turn.tokens ?? null;
   const canOpenChanges = useContext(TurnChangesContext) !== null;
+  const showChanges = canOpenChanges && diff.trim() !== "" && props.changesTarget !== undefined;
+  const price = usage?.turn.cost ?? null;
+  if (
+    props.fullWidth === true &&
+    status === "completed" &&
+    !showChanges &&
+    completedAt !== null &&
+    tokenUsage !== null &&
+    price !== null &&
+    supportsCompletedFooter()
+  ) {
+    return (
+      <CompletedFooter
+        duration={durationMs === null ? "" : formatDuration(durationMs)}
+        estimate={price}
+        input={tokenUsage.inputTokens}
+        output={tokenUsage.outputTokens}
+        time={formatClockTime(completedAt)}
+      />
+    );
+  }
   return (
     <MessageFooterRow
-      changes={
-        canOpenChanges && diff.trim() !== "" && props.changesTarget !== undefined ? (
-          <TurnChangesFooter diff={diff} target={props.changesTarget} />
-        ) : null
-      }
+      changes={showChanges ? <TurnChangesFooter diff={diff} target={props.changesTarget} /> : null}
       cost={footerCost(usage, status, model)}
       time={completedAt === null ? null : formatClockTime(completedAt)}
       tokens={
-        tokenUsage === null ? null : (
+        tokenUsage === null ? null : status === "inProgress" ? (
           <View
-            accessibilityLabel={`${tokenUsage.inputTokens.toLocaleString()} input tokens, ${tokenUsage.outputTokens.toLocaleString()} output tokens`}
+            accessibilityLabel={tokenUsageLabel(tokenUsage.inputTokens, tokenUsage.outputTokens)}
             accessible
             style={styles.turnTokenMetrics}
           >
             <Text numberOfLines={1} style={styles.turnMetaText}>
               {TOKEN_SYMBOL}
             </Text>
-            {status === "inProgress" ? (
-              <AnimatedNumber
-                format={compactNumberFormat}
-                prefix="↓"
-                style={styles.turnMetaText}
-                value={tokenUsage.inputTokens}
-              />
-            ) : (
-              <Text numberOfLines={1} style={styles.turnMetaText}>
-                ↓{compactNumber(tokenUsage.inputTokens)}
-              </Text>
-            )}
-            {status === "inProgress" ? (
-              <AnimatedNumber
-                format={compactNumberFormat}
-                prefix="↑"
-                style={styles.turnMetaText}
-                value={tokenUsage.outputTokens}
-              />
-            ) : (
-              <Text numberOfLines={1} style={styles.turnMetaText}>
-                ↑{compactNumber(tokenUsage.outputTokens)}
-              </Text>
-            )}
+            <AnimatedNumber
+              format={compactNumberFormat}
+              prefix="↓"
+              style={styles.turnMetaText}
+              value={tokenUsage.inputTokens}
+            />
+            <AnimatedNumber
+              format={compactNumberFormat}
+              prefix="↑"
+              style={styles.turnMetaText}
+              value={tokenUsage.outputTokens}
+            />
           </View>
+        ) : (
+          <Text
+            accessibilityLabel={tokenUsageLabel(tokenUsage.inputTokens, tokenUsage.outputTokens)}
+            accessible
+            numberOfLines={1}
+            style={styles.turnMetaText}
+          >
+            {`${TOKEN_SYMBOL} ↓${compactNumber(tokenUsage.inputTokens)} ↑${compactNumber(tokenUsage.outputTokens)}`}
+          </Text>
         )
       }
     >

@@ -26,6 +26,8 @@ export interface RpcClient {
 }
 
 export type OutboxTurnOptions = {
+  /** Opaque PR selected by the sending review-chat route. Consumed by Companion. */
+  reviewPullRequest?: string;
   model?: string | null;
   effort?: string | null;
   serviceTier?: string | null;
@@ -64,6 +66,7 @@ export function createTextOutboxCommand(
     params: {
       threadId: remoteThreadId,
       clientUserMessageId: commandId,
+      ...(options.reviewPullRequest === undefined ? {} : { codewideReviewPullRequest: options.reviewPullRequest }),
       input: [
         ...(text.length === 0 ? [] : [{ type: "text", text, text_elements: [] }]),
         ...(options.attachments ?? []).map((attachment) => ({

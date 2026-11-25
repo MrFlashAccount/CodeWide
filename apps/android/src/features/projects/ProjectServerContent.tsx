@@ -1,9 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
-import { LegendList } from "@legendapp/list/react-native";
 import { colors, iconSize } from "../../theme";
 import { useEvent } from "../../react/useEvent";
-import { AppListRow } from "../../ui/AppListRow";
-import { listRowHeight, listRowPosition } from "../../ui/AppListRow.types";
+import { AppList } from "../../ui/AppList";
+import { AppListItem } from "../../ui/AppListItem";
+import { listRowHeight } from "../../ui/AppListRow.types";
 import { AppSheetScrollView } from "../../ui/AppSheet";
 import { ServerIcon } from "../connections/ServerIcon";
 import type { ProjectPickerServer, ScopedProjectPickerProps } from "./projectPickerContract";
@@ -14,26 +14,23 @@ import { styles } from "./ProjectPickerSheet.styles";
 function PickerServerRow({
   disabled,
   onBrowse,
-  position,
   server,
 }: {
   readonly disabled: boolean;
   readonly onBrowse: (connectionId: string | null) => void;
-  readonly position: ReturnType<typeof listRowPosition>;
   readonly server: ProjectPickerServer;
 }): React.JSX.Element {
   const browse = useEvent(() => {
     onBrowse(server.id);
   });
   return (
-    <AppListRow
+    <AppListItem
       accessibilityLabel={`Browse server: ${server.name}`}
       description={server.available ? "Browse folders" : "Offline"}
       disabled={disabled}
       fixedHeight={listRowHeight.double}
       leading={<ServerIcon iconId={server.iconId} metric="body" />}
       onPress={browse}
-      position={position}
       title={server.name}
       trailing={<Ionicons color={colors.textDim} name="chevron-forward" size={iconSize.inline} />}
     />
@@ -52,25 +49,22 @@ export function ProjectServerContent({
     server.name.toLocaleLowerCase().includes(state.normalizedQuery),
   );
   return (
-    <LegendList
+    <AppList
       contentContainerStyle={styles.listContent}
       data={servers}
-      drawDistance={360}
-      getFixedItemSize={() => listRowHeight.double}
+      empty={<EmptyState compact icon="server-outline" text="No matching servers" />}
       keyboardShouldPersistTaps="handled"
       keyExtractor={(server) => server.id}
-      ListEmptyComponent={<EmptyState compact icon="server-outline" text="No matching servers" />}
-      recycleItems
-      renderItem={({ index, item }) => (
+      renderItem={({ item }) => (
         <PickerServerRow
           disabled={props.busy || state.adding || !item.available}
           onBrowse={state.openDirectoryPicker}
-          position={listRowPosition(index, servers.length)}
           server={item}
         />
       )}
-      renderScrollComponent={AppSheetScrollView}
+      scrollComponent={AppSheetScrollView}
       style={styles.projectScroll}
+      virtualized
     />
   );
 }

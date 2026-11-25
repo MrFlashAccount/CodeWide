@@ -2,11 +2,12 @@
 //! for a streamed query: JSON lines in and out, partial messages, adaptive
 //! thinking with summarized display, permission prompts answered over
 //! stdio, and the session's model, effort, permission profile, tools,
-//! setting sources and MCP servers. Pure.
+//! setting sources, MCP servers and the host's session instructions. Pure.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use agent_core::provider::SessionInstructions;
 use serde_json::json;
 
 /// The in-process MCP server that carries the companion's client tools;
@@ -115,9 +116,15 @@ pub struct QueryOptions {
     /// Whether the companion's client tools are offered (as the
     /// [`CLIENT_TOOL_SERVER`] MCP server).
     pub client_tools: bool,
+    /// The host's session instructions, appended to Claude's system prompt
+    /// (`--append-system-prompt`). Claude does not keep the flag with the
+    /// session, so every process of a session passes it again.
+    pub session_instructions: Option<SessionInstructions>,
 }
 
-const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+/// The reasoning efforts Claude Code accepts (`--effort`) and records on its
+/// answers (`runtime/recorded_model.rs`).
+pub(crate) const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// The probe runs with Claude's default permission mode, no settings files
 /// and only the MCP servers on its command line (none), as the Agent SDK
@@ -142,6 +149,7 @@ impl QueryOptions {
             profile: PROBE_PROFILE,
             identity: SessionIdentity::Probe,
             client_tools: false,
+            session_instructions: None,
         }
     }
 
@@ -172,11 +180,16 @@ impl QueryOptions {
         if session {
             push(&mut args, "--model", &self.model);
             args.push("--permission-prompt-tool=stdio".into());
+            // Claude acknowledges each message it takes (`command_lifecycle`).
+            args.push("--replay-user-messages".into());
         }
         match &self.identity {
             SessionIdentity::New(id) => push(&mut args, "--session-id", id),
             SessionIdentity::Resume(id) => push(&mut args, "--resume", id),
             SessionIdentity::Probe => {}
+        }
+        if session && let Some(instructions) = self.session_instructions {
+            push(&mut args, "--append-system-prompt", instructions.text());
         }
         match self.profile.tools {
             Some(tools) => push(&mut args, "--tools", &tools.join(",")),
@@ -237,8 +250,11 @@ mod tests {
             profile: profile_options(profile).unwrap_or_else(|| unreachable!()),
             identity,
             client_tools: true,
+            session_instructions: Some(INSTRUCTIONS),
         }
     }
+
+    const INSTRUCTIONS: SessionInstructions = SessionInstructions::new("Link every file.");
 
     fn text(args: &[OsString]) -> Vec<String> {
         args.iter()
@@ -274,6 +290,7 @@ mod tests {
         assert_eq!(after(&args, "--session-id"), Some("s"));
         assert_eq!(after(&args, "--effort"), Some("high"));
         assert!(args.contains(&"--permission-prompt-tool=stdio".to_owned()));
+        assert!(args.contains(&"--replay-user-messages".to_owned()));
         assert!(args.contains(&"--tools=default".to_owned()));
         assert!(!args.contains(&"--allow-dangerously-skip-permissions".to_owned()));
         assert!(
@@ -292,6 +309,29 @@ mod tests {
         assert_eq!(after(&args, "--permission-mode"), Some("bypassPermissions"));
         assert!(args.contains(&"--allow-dangerously-skip-permissions".to_owned()));
         assert!(profile_options(":custom").is_none());
+    }
+
+    #[test]
+    fn every_session_process_appends_the_session_instructions_once() {
+        for identity in [
+            SessionIdentity::New("s".into()),
+            SessionIdentity::Resume("s".into()),
+        ] {
+            let args = text(&options(":workspace", identity).args());
+            assert_eq!(
+                after(&args, "--append-system-prompt"),
+                Some("Link every file.")
+            );
+            assert_eq!(
+                args.iter()
+                    .filter(|arg| *arg == "--append-system-prompt")
+                    .count(),
+                1
+            );
+        }
+        let mut without = options(":workspace", SessionIdentity::New("s".into()));
+        without.session_instructions = None;
+        assert!(!text(&without.args()).contains(&"--append-system-prompt".to_owned()));
     }
 
     #[test]

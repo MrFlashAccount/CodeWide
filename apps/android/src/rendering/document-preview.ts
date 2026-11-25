@@ -5,7 +5,22 @@ import {
   isMarkdownFile,
 } from "@codewide/file-types";
 
-export type DocumentPreviewKind = "markdown" | "text" | "html" | "image" | "download";
+import type { GetTransferAccess, PrivateAssetSource } from "../data/private-transfer";
+
+export type DocumentPreviewKind = "markdown" | "text" | "html" | "image" | "perfetto" | "download";
+
+type DocumentPreviewRequestBase = {
+  column?: number;
+  getTransferAccess: GetTransferAccess;
+  line?: number;
+  name: string;
+  path: string;
+  source?: PrivateAssetSource;
+};
+
+export type DocumentPreviewRequest = {
+  [Kind in DocumentPreviewKind]: DocumentPreviewRequestBase & { readonly kind: Kind };
+}[DocumentPreviewKind];
 
 export type DocumentPreviewSurface = "fullscreen" | "image-viewer" | "download";
 
@@ -15,7 +30,7 @@ export function documentPreviewSurface(kind: DocumentPreviewKind): DocumentPrevi
   if (kind === "image") {
     return "image-viewer";
   }
-  if (kind === "html" || kind === "markdown" || kind === "text") {
+  if (kind === "perfetto" || kind === "html" || kind === "markdown" || kind === "text") {
     return "fullscreen";
   }
   return "download";
@@ -85,6 +100,15 @@ export function markdownLineTarget(
 
 export function previewableDocumentKind(name: string, path: string): DocumentPreviewKind | null {
   const candidates = [name, path].map((candidate) => parseTextDocumentLocation(candidate).path);
+  if (
+    candidates.some((candidate) =>
+      /\.(?:perfetto-trace|pftrace|perfetto)(?:\.gz)?$/iu.test(
+        candidate.split(/[?#]/u, 1)[0] ?? "",
+      ),
+    )
+  ) {
+    return "perfetto";
+  }
   if (candidates.some(isMarkdownFile)) {
     return "markdown";
   }
@@ -109,8 +133,30 @@ export function remoteFileKind(name: string, path: string): DocumentPreviewKind 
   return "download";
 }
 
-export function isRemoteFileHref(value: string): boolean {
+/** A `file:` URL without an authority, or with `localhost`, names a path on the
+ * agent's host, the same path a bare absolute link names. Any other authority
+ * names another machine and stays a URL. */
+const HOST_FILE_URL_PREFIX = /^file:(?:\/\/(?:localhost)?(?=\/)|(?=\/(?!\/)))/iu;
+
+function withoutHostFileScheme(value: string): string {
+  return value.replace(HOST_FILE_URL_PREFIX, "");
+}
+
+/** The decoded absolute host path a `file:` URL names, or `null` for any other link. */
+export function hostFileUrlPath(value: string): string | null {
   const raw = value.trim();
+  if (!HOST_FILE_URL_PREFIX.test(raw)) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(withoutHostFileScheme(raw));
+  } catch {
+    return null;
+  }
+}
+
+export function isRemoteFileHref(value: string): boolean {
+  const raw = withoutHostFileScheme(value.trim());
   const sourceReference = parseTextDocumentLocation(raw).path !== raw;
   return (
     raw !== "" &&
@@ -133,7 +179,7 @@ export function resolveRemoteDocumentLocation(
   value: string,
   cwd: string,
 ): RemoteDocumentLocation | null {
-  const raw = value.trim();
+  const raw = withoutHostFileScheme(value.trim());
   if (!isRemoteFileHref(raw)) {
     return null;
   }

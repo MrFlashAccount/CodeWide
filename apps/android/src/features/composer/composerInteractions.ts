@@ -1,3 +1,4 @@
+import type { TurnSendOptions } from "../../data/thread-delivery-state";
 import type { ThreadGoal } from "@codewide/codex-protocol/v0.155.1/v2";
 import { readThreadAgent, threadAgentSupports } from "../../data/threadAgent";
 import type { useConversationOwner } from "../../ui/use-conversation-owner";
@@ -8,7 +9,10 @@ import type { QueueWorkspaceCapabilities } from "../queue/queueWorkspaceCapabili
 import { useComposerAccessoryActions } from "./ComposerAccessoryTray";
 import type { useComposerCommands } from "./composerCommands";
 import { useComposerDelivery } from "./composerDelivery";
-import { useComposerFeatureActions } from "./composerFeatureActions";
+import {
+  useComposerFeatureActions,
+  type ComposerFeatureDestinations,
+} from "./composerFeatureActions";
 import { createComposerGoalSubmission } from "./composerGoalSubmission";
 import type { useComposerState } from "./composerState";
 import type { ComposerWorkspaceCapabilities } from "./composerWorkspaceCapabilities";
@@ -28,6 +32,7 @@ export function useComposerInteractions({
   draftThreadId,
   onSetGoal,
   openDrawing,
+  questionReply,
   queueInputs,
   remoteThread,
   terminalEnabled,
@@ -40,35 +45,38 @@ export function useComposerInteractions({
   composerScope: string;
   composerStateBinding: ReturnType<typeof useComposerState>;
   conversationOwner: ReturnType<typeof useConversationOwner>;
-  createAndOpenTerminal: Parameters<typeof useComposerFeatureActions>[2];
+  createAndOpenTerminal: ComposerFeatureDestinations["createAndOpenTerminal"];
   currentGoal: ThreadGoal | null;
   currentOutcome: ThreadCurrentOutcome | null;
   currentTurnId: string | null;
   draftConnectionId: string | null;
   draftThreadId: string | null;
   onSetGoal: ConversationGoalCapabilities["onSetGoal"];
-  openDrawing: Parameters<typeof useComposerFeatureActions>[1];
+  openDrawing: ComposerFeatureDestinations["openDrawing"];
+  questionReply: ((text: string, options: TurnSendOptions) => Promise<string>) | null;
   queueInputs: QueueWorkspaceCapabilities;
   remoteThread: Parameters<typeof useComposerDelivery>[0]["remoteThread"];
   terminalEnabled: boolean;
   threadLifecycleActive: boolean;
   voiceController: ComposerWorkspaceCapabilities["voiceController"];
 }) {
-  const composerFeatureActionsBinding = useComposerFeatureActions(
-    composerCommands.composerAttachmentsBinding.pickComposerAttachment,
-    openDrawing,
+  const composerFeatureActionsBinding = useComposerFeatureActions({
     createAndOpenTerminal,
-    composerCommands.composerControlActionsBinding.openControls,
-    composerStateBinding.composerMenuStateBinding.openGoalAttachment,
-    () => {
-      composerStateBinding.composerEditingBinding.composerInputRef.current?.focus();
-    },
-    () => {
+    editGoalInComposer: () => {
       if (currentGoal !== null) {
         composerStateBinding.composerMenuStateBinding.openGoalEdit(currentGoal);
       }
     },
-  );
+    focusComposer: () => {
+      composerStateBinding.composerEditingBinding.composerInputRef.current?.focus();
+    },
+    openControls: composerCommands.composerControlActionsBinding.openControls,
+    openDrawing,
+    openGoalAttachment: composerStateBinding.composerMenuStateBinding.openGoalAttachment,
+    pickComposerAttachment: composerCommands.composerAttachmentsBinding.pickComposerAttachment,
+    pickComposerPhotos: composerCommands.composerAttachmentsBinding.pickComposerPhotos,
+    takeComposerPhoto: composerCommands.composerAttachmentsBinding.takeComposerPhoto,
+  });
   const composerAccessoryActionsBinding = useComposerAccessoryActions({
     fileAttachmentEnabled: composerCommands.composerAttachmentsBinding.fileAttachmentEnabled,
     goalEnabled: onSetGoal !== undefined,
@@ -138,7 +146,10 @@ export function useComposerInteractions({
     onEditQueued: queueInputs.onEditQueued,
     onInterrupt: composerInputs.onInterrupt,
     onListQueue: queueInputs.onListQueue,
-    onSend: composerInputs.onSend,
+    onSend:
+      questionReply === null
+        ? composerInputs.onSend
+        : async (text, _mode, options) => questionReply(text, options),
     onStartVoiceTranscription: composerInputs.onStartVoiceTranscription,
     pastedAttachmentPending: composerStateBinding.largePasteStateBinding.pastedAttachmentPending,
     pastedAttachmentPendingRef:
@@ -166,5 +177,9 @@ export function useComposerInteractions({
     composerAccessoryActionsBinding,
     composerDeliveryBinding,
     openGoalDetails: composerFeatureActionsBinding.openGoalDetails,
+    questionReplyActive:
+      questionReply !== null &&
+      goalSubmission === null &&
+      composerStateBinding.queueEditStateBinding.queuedComposerEdit === null,
   };
 }

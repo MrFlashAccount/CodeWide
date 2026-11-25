@@ -1,5 +1,12 @@
+import {
+  ReadingPositionContext,
+  ThreadReadingSession,
+  openingTurnId,
+  useThreadOpening,
+} from "./timeline/threadReadingPosition";
+import { useConversationState } from "../../ui/use-conversation-scope";
 import { useSelector } from "@legendapp/state/react";
-import type { ThreadChatWindowRequest } from "../../data/thread-chat-model";
+import { threadChatRequestKey, type ThreadChatWindowRequest } from "../../data/thread-chat-model";
 import { useThreadChatWindow } from "../../data/use-thread-chat-window";
 import { useThreadHistoryCursor } from "../../data/use-thread-history";
 import { COMPLETE_STATIC_THREAD_HISTORY } from "../../data/use-thread-history-controller";
@@ -91,17 +98,45 @@ export function MainConversationDetail({
   const historyResourceId = threadHistoryResourceKey(connectionId, threadId);
   const historyModel = resources.threadHistoryModel ?? null;
   const historyResourceRaw = useThreadHistoryCursor(historyModel, historyResourceId);
+  const scope = `${connectionId}\u0000${threadId}`;
+  const [session] = useConversationState(
+    scope,
+    () => new ThreadReadingSession(connectionId, threadId, uiStateDatabase),
+  );
+  const opening = useThreadOpening({
+    scope,
+    summaryReady:
+      resources.threadSummaryDatabase === null ||
+      storedThread !== null ||
+      summaryView?.phase === "ready" ||
+      summaryView?.phase === "error",
+    ui: composerState,
+    unreadId:
+      (storedThread?.unread ?? 0) > 0 ? (storedThread?.firstUnreadAgentTurnId ?? null) : null,
+  });
   const chatWindowRequest: ThreadChatWindowRequest = {
-    anchorTurnId: null,
+    anchorTurnId: searchWindow === null ? openingTurnId(opening) : null,
     connectionId,
     threadId,
   };
-  const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false);
+  const chatWindow = useThreadChatWindow(
+    chatDatabase,
+    chatWindowRequest,
+    opening.kind === "pending" && searchWindow === null ? "deferred" : "progressive",
+  );
   if (chatWindow === null) {
     throw new Error("Conversation window is unavailable");
   }
 
   const chatSnapshot = chatWindow.snapshot;
+  const windowInstalled =
+    chatSnapshot.installedRequestKey === threadChatRequestKey(chatWindowRequest);
+  const canOpen = opening.kind !== "pending" && windowInstalled && searchWindow === null;
+  const [opened, setOpened] = useConversationState(scope, () => canOpen);
+  const openingReady = opened || canOpen;
+  if (!opened && canOpen) {
+    setOpened(true);
+  }
   const history = useMainConversationHistory({
     chatDatabase,
     chatSnapshot,
@@ -112,31 +147,36 @@ export function MainConversationDetail({
     historyModel,
     historyResourceId,
     historyResourceRaw,
+    openingReady,
     resources,
     storedThread,
     threadId,
   });
 
-  return renderMainConversationPublication({
-    chatDatabase,
-    chatSnapshot,
-    chatWindow,
-    chatWindowRequest,
-    composerState,
-    connectionId,
-    conversation,
-    history,
-    historyModel,
-    historyResourceId,
-    historyResourceRaw,
-    isSelectedSearchWindow,
-    navigationKey,
-    resources,
-    searchState,
-    searchWindow,
-    storedThread,
-    threadId,
-  });
+  return (
+    <ReadingPositionContext.Provider value={{ opening, session }}>
+      {renderMainConversationPublication({
+        chatDatabase,
+        chatSnapshot,
+        chatWindow,
+        chatWindowRequest,
+        composerState,
+        connectionId,
+        conversation,
+        history,
+        historyModel,
+        historyResourceId,
+        historyResourceRaw,
+        isSelectedSearchWindow,
+        navigationKey,
+        resources,
+        searchState,
+        searchWindow,
+        storedThread,
+        threadId,
+      })}
+    </ReadingPositionContext.Provider>
+  );
 }
 export function NewConversationDetail({
   connectionId,

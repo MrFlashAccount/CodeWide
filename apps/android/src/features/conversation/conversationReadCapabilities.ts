@@ -1,6 +1,7 @@
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { RenderBlock } from "@codewide/renderers";
 import type { ReactElement } from "react";
+import type { ThreadHistoryViewport } from "../../data/use-thread-history-controller";
 import type { GetTransferAccess } from "../../data/private-transfer";
 import type { DocumentPreviewRequest } from "../../rendering/DocumentPreviewHost";
 import type { PresentTurnChanges } from "../../rendering/TurnChangesContext";
@@ -20,6 +21,8 @@ export type ConversationReadSurfaceProps = {
   footerContent: ReactElement;
   getStableTransferAccess: GetTransferAccess;
   getTransferAccess: GetTransferAccess | undefined;
+  headerSubtitle: string | null;
+  historyViewport: ThreadHistoryViewport;
   onBack: (() => void) | undefined;
   onFixUnsupportedBlock: ((block: RenderBlock) => Promise<void>) | undefined;
   onOpenSubagentThread: (threadId: string) => void;

@@ -137,7 +137,12 @@ pub fn content_text(input: &[UserContent]) -> String {
     let texts: Vec<&str> = input
         .iter()
         .filter_map(|content| match content {
-            UserContent::Text { text } => Some(text.as_str()),
+            UserContent::Text { text } => {
+                match agent_core::user_text::before_review_chat_context(text) {
+                    Some("") => None,
+                    authored => Some(authored.unwrap_or(text)),
+                }
+            }
             UserContent::Image { .. } | UserContent::LocalImage { .. } => None,
         })
         .collect();

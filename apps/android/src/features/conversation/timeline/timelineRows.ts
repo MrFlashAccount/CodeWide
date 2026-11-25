@@ -1,14 +1,30 @@
 import { projectCompleteMarkdown } from "@codewide/rendering-core";
 import { markdownDocumentBlocks } from "../../../rendering/markdown-document-blocks";
+import { groupListParts } from "./chatListParts";
 import type { TaskNotificationReport } from "../../../rendering/taskNotifications";
+import {
+  isBackgroundLaunch,
+  launchAwaitsEnd,
+  reportedCommandEnd,
+  turnBackgroundLaunches,
+  withoutLaunchedReports,
+  type TaskLineEntry,
+} from "../turns/backgroundLaunches";
 import { projectTurnPresentation } from "../turns/turnProjection";
 import type { VirtualizedTurnPart, VirtualizedTurnPlacement } from "../turns/virtualizedTurnTypes";
+import { packMarkdownRows } from "./packMarkdownRows";
 import { timelineItemKey } from "./timelineProjection";
 import type { TimelineItem } from "./timelineTypes";
 
 export const TIMELINE_ROW_FALLBACK_ESTIMATE = 115;
 
 export type TimelineRow =
+  | {
+      item: Extract<TimelineItem, { kind: "turn" }>;
+      key: string;
+      kind: "historyBeginning";
+      timelineIndex: number;
+    }
   | {
       item: TimelineItem;
       key: string;
@@ -28,10 +44,18 @@ export type TimelineRow =
       item: Extract<TimelineItem, { kind: "turn" }>;
       key: string;
       kind: "turnSlice";
+      /** Initial native estimate for neighbouring blocks mounted in one physical row. */
+      packedSizeEstimate?: number;
       parts: readonly VirtualizedTurnPart[];
       /** The slice's place within its turn's bubble. */
       placement: VirtualizedTurnPlacement;
       timelineIndex: number;
+      /**
+       * The task line after the turn's last slice: the reports a person's
+       * turn received while it answered and the commands the turn started in
+       * the background; empty for other slices.
+       */
+      trailingTasks: readonly TaskLineEntry[];
     };
 
 type TimelineRowsCacheEntry = {
@@ -44,7 +68,11 @@ type TimelineItemRowsCacheEntry = TimelineRowsCacheEntry & {
 };
 
 type TimelineRowsOptions = {
+  containsBeginning?: boolean;
   enabled: boolean;
+  nativeLists?: boolean;
+  /** The normal viewport packs nearby blocks. Exact per-block measurement uses individual rows. */
+  packMarkdown?: boolean;
   searchMessageItemId: string | null;
   threadSearchActive: boolean;
 };
@@ -57,7 +85,8 @@ export function projectTimelineRows(
   items: readonly TimelineItem[],
   options: TimelineRowsOptions,
 ): TimelineRow[] {
-  const cacheKey = timelineRowsOptionsKey(options);
+  const showBeginning = options.containsBeginning === true && !options.threadSearchActive;
+  const cacheKey = `${timelineRowsOptionsKey(options)}:${String(showBeginning)}`;
   const cached = timelineRowsCache.get(items);
   if (cached?.key === cacheKey) {
     return cached.rows;
@@ -69,12 +98,107 @@ export function projectTimelineRows(
       rows.push(...projectTimelineItemRows(item, timelineIndex, options));
     }
   }
-  const merged = mergeEmptyWakeLeads(rows);
+  const visible = withoutDuplicateTasks(rows);
+  const merged = mergeEmptyWakeLeads(visible, showBeginning ? historyBeginningRows(visible) : []);
   timelineRowsCache.set(items, { key: cacheKey, rows: merged });
   return merged;
 }
 
+function historyBeginningRows(rows: readonly TimelineRow[]): TimelineRow[] {
+  const first = rows.find((row) => row.item.kind === "turn");
+  if (first?.item.kind !== "turn") {
+    return [];
+  }
+  return [
+    {
+      item: first.item,
+      key: `history-beginning:${timelineItemKey(first.item)}`,
+      kind: "historyBeginning",
+      timelineIndex: first.timelineIndex,
+    },
+  ];
+}
+
 type TimelineLeadRow = Extract<TimelineRow, { kind: "turnLead" }>;
+
+/**
+ * One element per background task: a command the shown history started is
+ * drawn by its launch pill, whose state follows it to its end, so the
+ * report of that command (in a later wake or a later answer) is not drawn
+ * again. A wake whose only line was such a report draws nothing. Agent and
+ * other reports, and reports of commands launched outside the shown range,
+ * keep their own line.
+ */
+function withoutDuplicateTasks(rows: TimelineRow[]): TimelineRow[] {
+  const launched = new Set<string>();
+  const ends = new Map<string, ReportedEnd>();
+  for (const entry of timelineTaskEntries(rows)) {
+    if (isBackgroundLaunch(entry)) {
+      launched.add(entry.taskId);
+    } else if (!("terminal" in entry) && !ends.has(entry.taskId)) {
+      const status = reportedCommandEnd(entry);
+      if (status !== null) {
+        ends.set(entry.taskId, { durationMs: entry.durationMs, status });
+      }
+    }
+  }
+  if (launched.size === 0) {
+    return rows;
+  }
+  return rows.flatMap((row): TimelineRow[] => {
+    if (row.kind === "turnLead") {
+      const notifications = withoutLaunchedReports(row.notifications, launched);
+      if (notifications === row.notifications) {
+        return [row];
+      }
+      return notifications.length === 0 && isReportLead(row) ? [] : [{ ...row, notifications }];
+    }
+    if (row.kind === "turnSlice") {
+      const kept = withoutLaunchedReports(row.trailingTasks, launched);
+      const trailingTasks = settleReportedLaunches(kept, ends);
+      return [trailingTasks === row.trailingTasks ? row : { ...row, trailingTasks }];
+    }
+    return [row];
+  });
+}
+
+/** The visible task line of one physical row. */
+export function taskLineEntries(row: TimelineRow): readonly TaskLineEntry[] {
+  if (row.kind === "turnLead") {
+    return row.notifications;
+  }
+  return row.kind === "turnSlice" ? row.trailingTasks : NO_TASKS;
+}
+
+export function* timelineTaskEntries(rows: readonly TimelineRow[]): Iterable<TaskLineEntry> {
+  for (const row of rows) {
+    yield* taskLineEntries(row);
+  }
+}
+
+type ReportedEnd = {
+  readonly durationMs: number | null;
+  readonly status: NonNullable<ReturnType<typeof reportedCommandEnd>>;
+};
+
+function settleReportedLaunches(
+  entries: readonly TaskLineEntry[],
+  ends: ReadonlyMap<string, ReportedEnd>,
+): readonly TaskLineEntry[] {
+  if (ends.size === 0) {
+    return entries;
+  }
+  let settled: TaskLineEntry[] | undefined;
+  for (const [index, entry] of entries.entries()) {
+    const report = ends.get(entry.taskId);
+    if (report !== undefined && isBackgroundLaunch(entry) && launchAwaitsEnd(entry)) {
+      settled ??= entries.slice();
+      settled[index] = { ...entry, durationMs: report.durationMs, status: report.status };
+    }
+  }
+  return settled ?? entries;
+}
+
 type TimelineTurnItem = Extract<TimelineItem, { kind: "turn" }>;
 
 /**
@@ -83,8 +207,7 @@ type TimelineTurnItem = Extract<TimelineItem, { kind: "turn" }>;
  * the next wake's line when that one answers. Only lines merge; no turn
  * content moves between turns.
  */
-function mergeEmptyWakeLeads(rows: readonly TimelineRow[]): TimelineRow[] {
-  const merged: TimelineRow[] = [];
+function mergeEmptyWakeLeads(rows: readonly TimelineRow[], merged: TimelineRow[]): TimelineRow[] {
   let pending: TimelineLeadRow | null = null;
   for (const [index, row] of rows.entries()) {
     const current = joinPendingLine(merged, pending, row);
@@ -118,7 +241,7 @@ function joinPendingLine(
 }
 
 /** A lead row that draws only report lines; one with a person's message or a compaction keeps its turn. */
-function isReportLead(row: TimelineRow): row is TimelineLeadRow {
+export function isReportLead(row: TimelineRow): row is TimelineLeadRow {
   return (
     row.kind === "turnLead" &&
     row.notifications.length > 0 &&
@@ -198,22 +321,45 @@ function turnSlices({
   timelineIndex: number;
 }): TimelineRow[] {
   const parts = projectTurnParts(presentation);
-  const split = shouldSplitTurn({ options, parts, presentation });
-  const slices = split ? parts.map((part) => [part]) : [parts];
+  const slices = turnPartSlices(parts, options, presentation);
   const baseKey = timelineItemKey(item);
+  const trailing = trailingTasks(presentation);
   return slices.map((slice, index) => ({
     followsLead,
     item,
     key: index === 0 ? baseKey : `${baseKey}\u0000slice:${virtualizedPartKey(slice[0])}`,
     kind: "turnSlice" as const,
+    ...(slice !== parts && slice.length > 1
+      ? { packedSizeEstimate: slice.length * timelineRowSizeEstimate() }
+      : {}),
     parts: slice,
     placement: slicePlacement(index, slices.length),
     timelineIndex,
+    trailingTasks: index === slices.length - 1 ? trailing : NO_TASKS,
   }));
 }
 
+const NO_TASKS: readonly TaskLineEntry[] = [];
+
+/**
+ * The line after a turn's bubble: a person's turn's mid-turn reports (a
+ * wake turn lists them on its reason line instead), then the commands the
+ * turn started in the background.
+ */
+function trailingTasks(
+  presentation: ReturnType<typeof projectTurnPresentation>,
+): readonly TaskLineEntry[] {
+  const midTurn =
+    presentation.userBlocks.length > 0 ? presentation.taskNotifications.midTurn : NO_TASKS;
+  const launches = turnBackgroundLaunches(presentation.rawTurn);
+  if (launches.length === 0) {
+    return midTurn;
+  }
+  return midTurn.length === 0 ? launches : [...midTurn, ...launches];
+}
+
 function timelineRowsOptionsKey(options: TimelineRowsOptions): string {
-  return `${String(options.enabled)}:${String(options.threadSearchActive)}:${options.searchMessageItemId ?? ""}`;
+  return `${String(options.enabled)}:${String(options.packMarkdown === true)}:${String(options.nativeLists === true)}:${String(options.threadSearchActive)}:${options.searchMessageItemId ?? ""}`;
 }
 
 /**
@@ -276,21 +422,22 @@ function markdownParts(
   return blocks.map((block) => ({ block, kind: "markdownBlock", response, streaming }));
 }
 
-function shouldSplitTurn({
-  options,
-  parts,
-  presentation,
-}: {
-  options: TimelineRowsOptions;
-  parts: readonly VirtualizedTurnPart[];
-  presentation: ReturnType<typeof projectTurnPresentation>;
-}): boolean {
-  return (
-    presentation.rawTurn.status !== "inProgress" &&
-    presentation.agentBubbleFill &&
-    !options.threadSearchActive &&
-    parts.every((part) => part.kind === "markdownBlock")
-  );
+function turnPartSlices(
+  parts: VirtualizedTurnPart[],
+  options: TimelineRowsOptions,
+  presentation: ReturnType<typeof projectTurnPresentation>,
+): VirtualizedTurnPart[][] {
+  if (
+    presentation.rawTurn.status === "inProgress" ||
+    options.threadSearchActive ||
+    !parts.every((part) => part.kind === "markdownBlock")
+  ) {
+    return [parts];
+  }
+  const grouped = options.nativeLists === true ? groupListParts(parts) : parts;
+  return presentation.agentBubbleFill || grouped !== parts
+    ? packMarkdownRows(grouped, options.packMarkdown === true)
+    : [parts];
 }
 
 function slicePlacement(index: number, length: number): VirtualizedTurnPlacement {

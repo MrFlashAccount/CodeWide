@@ -1,6 +1,7 @@
 import type { ThreadChatWindowRequest } from "../../data/thread-chat-model";
 import { projectThreadChatWindow } from "../../data/thread-chat-projection";
 import { threadLoadBlocksPresentation } from "../../data/thread-load-status";
+import { threadWindowHistoryBounds } from "../../data/threadWindowHistoryBounds";
 import type { ThreadHistoryState } from "../../data/thread-pagination";
 import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import type { useThreadChatWindow } from "../../data/use-thread-chat-window";
@@ -24,6 +25,7 @@ export function useMainConversationHistory({
   historyModel,
   historyResourceId,
   historyResourceRaw,
+  openingReady,
   resources,
   storedThread,
   threadId,
@@ -37,35 +39,11 @@ export function useMainConversationHistory({
   historyModel: ConversationDetailResources["threadHistoryModel"];
   historyResourceId: ReturnType<typeof threadHistoryResourceKey>;
   historyResourceRaw: ReturnType<typeof useThreadHistoryCursor>;
+  openingReady: boolean;
   resources: ConversationDetailResources;
   storedThread: StoredThreadSummary | null;
   threadId: string;
 }) {
-  const latestResidentOrdinal = chatWindow.turnRows.reduce<number | null>(
-    (maximum, row) =>
-      row.kind !== "turn" || !row.sealed
-        ? maximum
-        : maximum === null
-          ? row.ordinal
-          : Math.max(maximum, row.ordinal),
-    null,
-  );
-  const isLatestRange =
-    chatSnapshot.latestSealedOrdinal === null ||
-    (latestResidentOrdinal !== null && latestResidentOrdinal >= chatSnapshot.latestSealedOrdinal);
-  const earliestResidentOrdinal = chatWindow.turnRows.reduce<number | null>(
-    (minimum, row) =>
-      row.kind !== "turn" || !row.sealed
-        ? minimum
-        : minimum === null
-          ? row.ordinal
-          : Math.min(minimum, row.ordinal),
-    null,
-  );
-  const isEarliestRange =
-    chatSnapshot.earliestSealedOrdinal === null ||
-    (earliestResidentOrdinal !== null &&
-      earliestResidentOrdinal <= chatSnapshot.earliestSealedOrdinal);
   const historyEpoch = chatSnapshot.historyEpoch;
   const historyResource =
     historyResourceRaw?.historyEpoch === historyEpoch
@@ -90,9 +68,10 @@ export function useMainConversationHistory({
   const remoteThread = projection.remoteThread ?? storedThread?.provisionalThread ?? null;
   const conversationCwd =
     remoteThread?.cwd ?? storedThread?.cwd ?? conversation.cwd ?? "/workspace";
-  const historyRestoreReady = !threadLoadBlocksPresentation(chatSnapshot.status);
+  const historyRestoreReady = openingReady && !threadLoadBlocksPresentation(chatSnapshot.status);
   const messageListState: MessageListState =
-    chatSnapshot.status === "initial-error"
+    chatSnapshot.status === "initial-error" ||
+    (!openingReady && chatSnapshot.status === "background-retrying")
       ? {
           message: chatSnapshot.error ?? "Could not load messages",
           retry: async () => {
@@ -114,12 +93,10 @@ export function useMainConversationHistory({
     return row?.historyEpoch === historyEpoch ? row : historyState;
   };
   const historyViewport = useThreadHistoryController({
+    bounds: threadWindowHistoryBounds(chatWindow),
     connectionId,
-    cursorState: historyState,
     enabled: true,
     historyEpoch,
-    isEarliestRange,
-    isLatestRange,
     pullRange: async (direction) => chatDatabase.pullRange(connectionId, threadId, direction),
     putState: putHistoryState,
     readHistoryCursor: () => chatDatabase.historyCursor(connectionId, threadId),

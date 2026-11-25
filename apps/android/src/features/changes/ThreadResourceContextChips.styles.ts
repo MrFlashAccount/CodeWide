@@ -22,5 +22,4 @@ export const styles = StyleSheet.create({
     backgroundColor: colors.errorContainer,
     borderColor: colors.red,
   },
-  errorText: { color: colors.red },
 });

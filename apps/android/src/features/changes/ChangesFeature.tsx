@@ -15,7 +15,7 @@ export function useChangesFeature(capabilities: ChangePresentationCapabilities) 
       attachCodeReview: capabilities.attachCodeReview,
       cwd: capabilities.cwd,
       getTransferAccess: capabilities.getStableTransferAccess,
-      initialResource: presentation.resource,
+      initialPresentation: presentation,
       kind: "current",
       preferences: capabilities.changesPreferences,
       setPreferences: capabilities.setChangesPreferences,

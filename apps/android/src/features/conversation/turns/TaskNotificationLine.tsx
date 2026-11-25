@@ -1,85 +1,80 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useRecyclingState } from "@legendapp/list/react-native";
-import { createElement, useContext, useState } from "react";
+import { createElement, useContext, useEffect, useState, type ContextType } from "react";
 import { Pressable, View } from "react-native";
 import { useEvent } from "../../../react/useEvent";
-import type { TaskNotificationReport } from "../../../rendering/taskNotifications";
 import { colors, iconSize } from "../../../theme";
 import { AgentAvatar, AgentAvatarStack } from "../../../ui/AgentAvatar";
-import { AnchoredMenuList, AnchoredMenuRow } from "../../../ui/AnchoredMenuList";
-import { ContentMenu } from "../../../ui/ContentMenu";
-import { useAnchoredMenuSize } from "../../../ui/useAnchoredMenuSize";
-import { useLayoutWidth } from "../../../ui/useLayoutWidth";
+import { AnchoredMenuRow } from "../../../ui/AnchoredMenuList";
+import { TaskPillPicker } from "../../../ui/TaskPillPicker";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles } from "./AgentChip.styles";
+import type { TaskLineEntry } from "./backgroundLaunches";
 import {
+  launchDetail,
   reportDetails,
   reportLineSummary,
   reportName,
   reportOutcome,
 } from "./taskNotificationPresentation";
-import { BackgroundTaskContext, SubagentNavigationContext } from "./turnContexts";
+import {
+  BackgroundTaskContext,
+  BackgroundTerminalsContext,
+  SubagentNavigationContext,
+} from "./turnContexts";
 
-/** The pill takes at most this share of the conversation's width. */
-const PILL_WIDTH_SHARE = 0.5;
+/** How often a running background command's elapsed time advances. */
+const ELAPSED_TICK_MS = 1000;
 
 /**
- * Background task reports drawn outside a bubble as one short pill: the
- * reports that woke a turn, or those that arrived while it answered. A single
- * report's pill opens it directly (an agent's thread or a command's output);
- * several open a plain list centered on the pill. Each report's status is the
- * dot on its avatar.
+ * Background tasks drawn outside a bubble as one short pill: the reports that
+ * woke a turn or arrived while it answered, and the commands a turn started
+ * in the background (their state follows the command item live, from running
+ * to its end, with its time). A single entry's pill opens it directly (an
+ * agent's thread or a command's output); several open a plain list centered
+ * on the pill. Each entry's status is the dot on its avatar.
  */
 export function TaskNotificationLine({
   reports,
 }: {
-  readonly reports: readonly TaskNotificationReport[];
+  readonly reports: readonly TaskLineEntry[];
 }): React.JSX.Element | null {
-  const layout = useLayoutWidth();
   if (reports.length === 0) {
     return null;
   }
-  // WHY numeric: Compose measures the anchored pill intrinsically (a
-  // percentage bound collapses its label), so the pill is bounded by the
-  // line's laid-out width. Until it is laid out, the line keeps its height.
-  const lineWidth = layout.width;
-  if (lineWidth === null) {
-    return (
-      <View
-        onLayout={layout.onLayout}
-        style={[styles.lineRow, styles.unmeasuredLine]}
-        testID="task-notification-line-row"
-      />
-    );
-  }
-  const [only] = reports;
+  const rows = (close: () => void) =>
+    reports.map((report) => <ReportRow key={report.id} onNavigate={close} report={report} />);
   return (
-    <View onLayout={layout.onLayout} style={styles.lineRow} testID="task-notification-line-row">
-      {reports.length === 1 && only !== undefined ? (
-        <SingleReportPill lineWidth={lineWidth} report={only} />
-      ) : (
-        <ReportListPill lineWidth={lineWidth} reports={reports} />
-      )}
+    <View style={styles.lineRow} testID="task-notification-line-row">
+      <TaskPillPicker
+        anchorStyle={styles.pillBound}
+        entries={reports}
+        listTestID="task-notification-list"
+        placement="bottom"
+        renderSingle={(report) => <SingleReportPill key={report.id} report={report} />}
+        renderTrigger={(open, toggle) =>
+          createElement(TaskNotificationPill, {
+            bounded: false,
+            loading: false,
+            onPress: toggle,
+            open,
+            reports,
+          })
+        }
+      >
+        {rows}
+      </TaskPillPicker>
     </View>
   );
 }
 
 /** One report: the pill is the report's own link, without a list. */
-function SingleReportPill({
-  lineWidth,
-  report,
-}: {
-  readonly lineWidth: number;
-  readonly report: TaskNotificationReport;
-}): React.JSX.Element {
-  // The pill lives in a recycled list cell.
-  const [opening, setOpening] = useRecyclingState<OpeningState>(NOT_OPENING);
-  const target = useReportTarget(report, [opening, setOpening], noop);
+function SingleReportPill({ report }: { readonly report: TaskLineEntry }): React.JSX.Element {
+  const target = useReportTarget(report, noop);
   return (
     <>
       <TaskNotificationPill
+        bounded
         loading={target.loading}
-        maxWidth={lineWidth * PILL_WIDTH_SHARE}
         onPress={target.kind === "none" ? null : target.press}
         open={null}
         reports={[report]}
@@ -93,73 +88,43 @@ function SingleReportPill({
   );
 }
 
-/** Several reports: the pill opens their list centered on it, above or below. */
-function ReportListPill({
-  lineWidth,
-  reports,
-}: {
-  readonly lineWidth: number;
-  readonly reports: readonly TaskNotificationReport[];
-}): React.JSX.Element {
-  const [open, setOpen] = useRecyclingState(false);
-  const menu = useAnchoredMenuSize();
-  const toggleOpen = useEvent(() => {
-    setOpen((current) => !current);
-  });
-  const close = useEvent(() => {
-    setOpen(false);
-  });
-  const trigger = createElement(TaskNotificationPill, {
-    loading: false,
-    maxWidth: lineWidth * PILL_WIDTH_SHARE,
-    onPress: toggleOpen,
-    open,
-    reports,
-  });
-  return (
-    <ContentMenu
-      align="center"
-      onOpenChange={setOpen}
-      open={open}
-      placement="bottom"
-      trigger={trigger}
-      width={Math.min(menu.width, lineWidth)}
-    >
-      <AnchoredMenuList testID="task-notification-list">
-        {reports.map((report) => (
-          <ReportRow key={report.id} onNavigate={close} report={report} />
-        ))}
-      </AnchoredMenuList>
-    </ContentMenu>
-  );
-}
-
 /**
  * The pill itself. `open` is the list's state for a pill that opens one and
  * `null` for a single report's link; `onPress` is `null` when nothing opens.
+ * A `bounded` pill sits directly in its line and carries the line's width
+ * bound itself; a menu's pill fills the anchor box that carries it.
  */
 function TaskNotificationPill({
+  bounded,
   loading,
-  maxWidth,
   onPress,
   open,
   reports,
 }: {
+  readonly bounded: boolean;
   readonly loading: boolean;
-  readonly maxWidth: number;
   readonly onPress: (() => void) | null;
   readonly open: boolean | null;
-  readonly reports: readonly TaskNotificationReport[];
+  readonly reports: readonly TaskLineEntry[];
 }): React.JSX.Element {
   const summary = reportLineSummary(reports);
+  const [only] = reports;
+  const running = reports.some((report) => report.status === "running");
+  const now = useNow(running);
+  // A single background command shows its own state and time on the pill.
+  const detail = reports.length === 1 && only !== undefined ? launchDetail(only, now) : null;
   return (
     <Pressable
-      accessibilityLabel={`${summary.label} ${summary.phrase}`}
+      accessibilityLabel={`${summary.label} ${detail ?? summary.phrase}`}
       accessibilityRole="button"
       accessibilityState={open === null ? { busy: loading } : { expanded: open }}
       disabled={onPress === null}
       onPress={onPress ?? undefined}
-      style={({ pressed }) => [styles.trigger, { maxWidth }, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.trigger,
+        bounded && styles.pillBound,
+        pressed && styles.pressed,
+      ]}
       testID="task-notification-line"
     >
       <AgentAvatarStack
@@ -168,9 +133,19 @@ function TaskNotificationPill({
         subjects={reports}
         surface={colors.surfaceRaised}
       />
-      <Text ellipsizeMode="tail" numberOfLines={1} shimmering={loading} style={styles.label}>
+      <Text
+        ellipsizeMode="tail"
+        numberOfLines={1}
+        shimmering={loading || running}
+        style={styles.label}
+      >
         {summary.label}
       </Text>
+      {detail === null ? null : (
+        <Text numberOfLines={1} style={styles.phrase}>
+          {detail}
+        </Text>
+      )}
     </Pressable>
   );
 }
@@ -180,12 +155,12 @@ function ReportRow({
   report,
 }: {
   readonly onNavigate: () => void;
-  readonly report: TaskNotificationReport;
+  readonly report: TaskLineEntry;
 }): React.JSX.Element {
-  // The list renders in the anchored popover, outside any recycled list cell.
-  const [opening, setOpening] = useState<OpeningState>(NOT_OPENING);
-  const target = useReportTarget(report, [opening, setOpening], onNavigate);
-  const details = reportDetails(report);
+  const target = useReportTarget(report, onNavigate);
+  const running = report.status === "running";
+  const now = useNow(running);
+  const details = reportDetails(report, now);
   return (
     <AnchoredMenuRow
       accessibilityLabel={`${reportName(report)}, ${reportOutcome(report).phrase}, ${details}`}
@@ -200,7 +175,7 @@ function ReportRow({
       />
       <ReportRowText
         details={target.error ?? details}
-        loading={target.loading}
+        loading={target.loading || running}
         name={reportName(report)}
       />
       {target.kind === "none" ? null : (
@@ -231,42 +206,71 @@ function failedOpening(error: unknown): OpeningState {
  * What a report row opens: an agent's thread or a background task's output
  * (loaded on press); without either it opens nothing.
  */
-function useReportTarget(
-  report: TaskNotificationReport,
-  [opening, setOpening]: readonly [OpeningState, (next: OpeningState) => void],
-  onNavigate: () => void,
-) {
+function useReportTarget(report: TaskLineEntry, onNavigate: () => void) {
+  const [opening, setOpening] = useState<OpeningState>(NOT_OPENING);
   const openThread = useContext(SubagentNavigationContext);
   const openTask = useContext(BackgroundTaskContext);
-  const agentThreadId = report.agentThreadId;
-  const kind =
-    agentThreadId !== null && openThread !== null
-      ? "thread"
-      : report.kind !== "agent" && openTask !== null
-        ? "task"
-        : "none";
-  const press = useEvent(async () => {
-    if (kind === "thread" && agentThreadId !== null && openThread !== null) {
-      onNavigate();
-      openThread(agentThreadId);
-    } else if (kind === "task" && openTask !== null) {
-      setOpening(OPENING);
-      const next = await openTask({ name: reportName(report), taskId: report.taskId }).then(
-        () => NOT_OPENING,
-        failedOpening,
-      );
-      setOpening(next);
-      if (next.status === "idle") {
-        onNavigate();
-      }
+  const openTerminal = useContext(BackgroundTerminalsContext);
+  const target = reportTarget(report, { openTask, openTerminal, openThread });
+  const kind = target.kind;
+  const press = useEvent(() => {
+    if (target.kind === "none") {
+      return;
     }
+    setOpening(OPENING);
+    Promise.resolve()
+      .then(target.open)
+      .then(() => {
+        setOpening(NOT_OPENING);
+        onNavigate();
+      })
+      .catch((error: unknown) => {
+        setOpening(failedOpening(error));
+      });
   });
   return {
     error: opening.status === "failed" ? opening.message : null,
     kind,
     loading: opening.status === "loading",
-    press: () => void press(),
+    press,
   } as const;
+}
+
+type ReportTarget =
+  | { readonly kind: "none" }
+  | { readonly kind: "open"; readonly open: () => Promise<void> };
+type ReportOpeners = {
+  readonly openTask: ContextType<typeof BackgroundTaskContext>;
+  readonly openTerminal: ContextType<typeof BackgroundTerminalsContext>;
+  readonly openThread: ContextType<typeof SubagentNavigationContext>;
+};
+
+function reportTarget(
+  report: TaskLineEntry,
+  { openTask, openTerminal, openThread }: ReportOpeners,
+): ReportTarget {
+  if ("terminal" in report) {
+    return openTerminal === null
+      ? { kind: "none" }
+      : { kind: "open", open: async () => openTerminal(report.terminal) };
+  }
+  const threadId = report.agentThreadId;
+  if (threadId !== null && openThread !== null) {
+    return {
+      kind: "open",
+      open: async () => {
+        openThread(threadId);
+        await Promise.resolve();
+      },
+    };
+  }
+  if (report.kind !== "agent" && openTask !== null) {
+    return {
+      kind: "open",
+      open: async () => openTask({ name: reportName(report), taskId: report.taskId }),
+    };
+  }
+  return { kind: "none" };
 }
 
 function ReportRowText({
@@ -288,4 +292,25 @@ function ReportRowText({
       </Text>
     </View>
   );
+}
+
+/**
+ * The wall clock, advancing every `ELAPSED_TICK_MS` while `ticking` (a
+ * running task's elapsed time on screen); a timer is the external system
+ * this effect follows.
+ */
+function useNow(ticking: boolean): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!ticking) {
+      return undefined;
+    }
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, ELAPSED_TICK_MS);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [ticking]);
+  return now;
 }

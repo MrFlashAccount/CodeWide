@@ -1,14 +1,17 @@
 /** V1 PreTurnLifecycleRows owner, extracted without changing interaction or resource lifetime. */
 import type { RenderBlock } from "@codewide/renderers";
 import { Ionicons } from "@expo/vector-icons";
+import { useRecyclingState } from "@legendapp/list/react-native";
 import { View } from "react-native";
 import { colors, iconSize } from "../../../theme";
 import { CalmSpinner } from "../../../ui/CalmSpinner";
 import { AppText as Text } from "../../../ui/Typography";
 import { WaveText } from "../../../ui/WaveText";
 import { ProtocolBlock } from "../protocol/ProtocolBlock";
+import { useEvent } from "../../../react/useEvent";
+import { ActivityDetailSheet } from "./ActivityDetailSheet";
 import { styles } from "./PreTurnLifecycleRows.styles";
-import { ExpansionItemKeyContext } from "./turnContexts";
+import { ExpansionItemKeyContext, ToolCardPlacementContext } from "./turnContexts";
 import { preTurnBlockUsesDisclosure } from "./turnProjection";
 import type { TransferAccess } from "../../../data/private-transfer";
 
@@ -25,8 +28,28 @@ export function PreTurnLifecycleRows({
   turnKey: string;
   turnStatus: "completed" | "interrupted" | "failed" | "inProgress";
 }) {
+  // The row lives in a recycled list cell.
+  const [sheetVisible, setSheetVisible] = useRecyclingState(false);
+  const openSheet = useEvent(() => {
+    setSheetVisible(true);
+  });
+  const closeSheet = useEvent(() => {
+    setSheetVisible(false);
+  });
+  const toolBlocks = blocks.filter(preTurnBlockUsesDisclosure);
   return (
     <View style={styles.preTurnLifecycleList} testID="pre-turn-lifecycle">
+      {toolBlocks.length === 0 ? null : (
+        <ActivityDetailSheet
+          blocks={toolBlocks}
+          onClose={closeSheet}
+          turnKey={`${turnKey}:pre-turn`}
+          turnStatus={turnStatus}
+          visible={sheetVisible}
+          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+          {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
+        />
+      )}
       {blocks.map((block) => {
         const lifecyclePhase = block.raw.codewideLifecyclePhase;
         const running =
@@ -41,11 +64,16 @@ export function PreTurnLifecycleRows({
               value={`${turnKey}:pre-turn:${block.key}`}
             >
               <View style={styles.preTurnLifecycleDetail}>
-                <ProtocolBlock
-                  block={block}
-                  {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-                  {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
-                />
+                {/* The step's row only: its output opens in its viewer or the sheet. */}
+                <ToolCardPlacementContext.Provider
+                  value={{ kind: "bubble", openActivity: openSheet }}
+                >
+                  <ProtocolBlock
+                    block={block}
+                    {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+                    {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
+                  />
+                </ToolCardPlacementContext.Provider>
               </View>
             </ExpansionItemKeyContext.Provider>
           );

@@ -1,0 +1,67 @@
+diff --git a/android/src/main/java/com/swmansion/rnscreens/ScreenStackFragment.kt b/android/src/main/java/com/swmansion/rnscreens/ScreenStackFragment.kt
+index b9e6e2e908172d0e0366b54a8e272c2918ec802d..2f7c8f899b99ee9a35fc12d1226f286d43acfc02 100644
+--- a/android/src/main/java/com/swmansion/rnscreens/ScreenStackFragment.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/ScreenStackFragment.kt
+@@ -147,14 +147,15 @@ class ScreenStackFragment :
+     }
+ 
+     override fun onViewAnimationEnd() {
+-        super.onViewAnimationEnd()
+-        notifyViewTransitionEnd()
++        onViewAnimationEnd(view as? ScreensCoordinatorLayout)
+     }
+ 
+-    private fun notifyViewTransitionEnd() {
+-        val screenStack = view?.parent
+-        if (screenStack is ScreenStack) {
+-            screenStack.onViewTransitionEnd(coordinatorLayout)
++    internal fun onViewAnimationEnd(animatedView: ScreensCoordinatorLayout?) {
++        super.onViewAnimationEnd()
++        // FragmentManager can destroy or replace fragment.view before the exit animation ends.
++        // Only the view that started this transition can release its parent's disappearing child.
++        if (animatedView != null) {
++            (animatedView.parent as? ScreenStack)?.onViewTransitionEnd(animatedView)
+         }
+ 
+         // Rely on guards inside the callee to detect whether this was indeed removal transition.
+diff --git a/android/src/main/java/com/swmansion/rnscreens/stack/views/ScreensCoordinatorLayout.kt b/android/src/main/java/com/swmansion/rnscreens/stack/views/ScreensCoordinatorLayout.kt
+index b71a920f0b8e802d6fb4adaca7037990c825013c..de7bd6c2f749f2861815e2733cbf0ce8df9070a5 100644
+--- a/android/src/main/java/com/swmansion/rnscreens/stack/views/ScreensCoordinatorLayout.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/stack/views/ScreensCoordinatorLayout.kt
+@@ -39,7 +39,7 @@ internal class ScreensCoordinatorLayout(
+                     blockFrameworkTransitionFinalization = false
+                     needsTransitionFinalization = true
+                 }
+-                fragment.onViewAnimationEnd()
++                fragment.onViewAnimationEnd(this@ScreensCoordinatorLayout)
+                 needsTransitionFinalization = false
+             }
+ 
+diff --git a/common/cpp/react/renderer/components/rnscreens/RNSScreenComponentDescriptor.h b/common/cpp/react/renderer/components/rnscreens/RNSScreenComponentDescriptor.h
+--- a/common/cpp/react/renderer/components/rnscreens/RNSScreenComponentDescriptor.h
++++ b/common/cpp/react/renderer/components/rnscreens/RNSScreenComponentDescriptor.h
+@@ -99,8 +99,22 @@
+           FrameCorrectionModes::Mode::FrameHeightCorrection);
+       screenShadowNode.getFrameCorrectionModes().unset(
+           FrameCorrectionModes::Mode::FrameOriginCorrection);
+-      layoutableShadowNode.setSize(
+-          Size{stateData.frameSize.width, stateData.frameSize.height});
++      // A pushed, absolute-fill screen gets its width from its stack in this
++      // Yoga pass. The Android callback carries a width from an earlier pass
++      // during interactive split resizing. Keep the native height (header
++      // insets), sheet presentations and explicitly sized screens unchanged.
++      const auto &style = props->yogaStyle;
++      const auto width = style.dimension(yoga::Dimension::Width);
++      const auto zero = yoga::StyleLength::points(0);
++      const bool fillsStackWidth =
++          props->stackPresentation == RNSScreenStackPresentation::Push &&
++          style.positionType() == yoga::PositionType::Absolute &&
++          style.position(yoga::Edge::Left) == zero &&
++          style.position(yoga::Edge::Right) == zero &&
++          (width.isAuto() || width.isUndefined());
++      layoutableShadowNode.setSize(Size{
++          fillsStackWidth ? YGUndefined : stateData.frameSize.width,
++          stateData.frameSize.height});
+     } else if (
+         stateData.frameSize.width == 0 && stateData.frameSize.height == 0) {
+       // Reset YogaNode so it recalculates its layout. Useful for the case

@@ -1,5 +1,6 @@
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { normalizeStoredThreadAgent, type ThreadAgent } from "./threadAgent";
+import { storedThreadCatalogControls, type ThreadCatalogControls } from "./threadCatalogControls";
 import { validPinCursor } from "./threadPinState";
 import { unknownRecord } from "./unknownRecord";
 
@@ -14,6 +15,8 @@ export type StoredThreadSummary = {
   agentNickname?: string | null;
   agentRole?: string | null;
   archived: boolean;
+  /** Optional in older persisted summaries. */
+  catalogControls?: ThreadCatalogControls | null;
   /** A terminal turn cannot reopen question attention through late item replay. */
   closedQuestionTurnId?: string | null;
   /**
@@ -54,6 +57,11 @@ export type StoredThreadSummary = {
   /** Locally skipped question identities in one turn; contains no answer text. */
   skippedQuestions?: QuestionOpportunity | null;
   status: Thread["status"];
+  /**
+   * Last root whose authoritative subagent index contained this row. This is fallback membership
+   * for incomplete ancestry only; a proven parent chain can place the row under multiple roots.
+   */
+  subagentRootThreadId?: string | null;
   /** Questions with a natively admitted answer; failures restore attention. */
   submittedQuestions?: QuestionOpportunity | null;
   unread: number;
@@ -65,6 +73,7 @@ export type StoredThreadSummary = {
 export function normalizeStoredThreadSummary(row: StoredThreadSummary): StoredThreadSummary {
   return {
     ...row,
+    catalogControls: storedThreadCatalogControls(row.catalogControls),
     codewideAgent: normalizeStoredThreadAgent(row.codewideAgent),
     deleteCommandId: row.deleteCommandId ?? null,
     firstUnreadAgentTurnId:
@@ -77,7 +86,13 @@ export function normalizeStoredThreadSummary(row: StoredThreadSummary): StoredTh
     projectionCursor: threadSummaryProjectionCursor(row),
     recencyAt: row.recencyAt ?? null,
     status: normalizeThreadStatus(row.status),
+    subagentRootThreadId: nonEmptyString(row.subagentRootThreadId),
   };
+}
+
+function nonEmptyString(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed === "" ? null : trimmed;
 }
 
 /** Reads the material-event version, including persisted summaries from before this field existed. */

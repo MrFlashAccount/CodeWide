@@ -3,6 +3,7 @@ import type {
   ReviewTarget,
   ThreadGoal,
 } from "@codewide/codex-protocol/v0.155.1/v2";
+import type { PullRequestKey } from "../../data/forgeContract";
 import type { SendMode, TurnSendOptions } from "../../data/thread-delivery-state";
 import type { ThreadSettings, TurnControlsLoadOptions } from "../../data/turn-controls-types";
 import type {
@@ -12,13 +13,19 @@ import type {
 import type { ThreadChangeScope, ThreadGoalInput } from "../../data/workspace-resource-database";
 import type { NewThreadDraft } from "../../services/threads/newThreadService";
 import type { useGoalCommands } from "../goal/goalCommands";
-import type { createNewChatSubmission } from "../projects/newChatSubmission";
 import type { useQueueCommands } from "../queue/queueCommands";
 import type { ConversationWorkspaceFeatures } from "./conversationWorkspaceFeatures";
+import type { DraftSubmission } from "./ConversationWorkspace.types";
 
 type Scope =
-  | { draft: NewThreadDraft; kind: "draft"; onSend: ReturnType<typeof createNewChatSubmission> }
-  | { connectionId: string; kind: "thread"; threadId: string }
+  // A hosted draft without its required project has no send yet.
+  | { draft: NewThreadDraft; kind: "draft"; onSend: DraftSubmission | undefined }
+  | {
+      connectionId: string;
+      kind: "thread";
+      reviewPullRequest: PullRequestKey | undefined;
+      threadId: string;
+    }
   | { kind: "empty" };
 /** Enables only the feature capabilities belonging to the captured selection scope. */
 export function createConversationScopeBindings(
@@ -133,7 +140,15 @@ export function createConversationScopeBindings(
       await features.composer.retryFailedMessage(activeConnectionId, commandId);
     },
     onSend: async (text: string, mode: SendMode, options: TurnSendOptions) =>
-      features.composer.sendText(activeConnectionId, activeRemoteThreadId, text, mode, options),
+      features.composer.sendText(
+        activeConnectionId,
+        activeRemoteThreadId,
+        text,
+        mode,
+        scope.reviewPullRequest === undefined
+          ? options
+          : { ...options, reviewPullRequest: scope.reviewPullRequest },
+      ),
     // Goal submission (including delayed voice Send) belongs to this selection,
     // not to the latest selection observed by a retained UI callback.
     onSetGoal: async (input: ThreadGoalInput): Promise<ThreadGoal> =>

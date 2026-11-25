@@ -6,30 +6,14 @@ import type { SidebarProject } from "../features/projects/sidebarProjects";
 import { useEvent } from "../react/useEvent";
 import { projectListRouteSessions } from "../services/projects/projectListRouteSession";
 import { routeSessionIdParam } from "../services/threads/threadRouteParams";
+import { workspaceThreadsCatalogState } from "./workspaceThreadsRouteState";
 
 /** Reads catalog history independently of the workspace's focused conversation or overlay. */
 function workspaceCatalogState(
   state: NavigationState | undefined,
 ): NavigationState | PartialState<NavigationState> | undefined {
-  return findWorkspaceState(state)?.routes.find((route) => route.name === "(lists)")?.state;
-}
-
-function findWorkspaceState(
-  state: NavigationState | PartialState<NavigationState> | undefined,
-): NavigationState | PartialState<NavigationState> | undefined {
-  if (state === undefined) {
-    return undefined;
-  }
-  for (const route of state.routes) {
-    if (route.name === "(workspace)") {
-      return route.state;
-    }
-    const nested = findWorkspaceState(route.state);
-    if (nested !== undefined) {
-      return nested;
-    }
-  }
-  return undefined;
+  const catalog = workspaceThreadsCatalogState(state);
+  return catalog.status === "ready" ? catalog.state : undefined;
 }
 
 /** Returns the active catalog payload; detail route parameters are not a second selection owner. */
@@ -55,9 +39,8 @@ function projectSessionParam(params: NavigationState["routes"][number]["params"]
 export function useWorkspaceProjectSessionId(): string | null {
   const navigation = useNavigationContainerRef();
   const subscribe = useEvent((onChange: () => void) => navigation.addListener("state", onChange));
-  const snapshot = useEvent(() =>
-    navigation.isReady() ? workspaceProjectSessionId(navigation.getRootState()) : null,
-  );
+  const snapshot = () =>
+    navigation.isReady() ? workspaceProjectSessionId(navigation.getRootState()) : null;
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 

@@ -8,22 +8,32 @@ import { commandOutputRevision, readCommandOutput } from "../src/rendering/comma
 import { urlTransport } from "../src/native/urlTransport";
 
 function reference(text: string): CommandOutputReference {
-  return { id: createHash("sha256").update(text).digest("hex"), byteLength: Buffer.byteLength(text),
-    contentType: "text/plain; charset=utf-8", encoding: "utf-8" };
+  return {
+    id: createHash("sha256").update(text).digest("hex"),
+    byteLength: Buffer.byteLength(text),
+    contentType: "text/plain; charset=utf-8",
+    encoding: "utf-8",
+  };
 }
 
 describe("lazy command output", () => {
   it("reads only the requested range, caches immutable bytes, and preserves repeated output", async () => {
     const first = reference("first\n");
     const second = reference("second\n");
-    const bodies = new Map([[first.id, "first\n"], [second.id, "second\n"]]);
+    const bodies = new Map([
+      [first.id, "first\n"],
+      [second.id, "second\n"],
+    ]);
     const requests: string[] = [];
     const server = createServer((request, response) => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       const pathParts = url.pathname.split("/");
       const id = pathParts.at(-2) ?? "";
       const body = bodies.get(id);
-      if (body === undefined) { response.writeHead(404).end(); return; }
+      if (body === undefined) {
+        response.writeHead(404).end();
+        return;
+      }
       requests.push(id);
       const start = Number(url.searchParams.get("offset") ?? 0);
       const limit = Number(url.searchParams.get("limit") ?? body.length);
@@ -40,9 +50,19 @@ describe("lazy command output", () => {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const address = server.address();
-    if (address === null || typeof address === "string") throw new Error("Test listener has no TCP address");
-    const getTransferAccess = async () => ({ baseUrl: `http://127.0.0.1:${address.port}`, transport: urlTransport, authorization: "test" });
-    const request = { scope: crypto.randomUUID(), references: [first], byteLimit: 64 * 1024, getTransferAccess };
+    if (address === null || typeof address === "string")
+      throw new Error("Test listener has no TCP address");
+    const getTransferAccess = async () => ({
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      transport: urlTransport,
+      authorization: "test",
+    });
+    const request = {
+      scope: crypto.randomUUID(),
+      references: [first],
+      byteLimit: 64 * 1024,
+      getTransferAccess,
+    };
     // React Native installs abort-controller 3: it supports cancellation but
     // does not implement the newer throwIfAborted convenience method.
     const signal = new AbortController().signal;
@@ -51,23 +71,38 @@ describe("lazy command output", () => {
       expect(requests).toEqual([]);
       expect(await readCommandOutput(request, signal)).toEqual({ text: "first\n", hasMore: false });
       const live = { ...request, references: [first, second, second] };
-      expect(await readCommandOutput(live, new AbortController().signal)).toEqual({ text: "first\nsecond\nsecond\n", hasMore: false });
+      expect(await readCommandOutput(live, new AbortController().signal)).toEqual({
+        text: "first\nsecond\nsecond\n",
+        hasMore: false,
+      });
       expect(requests).toEqual([first.id, second.id]);
-      expect(await readCommandOutput(live, new AbortController().signal)).toEqual({ text: "first\nsecond\nsecond\n", hasMore: false });
+      expect(await readCommandOutput(live, new AbortController().signal)).toEqual({
+        text: "first\nsecond\nsecond\n",
+        hasMore: false,
+      });
       expect(requests).toEqual([first.id, second.id]);
-      expect(await readCommandOutput({ ...live, byteLimit: 3 }, new AbortController().signal)).toEqual({ text: "fir", hasMore: true });
+      expect(
+        await readCommandOutput({ ...live, byteLimit: 3 }, new AbortController().signal),
+      ).toEqual({ text: "fir", hasMore: true });
       const cancelledDuringRead = new AbortController();
       Object.defineProperty(cancelledDuringRead.signal, "throwIfAborted", { value: undefined });
-      await expect(readCommandOutput({
-        ...request,
-        scope: crypto.randomUUID(),
-        getTransferAccess: async () => {
-          cancelledDuringRead.abort();
-          return await getTransferAccess();
-        },
-      }, cancelledDuringRead.signal)).rejects.toMatchObject({ name: "AbortError" });
+      await expect(
+        readCommandOutput(
+          {
+            ...request,
+            scope: crypto.randomUUID(),
+            getTransferAccess: async () => {
+              cancelledDuringRead.abort();
+              return await getTransferAccess();
+            },
+          },
+          cancelledDuringRead.signal,
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error)));
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error === undefined ? resolve() : reject(error))),
+      );
     }
   });
 
@@ -76,12 +111,24 @@ describe("lazy command output", () => {
     Object.defineProperty(controller.signal, "throwIfAborted", { value: undefined });
     controller.abort();
     let transfers = 0;
-    await expect(readCommandOutput({
-      scope: "cancelled-output",
-      references: [reference("cancelled")],
-      byteLimit: 1024,
-      getTransferAccess: async () => { transfers += 1; return { baseUrl: "http://unused.invalid", transport: urlTransport, authorization: "test" }; },
-    }, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    await expect(
+      readCommandOutput(
+        {
+          scope: "cancelled-output",
+          references: [reference("cancelled")],
+          byteLimit: 1024,
+          getTransferAccess: async () => {
+            transfers += 1;
+            return {
+              baseUrl: "http://unused.invalid",
+              transport: urlTransport,
+              authorization: "test",
+            };
+          },
+        },
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
     expect(transfers).toBe(0);
   });
 

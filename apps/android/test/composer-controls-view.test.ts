@@ -57,14 +57,12 @@ const controls: TurnControlsValue = {
 };
 
 const codexAgent: ThreadAgent = {
-  capabilities: ["threads.fork"],
-  primary: true,
+  capabilities: ["codex.native", "threads.fork"],
   provider: codex,
   providerName: "Codex",
 };
 const claudeAgent: ThreadAgent = {
   capabilities: ["threads.crossProviderFork"],
-  primary: false,
   provider: claude,
   providerName: "Claude",
 };

@@ -1,5 +1,8 @@
 import { View } from "react-native";
-import type { UserMessageAttachment } from "../../../rendering/user-message-attachments";
+import {
+  imageAttachmentPreviewId,
+  type UserMessageAttachment,
+} from "../../../rendering/user-message-attachments";
 import { AppText as Text } from "../../../ui/Typography";
 import {
   OpenableImage,
@@ -41,6 +44,7 @@ function renderUserImageTileContent({
   readonly index: number;
 }) {
   const source = attachment.source;
+  const previewId = imageAttachmentPreviewId(source, index);
   if (source.type === "content") {
     if (getTransferAccess !== undefined) {
       return (
@@ -49,7 +53,7 @@ function renderUserImageTileContent({
           getTransferAccess={getTransferAccess}
           label={attachment.name}
           order={index}
-          previewId={`user-private-image:${source.asset.id}`}
+          previewId={previewId}
           reference={`private-asset:${source.asset.id}`}
           source={{ id: source.asset.id, kind: "content" }}
         />
@@ -67,7 +71,7 @@ function renderUserImageTileContent({
         containerStyle={styles.userImageFill}
         label={attachment.name}
         order={index}
-        previewId={`user-image:${String(index)}:${source.url}`}
+        previewId={previewId}
         reference={source.url}
         source={{ uri: source.url }}
         variant="user"
@@ -85,7 +89,7 @@ function renderUserImageTileContent({
         getTransferAccess={getTransferAccess}
         order={index}
         path={source.path}
-        previewId={`user-local-image:${String(index)}:${source.path}`}
+        previewId={previewId}
       />
     );
   }
@@ -99,7 +103,7 @@ function renderUserImageTileContent({
       getTransferAccess={getTransferAccess}
       label={attachment.name}
       order={index}
-      previewId={`user-scoped-image:${source.rootId}:${source.path}`}
+      previewId={previewId}
       reference={`scoped:${source.rootId}:${source.path}`}
       source={{ kind: "scoped", path: source.path, rootId: source.rootId }}
     />

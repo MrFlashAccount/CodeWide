@@ -1,3 +1,4 @@
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 /**
  * What the "Fork" sheet offers for one thread and the choice the user makes.
  *
@@ -17,7 +18,11 @@ import {
   type AgentProviderId,
   type ThreadAgent,
 } from "../../data/threadAgent";
-import type { TurnControlsModel } from "../../data/turn-controls-types";
+import type {
+  LoadTurnControls,
+  TurnControlsModel,
+  TurnControlsValue,
+} from "../../data/turn-controls-types";
 import { clampModelEffort } from "../../ui/modelEffort";
 import {
   fastServiceTier,
@@ -80,7 +85,7 @@ export type ForkOffer = {
 };
 
 /** Reads the thread's fork offer at the moment the user asks to fork, never during render. */
-export type ReadForkOffer = () => ForkOffer;
+export type ReadForkOffer = (receive: (offer: ForkOffer) => void) => void;
 
 /** Whether the thread offers a fork at all: its own fork or a fork into another agent. */
 export function threadOffersFork(agent: ThreadAgent | null): boolean {
@@ -310,4 +315,35 @@ function sameSettings(current: ForkSelection | null, selection: ForkSelection): 
 
 function forkHandoff(offer: ForkOffer, provider: AgentProviderId): boolean {
   return offer.provider !== null && provider !== offer.provider;
+}
+
+/** Resolves fork choices on intent. A disconnected thread can still fork with its current settings. */
+export function readThreadForkOffer({
+  cached,
+  load,
+  receive,
+  settings,
+  thread,
+}: {
+  cached: TurnControlsValue | null | undefined;
+  load: LoadTurnControls | undefined;
+  receive: (offer: ForkOffer) => void;
+  settings: ForkThreadSettings;
+  thread: Thread | null;
+}): void {
+  const show = (models: TurnControlsValue["models"]) => {
+    receive(forkOffer(thread, settings, models));
+  };
+  if ((cached?.models.length ?? 0) > 0 || thread === null || load === undefined) {
+    show(cached?.models ?? []);
+    return;
+  }
+  void load(thread.cwd, { mode: "refresh", sections: ["models"] }).then(
+    (controls) => {
+      show(controls.models);
+    },
+    () => {
+      show([]);
+    },
+  );
 }

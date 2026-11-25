@@ -27,4 +27,5 @@ export const styles = StyleSheet.create({
     flexGrow: 0,
     flexShrink: 0,
   },
+  errorText: { color: colors.red },
 });

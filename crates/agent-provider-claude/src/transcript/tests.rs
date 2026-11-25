@@ -297,13 +297,14 @@ fn derives_turn_boundaries_from_prompts_the_interrupt_marker_and_a_task_notifica
             ("userMessage", None),
             ("command", Some(ExecutionStatus::Failed)),
             ("command", Some(ExecutionStatus::Completed)),
-            ("toolCall", None),
+            // `Monitor` runs a shell command too.
+            ("command", Some(ExecutionStatus::Completed)),
         ]
     );
-    let AgentItem::ToolCall { status, .. } = non_reasoning(&turns[0])[3] else {
-        return Err("fourth item is not a tool call".into());
+    let AgentItem::Command { command, .. } = non_reasoning(&turns[0])[3] else {
+        return Err("fourth item is not a command".into());
     };
-    assert_eq!(*status, CallStatus::Completed);
+    assert!(command.starts_with("until [ -f "));
     // An interrupted turn has no final answer; the wake turn's answer is final.
     assert!(matches!(
         non_reasoning(&turns[1]).last(),
@@ -534,6 +535,112 @@ fn drops_the_placeholder_claude_writes_for_an_interrupted_turn() {
             (TurnStatus::Interrupted, Vec::new()),
             (TurnStatus::Completed, vec!["Final:The answer.".to_owned()]),
         ]
+    );
+}
+
+#[test]
+fn a_continue_resumes_the_interrupted_turn_as_a_turn_without_a_user_message() {
+    let at = |second: u32| format!("2026-10-01T10:00:{second:02}.000Z");
+    let user = |uuid: &str, second: u32, content: &str| {
+        json!({"type": "user", "uuid": uuid, "timestamp": at(second), "parent_tool_use_id": null,
+            "message": {"role": "user", "content": content}})
+    };
+    let assistant = |uuid: &str, second: u32, text: &str| {
+        json!({"type": "assistant", "uuid": uuid, "timestamp": at(second), "parent_tool_use_id": null,
+            "message": {"id": uuid, "model": "claude-opus-5-5", "role": "assistant", "content": [{"type": "text", "text": text}]}})
+    };
+    // Claude stores the adapter's resume prompt as a meta message, with a
+    // provenance line before it.
+    let resume = json!({"type": "user", "uuid": "0199a3c4-8000-7000-8000-00000000000c",
+        "timestamp": at(4), "parent_tool_use_id": null, "isMeta": true,
+        "origin": {"kind": "unclassified"},
+        "message": {"role": "user", "content": [{"type": "text",
+            "text": "[MESSAGE FROM NON-USER SOURCE - NOT USER INPUT]\nContinue from where you left off."}]}});
+    let messages = [
+        user("p1", 1, "question"),
+        user("i1", 2, "[Request interrupted by user]"),
+        resume,
+        assistant("a1", 5, "The answer."),
+    ];
+    let continued = "0199a3c4-8000-7000-8000-00000000000c";
+    let record = TurnRecord {
+        anchors: vec![continued.to_owned()],
+        completed_at: None,
+        origin: TurnOrigin::User,
+        outcome: TurnOutcomeRecord::Completed,
+        prompts: vec![PromptRecord {
+            client_message_id: None,
+            role: PromptRole::First,
+            uuid: Some(continued.to_owned()),
+        }],
+        started_at: 1_791_542_404,
+        turn_id: continued.to_owned(),
+        usage: None,
+    };
+    for index in [Vec::new(), vec![record]] {
+        let turns = reconstruct_turns(&messages, &index, &context());
+        let shape = turns
+            .iter()
+            .map(|turn| (turn.origin, turn.status, types(turn)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            shape,
+            [
+                (
+                    TurnOrigin::User,
+                    TurnStatus::Interrupted,
+                    vec!["userMessage"]
+                ),
+                (
+                    TurnOrigin::User,
+                    TurnStatus::Completed,
+                    vec!["agentMessage"]
+                ),
+            ]
+        );
+        assert_eq!(turns[1].turn_id.as_str(), continued);
+        assert_eq!(user_texts(&turns), ["question"]);
+    }
+}
+
+#[test]
+fn a_steer_before_a_wake_turns_first_answer_stays_in_that_turn() {
+    let at = |second: u32| format!("2026-10-01T10:00:{second:02}.000Z");
+    let wake = json!({"type": "user", "uuid": "w1", "timestamp": at(1), "parent_tool_use_id": null,
+        "origin": {"kind": "task-notification"},
+        "message": {"role": "user", "content": "<task-notification>\n<task-id>t1</task-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>"}});
+    let steer = json!({"type": "user", "uuid": "s1", "timestamp": at(2), "parent_tool_use_id": null,
+        "message": {"role": "user", "content": [{"type": "text", "text": "waiting for approval"}]}});
+    let answer = json!({"type": "assistant", "uuid": "a1", "timestamp": at(3), "parent_tool_use_id": null,
+        "message": {"id": "msg_a1", "model": "claude-opus-5-5", "role": "assistant",
+            "content": [{"type": "text", "text": "Forwarded."}]}});
+    let turn_id = "0199a3c4-8000-7000-8000-00000000000d";
+    let record = TurnRecord {
+        anchors: vec!["s1".to_owned(), "a1".to_owned()],
+        completed_at: None,
+        origin: TurnOrigin::Provider,
+        outcome: TurnOutcomeRecord::Completed,
+        prompts: vec![PromptRecord {
+            client_message_id: None,
+            role: PromptRole::Steer,
+            uuid: Some("s1".to_owned()),
+        }],
+        started_at: 1_791_542_401,
+        turn_id: turn_id.to_owned(),
+        usage: None,
+    };
+    let turns = reconstruct_turns(&[wake, steer, answer], &[record], &context());
+    let ids = turns
+        .iter()
+        .map(|turn| turn.turn_id.as_str().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, [turn_id]);
+    assert_eq!(
+        types(&turns[0])
+            .into_iter()
+            .filter(|kind| *kind != "reasoning")
+            .collect::<Vec<_>>(),
+        ["taskNotification", "userMessage", "agentMessage"]
     );
 }
 

@@ -41,17 +41,18 @@ export function catalogHasProviderFields(value: TurnControlsValue): boolean {
 }
 
 /**
- * Rows of the host's primary provider. The merged `model/list` marks exactly one
- * row `isDefault`, and it belongs to the primary provider. A legacy or
- * unannotated catalog is returned unchanged.
+ * Rows of the host's default provider. The merged `model/list` marks exactly one
+ * row `isDefault`, and it belongs to the provider serving the native Codex
+ * surface (Codex), which new threads default to. A legacy or unannotated catalog
+ * is returned unchanged.
  */
-export function primaryProviderModels<Model extends Pick<CatalogModel, "isDefault" | "provider">>(
+export function defaultProviderModels<Model extends Pick<CatalogModel, "isDefault" | "provider">>(
   models: readonly Model[],
 ): readonly Model[] {
-  const primary = models.find((model) => model.isDefault)?.provider ?? null;
-  return primary === null
+  const owner = models.find((model) => model.isDefault)?.provider ?? null;
+  return owner === null
     ? models
-    : models.filter((model) => model.provider === null || model.provider === primary);
+    : models.filter((model) => model.provider === null || model.provider === owner);
 }
 
 /**

@@ -159,3 +159,4 @@ function KeyboardAwareLegendListInner<ItemT>(
 }
 
 export const KeyboardAwareLegendList = forwardRef(KeyboardAwareLegendListInner);
+export const AnimatedLegendList = KeyboardAwareLegendList;

@@ -12,7 +12,7 @@ module.exports = {
     "<rootDir>/test/setup-expo-render-runtime.cjs",
     "react-native-gesture-handler/jestSetup.js",
   ],
-  setupFilesAfterEnv: ["<rootDir>/test/setup-render-console.cjs"],
+  setupFilesAfterEnv: ["<rootDir>/test/setup-render-console.cjs", "<rootDir>/test/setup-legend-list.cjs"],
   testMatch: [
     "<rootDir>/test/app-popover.native.test.tsx",
     "<rootDir>/test/global-search.render.test.tsx",
@@ -33,9 +33,10 @@ module.exports = {
     "^expo-clipboard$": "<rootDir>/test/mocks/ExpoClipboard.ts",
     "^expo-crypto$": "<rootDir>/test/mocks/ExpoCrypto.ts",
     "^expo-haptics$": "<rootDir>/test/mocks/ExpoHaptics.ts",
+    "^expo-image-picker$": "<rootDir>/test/mocks/ExpoImagePicker.ts",
     "^expo-router$": "<rootDir>/test/mocks/ExpoRouter.ts",
-    "^@legendapp/list/react-native$": "<rootDir>/test/mocks/LegendNativeList.tsx",
     "^@legendapp/list/keyboard$": "<rootDir>/test/mocks/LegendKeyboardList.tsx",
+    "^@legendapp/list/reanimated$": "<rootDir>/test/mocks/LegendKeyboardList.tsx",
     "^@quickdrawjs/react-native$": "<rootDir>/test/mocks/QuickdrawReactNative.tsx",
     "^react-native-webview$": "<rootDir>/test/mocks/ReactNativeWebView.tsx",
     "^react-native-gesture-handler/ReanimatedSwipeable$":
@@ -43,6 +44,8 @@ module.exports = {
     // WHY: Reanimated's native worklet runtime cannot initialize in the Node render-test process.
     "^react-native-reanimated$": "<rootDir>/test/mocks/Reanimated.ts",
     "^react-native-worklets$": "<rootDir>/test/mocks/Worklets.ts",
+    // WHY: The zoom toolkit's gestures need Reanimated's UI runtime; tests drive their outcomes.
+    "^react-native-zoom-toolkit$": "<rootDir>/test/mocks/ZoomToolkit.tsx",
     "^react-native-keyboard-controller$": "<rootDir>/test/mocks/KeyboardController.tsx",
     "^(?:.*/rendering/|\\./)RichMarkdown$": "<rootDir>/test/mocks/RichMarkdown.tsx",
     "^.*/surfaces/PresentationSheetView$": "<rootDir>/test/mocks/PresentationSheetView.tsx",
@@ -70,6 +73,6 @@ module.exports = {
   },
   // WHY: Private icons use ESM-only hashes; real TanStack collections depend on ESM-only fractional-indexing.
   transformIgnorePatterns: [
-    "node_modules/(?!.*(?:react-native|@react-native|expo|@expo|@op-engineering[+/]op-sqlite|@noble[+/]hashes|character-entities|decode-named-character-reference|fractional-indexing|marked))",
+    "node_modules/(?!.*(?:react-native|@react-native|expo|@expo|@op-engineering[+/]op-sqlite|@noble[+/]hashes|character-entities|decode-named-character-reference|fractional-indexing|marked|pele))",
   ],
 };

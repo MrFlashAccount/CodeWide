@@ -1,4 +1,5 @@
 /** V1 ThreadResourceContextChips owner, extracted without changing interaction or resource lifetime. */
+import type { ReactNode } from "react";
 import { Pressable } from "react-native";
 import { useEvent } from "../../react/useEvent";
 import type { ThreadResourcesModel } from "../../data/thread-resources-model";
@@ -15,11 +16,11 @@ import { ActionMenu } from "../../ui/ActionMenu";
 import { useAppDialog } from "../../ui/AppDialog";
 import { InlineIcon } from "../../ui/InlineIcon";
 import { ComposerContextCount, ComposerContextLabel } from "../../ui/ResourceContextChip";
-import { AppText } from "../../ui/Typography";
 import { selectChangePresentation, type ChangesPreferences } from "./changePresentation";
 import { styles } from "./ThreadResourceContextChips.styles";
 
 export function ThreadResourceContextChips({
+  afterChanges,
   load,
   model,
   onOpen,
@@ -28,6 +29,8 @@ export function ThreadResourceContextChips({
   resourceId,
   revision,
 }: {
+  /** A sibling chip the strip places between Changes (the branch) and Attachments. */
+  afterChanges?: ReactNode;
   load: (
     scope?: ThreadChangeScope,
     kind?: "all" | "changes" | "attachments",
@@ -50,9 +53,13 @@ export function ThreadResourceContextChips({
       advertisedScopes?.includes(preferences.scope) === true)
       ? preferences.scope
       : undefined;
-  const resource = useThreadResources(model, resourceId, async () => load(requestedScope), {
-    revision: `${revision}:changes:${requestedScope ?? "default"}`,
-  });
+  const resource = useThreadResources(
+    model,
+    resourceId,
+    async () =>
+      Promise.allSettled([load(requestedScope, "changes"), load(undefined, "attachments")]),
+    { revision: `${revision}:changes:${requestedScope ?? "default"}` },
+  );
   const resourceValue = resource?.value ?? null;
   const presentation = selectChangePresentation(resourceValue, preferences.scope);
   const waitingForSelectedScope = resourceValue !== null && presentation.resource === null;
@@ -90,10 +97,10 @@ export function ThreadResourceContextChips({
   const attachmentsEmpty = attachmentsReady && attachmentCount === 0;
   const scopeDisplay = changeScopeDisplay(changeScope, presentation.resource?.vcs);
   const scopeTitle = scopeDisplay.title;
-  const changesLabel = changesInitialLoading
-    ? "Loading changes…"
-    : changesUnavailable
-      ? "Changes unavailable"
+  const changesLabel = changesUnavailable
+    ? "Changes unavailable"
+    : changesInitialLoading
+      ? "Loading changes…"
       : `${scopeTitle} · ${String(changeCount)}`;
   const attachmentsLabel = attachmentsInitialLoading
     ? "Loading attachments…"
@@ -103,10 +110,6 @@ export function ThreadResourceContextChips({
         ? "No attachments"
         : `Attachments · ${String(attachmentCount)}`;
   const openChanges = useEvent(() => {
-    if (changesUnavailable) {
-      dialog.alert("Changes unavailable", changesError);
-      return;
-    }
     onOpen("changes");
   });
   const selectScope = useEvent((id: string) => {
@@ -153,9 +156,7 @@ export function ThreadResourceContextChips({
             role="label"
           />
           {changesUnavailable ? (
-            <AppText style={styles.errorText} testID="composer-changes-label">
-              Changes unavailable
-            </AppText>
+            <ComposerContextLabel error testID="composer-changes-label" text={changesLabel} />
           ) : changesInitialLoading ? (
             <ComposerContextLabel
               loading={changesInitialLoading}
@@ -172,6 +173,7 @@ export function ThreadResourceContextChips({
           )}
         </Pressable>
       </ActionMenu>
+      {afterChanges}
       {!attachmentsUnavailable && (
         <Pressable
           accessibilityLabel={attachmentsLabel}

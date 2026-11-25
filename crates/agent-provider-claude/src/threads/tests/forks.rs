@@ -7,12 +7,33 @@ use agent_core::model::{
 };
 
 use super::{
-    Harness, Options, TERMINAL, TestResult, harness, id, stored_answer, stored_prompt,
+    Harness, Options, TERMINAL, TestResult, harness, id, start, stored_answer, stored_prompt,
     threads::{rejected_code, session_file_exists, turns_params, update},
     write_session,
 };
+use crate::cli::command::SessionIdentity;
 
 const FORK: &str = "6b8f0c2a-1d3e-4f5a-8b9c-0d1e2f3a4b5c";
+
+#[tokio::test]
+async fn history_file_references_are_readable_without_starting_a_query() -> TestResult {
+    let harness = harness(Options::default())?;
+    store_with_two_turns(&harness)?;
+    let files = harness.service.history_files(&id(TERMINAL)?).await?;
+    assert_eq!(files.len(), 1);
+    let contents = std::fs::read_to_string(&files[0])?;
+    assert!(contents.contains("Fix the flaky test"));
+    let subagents = files[0].with_extension("").join("subagents");
+    std::fs::create_dir_all(&subagents)?;
+    let child = subagents.join("agent-worker.jsonl");
+    std::fs::write(&child, "{\"type\":\"user\"}\n")?;
+    let child_id =
+        crate::subagents::child_thread_id(&id(TERMINAL)?, "worker").ok_or("invalid child")?;
+    assert_eq!(harness.service.history_files(&child_id).await?, vec![child]);
+    assert!(super::lock(&harness.runtime.queries).is_empty());
+    harness.close().await;
+    Ok(())
+}
 
 fn store_with_two_turns(harness: &Harness) -> TestResult {
     write_session(
@@ -98,6 +119,27 @@ async fn copies_the_history_through_a_turn_into_a_thread_with_its_own_session() 
         ["Fix the flaky test", "Now add a regression test"]
     );
     assert_eq!(forked_sessions(&harness), 1);
+    harness.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_fork_resumes_its_own_session_with_the_session_instructions() -> TestResult {
+    let instructions = agent_core::provider::SessionInstructions::new("Link every file.");
+    let harness = harness(Options {
+        session_instructions: Some(instructions),
+        ..Options::default()
+    })?;
+    store_with_two_turns(&harness)?;
+    harness
+        .service
+        .fork(fork_params(Some(FORK), ForkBoundary::All)?)
+        .await?;
+    start(&harness.service, FORK, "continue").await?;
+    let query = harness.runtime.query(0)?;
+    let options = &query.options;
+    assert!(matches!(&options.identity, SessionIdentity::Resume(session) if session != TERMINAL));
+    assert_eq!(options.session_instructions, Some(instructions));
     harness.close().await;
     Ok(())
 }

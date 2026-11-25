@@ -1,4 +1,8 @@
+import type { GetTransferAccess } from "../../data/private-transfer";
+import type { ConversationTerminalCapabilities } from "../terminal/conversationTerminalCapabilities";
+import { BackgroundTerminalOutputHost } from "./turns/BackgroundTerminalOutputHost";
 import type { ConversationSurfaceCapabilities } from "./conversationSurfaceCapabilities";
+import type { RunningBackgroundTasksQuery } from "../../data/runningBackgroundTaskResource";
 import type { ConversationAgentCapabilities } from "../agents/conversationAgentCapabilities";
 import type { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppFullscreenOverlayBoundary } from "../../ui/AppFullscreenOverlay";
@@ -16,7 +20,7 @@ import type { useConversationTools } from "./ConversationTools";
 import type { useConversationTimelineState } from "./timeline/conversationTimelineState";
 import type { useOverlayScrollOwnership } from "./timeline/overlayScrollOwnership";
 import type { useConversationPaneGeometry } from "./timeline/timelineViewport";
-import { SubagentNavigationContext } from "./turns/turnContexts";
+import { RunningBackgroundTasksContext, SubagentNavigationContext } from "./turns/turnContexts";
 
 export function createConversationFrame({
   agentsInputs,
@@ -30,8 +34,10 @@ export function createConversationFrame({
   conversationPaneGeometryBinding,
   draftConnectionId,
   draftThreadId,
+  getTransferAccess,
   overlayScrollOwnershipBinding,
   surfaceInputs,
+  terminal,
   threadRenameBinding,
   timelineState,
   timelineView,
@@ -48,14 +54,17 @@ export function createConversationFrame({
   conversationPaneGeometryBinding: ReturnType<typeof useConversationPaneGeometry>;
   draftConnectionId: string | null;
   draftThreadId: string | null;
+  getTransferAccess: GetTransferAccess;
   overlayScrollOwnershipBinding: ReturnType<typeof useOverlayScrollOwnership>;
   surfaceInputs: ConversationSurfaceCapabilities;
+  terminal: ConversationTerminalCapabilities;
   threadRenameBinding: ReturnType<typeof useThreadRename>;
   timelineState: ReturnType<typeof useConversationTimelineState>;
   timelineView: ReturnType<typeof createConversationTimelineContent>;
   toolsBinding: ReturnType<typeof useConversationTools>;
 }) {
   const readBackgroundTask = agentsInputs.onReadBackgroundTask;
+  const runningTasks = runningTasksQuery(agentsInputs, draftThreadId);
   const readTaskOutput =
     readBackgroundTask === undefined || draftThreadId === null
       ? undefined
@@ -79,39 +88,59 @@ export function createConversationFrame({
           }
         >
           <BackgroundTaskOutputHost read={readTaskOutput}>
-            <LargeContentViewerHost>
-              <ConversationLayout
-                bottomChrome={chromeView.bottomChrome}
-                compact={surfaceInputs.compact}
-                conversationInsets={conversationInsets}
-                cwd={surfaceInputs.cwd}
-                headerContent={chromeView.headerContent}
-                jumpContent={chromeView.jumpContent}
-                openCodeDocument={toolsBinding.openTimelineDocument}
-                presentTurnChanges={toolsBinding.changesFeatureBinding.presentTurnChanges}
-                projectPickerContent={conversationOverlayContentBinding.projectPickerContent}
-                projectPickerVisible={composerProjectSelectionBinding.projectPickerVisible}
-                renameContent={conversationOverlayContentBinding.renameContent}
-                reviewContent={conversationOverlayContentBinding.reviewContent}
-                searchContent={chromeView.searchContent}
-                setComposerTrayVisible={
-                  composerStateBinding.composerMenuStateBinding.setComposerTrayVisible
-                }
-                setConversationPaneHeight={
-                  conversationPaneGeometryBinding.setConversationPaneHeight
-                }
-                setNarrowConversationPane={
-                  conversationPaneGeometryBinding.setNarrowConversationPane
-                }
-                threadRenameVisible={threadRenameBinding.threadRenameVisible}
-                threadSearchVisible={timelineState.timelineSearchStateBinding.threadSearchVisible}
-                timelineSurface={timelineView.timelineSurface}
-              />
-            </LargeContentViewerHost>
+            <RunningBackgroundTasksContext.Provider value={runningTasks}>
+              <BackgroundTerminalOutputHost
+                connectionId={draftConnectionId}
+                getTransferAccess={getTransferAccess}
+                readTerminalCommand={terminal.readTerminalCommand}
+                threadId={draftThreadId}
+              >
+                <LargeContentViewerHost>
+                  <ConversationLayout
+                    bottomChrome={chromeView.bottomChrome}
+                    compact={surfaceInputs.compact}
+                    conversationInsets={conversationInsets}
+                    cwd={surfaceInputs.cwd}
+                    headerContent={chromeView.headerContent}
+                    jumpContent={chromeView.jumpContent}
+                    openCodeDocument={toolsBinding.openTimelineDocument}
+                    presentTurnChanges={toolsBinding.changesFeatureBinding.presentTurnChanges}
+                    projectPickerContent={conversationOverlayContentBinding.projectPickerContent}
+                    projectPickerVisible={composerProjectSelectionBinding.projectPickerVisible}
+                    renameContent={conversationOverlayContentBinding.renameContent}
+                    reviewContent={conversationOverlayContentBinding.reviewContent}
+                    searchContent={chromeView.searchContent}
+                    setComposerTrayVisible={
+                      composerStateBinding.composerMenuStateBinding.setComposerTrayVisible
+                    }
+                    setConversationPaneHeight={
+                      conversationPaneGeometryBinding.setConversationPaneHeight
+                    }
+                    setNarrowConversationPane={
+                      conversationPaneGeometryBinding.setNarrowConversationPane
+                    }
+                    threadRenameVisible={threadRenameBinding.threadRenameVisible}
+                    threadSearchVisible={
+                      timelineState.timelineSearchStateBinding.threadSearchVisible
+                    }
+                    timelineSurface={timelineView.timelineSurface}
+                  />
+                </LargeContentViewerHost>
+              </BackgroundTerminalOutputHost>
+            </RunningBackgroundTasksContext.Provider>
           </BackgroundTaskOutputHost>
         </SubagentNavigationContext.Provider>
       </AppFullscreenOverlayBoundary>
     </AppVoiceInputProvider>
   );
   return { frame };
+}
+
+/** The shown thread's running background commands query; `null` when it cannot list them. */
+function runningTasksQuery(
+  agentsInputs: ConversationAgentCapabilities,
+  threadId: string | null,
+): RunningBackgroundTasksQuery | null {
+  const list = agentsInputs.onRunningBackgroundTasks;
+  return list === undefined || threadId === null ? null : list(threadId);
 }

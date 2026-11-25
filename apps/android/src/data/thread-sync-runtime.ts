@@ -37,7 +37,6 @@ export function createThreadSyncRuntime({
   getDetails,
   getSession,
   getSummaries,
-  loadTurnControls,
   readInvalidationArchived,
   refreshSubagents,
   refreshThreadCatalog,
@@ -211,7 +210,6 @@ export function createThreadSyncRuntime({
             tags: { historyKind: response.history.kind },
             values: { turnCount: synchronizedThread.turns.length },
           });
-          void loadTurnControls(connectionId, synchronizedThread.cwd).catch(() => undefined);
           if (isCurrent()) {
             details.chat.confirmBackendRefresh(connectionId, threadId);
           }

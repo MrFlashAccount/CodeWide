@@ -33,20 +33,20 @@ class TimelineScrollIncidentsTest {
     journal.record(point(0, 132, height = 983), noCapture)
     journal.record(point(4900, 200), noCapture)
     journal.record(point(0, 600), noCapture)
-    journal.record(point(4900, 616), noCapture)
-    journal.record(point(0, 632, view = 2), noCapture)
+    journal.record(point(100, 616), noCapture)
+    journal.record(point(4900, 632, view = 2), noCapture)
     assertTrue(journal.snapshot().isEmpty())
   }
 
   @Test fun keepsOnlyBoundedRecentIncidents() {
     val journal = TimelineScrollIncidents(capacity = 2)
     repeat(5) { index ->
-      journal.record(point(5000, index * 32L)) { propStack }
-      journal.record(point(0, index * 32L + 16)) { propStack }
+      journal.record(point(5000, index * 400L)) { error("First or stale baseline") }
+      journal.record(point(0, index * 400L + 16)) { propStack }
     }
     assertEquals(2, journal.snapshot().size)
     assertEquals(3, journal.evicted)
-    assertEquals(144L, journal.snapshot().last().current.uptimeMs)
+    assertEquals(1616L, journal.snapshot().last().current.uptimeMs)
   }
 
   @Test fun distinguishesNativeVisibleContentCorrectionFromUnknownOrigin() {
@@ -59,5 +59,17 @@ class TimelineScrollIncidentsTest {
     journal.record(point(5000, 200)) { emptyArray() }
     journal.record(point(0, 216)) { emptyArray() }
     assertEquals("unknown", journal.snapshot().last().source)
+  }
+
+  @Test fun recordsReboundTowardNewerMessagesWithStableGeometry() {
+    val journal = TimelineScrollIncidents()
+    journal.record(point(6200, 100, height = 12776)) { error("First sample") }
+    journal.record(point(5900, 116, height = 12776)) { error("Ordinary drag toward history") }
+    val captured = journal.record(point(7430, 132, height = 12776)) { propStack }
+    assertTrue(captured)
+    val incident = journal.snapshot().single()
+    assertEquals(5900, incident.previous.offsetPx)
+    assertEquals(7430, incident.current.offsetPx)
+    assertEquals("content-offset-prop", incident.source)
   }
 }

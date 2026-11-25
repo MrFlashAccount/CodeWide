@@ -155,6 +155,7 @@ async fn launch_background_agent(
         .await;
     query.push(frames::text("m2", "Started.")).await;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
     Ok(query)
 }
@@ -178,10 +179,12 @@ async fn reports_that_arrive_while_idle_lead_the_turn_they_wake_once() -> TestRe
     assert_eq!(harness.completions().len(), 1);
     query.push(frames::text("m3", "Both finished.")).await;
     query.push(wake_result()).await;
+    query.idle().await;
     settle().await;
     start(&harness.service, THREAD, "Next").await?;
     query.push(frames::text("m4", "Done.")).await;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
 
     let turns = harness.completions();
@@ -309,6 +312,7 @@ async fn a_report_into_a_running_turn_sits_where_it_arrived_but_not_a_foreground
         ))
         .await;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
 
     let turns = harness.completions();
@@ -347,6 +351,7 @@ async fn reports_waiting_while_idle_follow_the_next_user_turns_prompt() -> TestR
     query.push(frames::init()).await;
     query.push(frames::text("m1", "One.")).await;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
     query
         .push(task_notification(
@@ -358,6 +363,7 @@ async fn reports_waiting_while_idle_follow_the_next_user_turns_prompt() -> TestR
     start(&harness.service, THREAD, "Second").await?;
     query.push(frames::text("m2", "Two.")).await;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
 
     let turns = harness.completions();
@@ -392,6 +398,7 @@ async fn reports_waiting_for_a_compaction_follow_its_boundary() -> TestResult {
     query.push(frames::init()).await;
     query.push(frames::text("m1", "One.")).await;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
     query
         .push(task_notification(
@@ -410,6 +417,7 @@ async fn reports_waiting_for_a_compaction_follow_its_boundary() -> TestResult {
             "uuid": "c0de0c0d-5e55-4c0a-9a7c-00000000b0d1"}))
         .await;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
 
     let turns = harness.completions();
@@ -442,6 +450,7 @@ async fn reports_waiting_when_the_query_ends_are_dropped() -> TestResult {
     query.push(frames::init()).await;
     query.push(frames::text("m1", "One.")).await;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
     query
         .push(task_notification(&json!({"task_id": "btest",
@@ -454,6 +463,7 @@ async fn reports_waiting_when_the_query_ends_are_dropped() -> TestResult {
     resumed.push(frames::init()).await;
     resumed.push(frames::text("m2", "Two.")).await;
     resumed.push(frames::result()).await;
+    resumed.idle().await;
     settle().await;
 
     let turns = harness.completions();

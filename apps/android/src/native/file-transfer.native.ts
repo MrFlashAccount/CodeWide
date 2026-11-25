@@ -1,3 +1,5 @@
+import { downloadFilename } from "../data/downloadFilename";
+import type { DownloadLookup, SavedDownload } from "../data/downloadRecords";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { Directory, File, FileMode, Paths } from "expo-file-system";
 import { Linking, NativeModules } from "react-native";
@@ -16,8 +18,11 @@ export type TransferProgress = {
   total: number;
   transferred: number;
 };
+const PARTIAL_HASH_PREFIX_LENGTH = 16;
+const PARTIAL_DOWNLOAD_PREFIX = /^\.codex-part-[a-f0-9]{16}-/u;
+
 export type SelectedUpload = { mimeType: string; name: string; native: File; size: number };
-export type SelectedDirectory = { name: string; native: Directory };
+export type SelectedDirectory = { name: string; native: Directory; uri: string };
 export function selectedUploadUri(upload: SelectedUpload): string | null {
   return upload.native.uri;
 }
@@ -45,7 +50,12 @@ export type RunningTransfer = {
   promise: Promise<{ bytes: number; mimeType?: string; sha256: string; uri?: string }>;
 };
 
+/** A download can stop in two ways: `pause` keeps the partial file so a later
+ * start into the same folder resumes from it; `cancel` discards it. */
+export type RunningDownload = RunningTransfer & { pause: () => void };
+
 type FileTransferBridge = {
+  contentDocumentName?: (uri: string) => Promise<string | null>;
   copyContentDocument?: (
     sourceUri: string,
     targetUri: string,
@@ -68,6 +78,16 @@ export async function openDownloadedFile(uri: string, mimeType?: string): Promis
   await Linking.openURL(uri);
 }
 
+async function selectedDocumentName(file: File): Promise<string> {
+  if (file.uri.startsWith("content://") && fileTransferBridge?.contentDocumentName !== undefined) {
+    const name = await fileTransferBridge.contentDocumentName(file.uri);
+    if (name !== null && name.trim().length > 0) {
+      return name;
+    }
+  }
+  return file.name;
+}
+
 export async function pickUploadFile(): Promise<SelectedUpload | null> {
   const picked = await File.pickFileAsync({ mimeTypes: "*/*" });
   if (picked.canceled) {
@@ -75,7 +95,7 @@ export async function pickUploadFile(): Promise<SelectedUpload | null> {
   }
   return {
     mimeType: picked.result.type === "" ? "application/octet-stream" : picked.result.type,
-    name: picked.result.name,
+    name: await selectedDocumentName(picked.result),
     native: picked.result,
     size: picked.result.size,
   };
@@ -108,7 +128,47 @@ function safeUploadName(name: string, fallback: string): string {
 
 export async function pickDownloadDirectory(): Promise<SelectedDirectory> {
   const directory = await Directory.pickDirectoryAsync();
-  return { name: directory.name, native: directory };
+  return { name: directory.name, native: directory, uri: directory.uri };
+}
+
+/** Reopens a folder picked earlier. The picker took a persistable grant, so the
+ * folder stays writable across restarts until the user revokes it or deletes the
+ * folder; either makes the listing fail and the caller picks again. */
+export function restoreDownloadDirectory(uri: string): SelectedDirectory | null {
+  try {
+    const directory = new Directory(uri);
+    if (!directory.exists) {
+      return null;
+    }
+    directory.list();
+    return { name: directory.name, native: directory, uri: directory.uri };
+  } catch {
+    return null;
+  }
+}
+
+/** Deletes the partial file a paused download of `remotePath` left in `directory`.
+ * Partial names carry a content-hash prefix the caller no longer has, so every
+ * partial of that filename goes; a finished file is never touched. */
+export function discardPartialDownload(directory: SelectedDirectory, remotePath: string): void {
+  const filename = downloadFilename(remotePath);
+  for (const entry of directory.native.list()) {
+    if (
+      !("list" in entry) &&
+      PARTIAL_DOWNLOAD_PREFIX.test(entry.name) &&
+      entry.name.replace(PARTIAL_DOWNLOAD_PREFIX, "") === filename
+    ) {
+      entry.delete();
+    }
+  }
+}
+
+/** Deletes a file this app saved; an already missing file counts as deleted. */
+export function deleteDownloadedFile(uri: string): void {
+  const file = new File(uri);
+  if (file.exists) {
+    file.delete();
+  }
 }
 
 export function startUpload(
@@ -318,7 +378,7 @@ export function startDownload(
   rootId: string,
   remotePath: string,
   onProgress: (progress: TransferProgress) => void,
-): RunningTransfer {
+): RunningDownload {
   return startDownloadFromUrl(
     getAccess,
     directory,
@@ -333,7 +393,7 @@ export function startPreviewDownload(
   directory: SelectedDirectory,
   absolutePath: string,
   onProgress: (progress: TransferProgress) => void,
-): RunningTransfer {
+): RunningDownload {
   if (!absolutePath.startsWith("/") || absolutePath.includes("\0")) {
     throw new Error("Preview download path must be absolute");
   }
@@ -346,41 +406,93 @@ export function startPreviewDownload(
   );
 }
 
+async function downloadMetadata(source: PrivateAssetSource, getAccess: GetTransferAccess) {
+  const head = await fetchPrivateAsset(source, getAccess, { method: "HEAD" });
+  if (!head.ok) {
+    throw new Error(`Download metadata failed (${String(head.status)})`);
+  }
+  const expectedHash = head.headers.get("x-content-sha256");
+  const expectedBytes = Number(head.headers.get("content-length"));
+  if (
+    expectedHash === null ||
+    !/^[a-f0-9]{64}$/.test(expectedHash) ||
+    !Number.isSafeInteger(expectedBytes) ||
+    expectedBytes < 0 ||
+    !head.headers.has("content-length")
+  ) {
+    throw new Error("Server did not provide valid integrity metadata");
+  }
+  return { expectedBytes, expectedHash, mimeType: head.headers.get("content-type") };
+}
+
+/** Proves that the selected folder already holds the requested remote bytes before any range GET. */
+export async function findDownloadedFile(
+  directory: SelectedDirectory,
+  lookup: DownloadLookup,
+  getAccess: GetTransferAccess,
+): Promise<SavedDownload | null> {
+  const { knownUris, source } = lookup;
+  const filename = downloadFilename(source.path);
+  const children = directory.native.list();
+  const existing = children.find((entry) => entry.name === filename);
+  if (existing === undefined) {
+    const candidates = children.filter(
+      (entry): entry is File => !("list" in entry) && knownUris.has(entry.uri),
+    );
+    if (candidates.length === 0) {
+      return null;
+    }
+    const { expectedBytes, expectedHash, mimeType } = await downloadMetadata(source, getAccess);
+    for (const file of candidates) {
+      if (
+        file.size === expectedBytes &&
+        (await hashFile(
+          file,
+          () => undefined,
+          () => false,
+        )) === expectedHash
+      ) {
+        return { bytes: expectedBytes, mimeType, uri: file.uri };
+      }
+    }
+    return null;
+  }
+  const { expectedBytes, expectedHash, mimeType } = await downloadMetadata(source, getAccess);
+  const file = await verifyExistingFile(
+    existing,
+    { expectedBytes, expectedHash, filename },
+    {
+      cancelled: () => false,
+      progress: () => undefined,
+    },
+  );
+  return { bytes: expectedBytes, mimeType, uri: file.uri };
+}
+
 function startDownloadFromUrl(
   getAccess: GetTransferAccess,
   directory: SelectedDirectory,
   source: PrivateAssetSource,
   remotePath: string,
   onProgress: (progress: TransferProgress) => void,
-): RunningTransfer {
+): RunningDownload {
   let cancelled = false;
+  let discardPartial = false;
   const isCancelled = (): boolean => cancelled;
   let activeRequest: AbortController | null = null;
   let destination: File | null = null;
-  const promise = (async () => {
-    const head = await fetchPrivateAsset(source, getAccess, { method: "HEAD" });
-    if (!head.ok) {
-      throw new Error(`Download metadata failed (${String(head.status)})`);
-    }
-    const expectedHash = head.headers.get("x-content-sha256");
-    const expectedBytes = Number(head.headers.get("content-length"));
-    if (
-      expectedHash === null ||
-      !/^[a-f0-9]{64}$/.test(expectedHash) ||
-      !Number.isSafeInteger(expectedBytes)
-    ) {
-      throw new Error("Server did not provide valid integrity metadata");
-    }
-    const filename = safeFilename(remotePath);
-    const partialName = `.codex-part-${expectedHash.slice(0, 16)}-${filename}`;
+  let partialName: string | null = null;
+  const download = (async () => {
+    const { expectedBytes, expectedHash, mimeType } = await downloadMetadata(source, getAccess);
+    const filename = downloadFilename(remotePath);
+    partialName = `.codex-part-${expectedHash.slice(0, PARTIAL_HASH_PREFIX_LENGTH)}-${filename}`;
     const listedPartial = directory.native
       .list()
       .find((entry): entry is File => entry instanceof File && entry.name === partialName);
-    destination =
-      listedPartial ?? directory.native.createFile(partialName, head.headers.get("content-type"));
+    destination = listedPartial ?? directory.native.createFile(partialName, mimeType);
     if (destination.size > expectedBytes) {
       destination.delete();
-      destination = directory.native.createFile(partialName, head.headers.get("content-type"));
+      destination = directory.native.createFile(partialName, mimeType);
     }
     let offset = destination.size;
     while (offset < expectedBytes) {
@@ -455,13 +567,12 @@ function startDownloadFromUrl(
       directory.native,
       destination,
       filename,
-      head.headers.get("content-type"),
+      mimeType,
       expectedBytes,
       expectedHash,
       onProgress,
       isCancelled,
     );
-    const mimeType = head.headers.get("content-type");
     return {
       bytes: expectedBytes,
       sha256: actualHash,
@@ -469,13 +580,42 @@ function startDownloadFromUrl(
       ...(mimeType === null ? {} : { mimeType }),
     };
   })();
+  const promise = download.catch((error: unknown) => {
+    // Only the partial file is discarded: once it was renamed into place the
+    // download completed and a late cancel no longer owns it.
+    if (discardPartial && destination?.exists === true && destination.name === partialName) {
+      destination.delete();
+    }
+    throw error;
+  });
   return {
     cancel() {
+      cancelled = true;
+      discardPartial = true;
+      activeRequest?.abort();
+    },
+    pause() {
       cancelled = true;
       activeRequest?.abort();
     },
     promise,
   };
+}
+
+async function verifyExistingFile(
+  existing: Directory | File,
+  target: { expectedBytes: number; expectedHash: string; filename: string },
+  verification: { cancelled: () => boolean; progress: (bytes: number) => void },
+): Promise<File> {
+  if (
+    existing instanceof File &&
+    existing.size === target.expectedBytes &&
+    (await hashFile(existing, verification.progress, verification.cancelled)) ===
+      target.expectedHash
+  ) {
+    return existing;
+  }
+  throw new Error(`A file named "${target.filename}" already exists in the selected folder`);
 }
 
 async function finalizeDownloadedFile(
@@ -495,20 +635,18 @@ async function finalizeDownloadedFile(
 
   const existing = directory.list().find((entry) => entry.name === filename);
   if (existing !== undefined) {
-    if (existing instanceof File && existing.size === expectedBytes) {
-      const existingHash = await hashFile(
-        existing,
-        (transferred) => {
+    const file = await verifyExistingFile(
+      existing,
+      { expectedBytes, expectedHash, filename },
+      {
+        cancelled,
+        progress: (transferred) => {
           onProgress({ phase: "verifying", total: expectedBytes, transferred });
         },
-        cancelled,
-      );
-      if (existingHash === expectedHash) {
-        deleteBestEffort(partial);
-        return existing;
-      }
-    }
-    throw new Error(`A file named "${filename}" already exists in the selected folder`);
+      },
+    );
+    deleteBestEffort(partial);
+    return file;
   }
 
   const completed = directory.createFile(filename, mimeType);
@@ -658,31 +796,6 @@ async function hashFile(
     throw new Error("Could not read the complete file");
   }
   return bytesToHex(hash.digest());
-}
-
-function safeFilename(remotePath: string): string {
-  const filename = remotePath.split(/[\\/]/u).filter(Boolean).at(-1) ?? "download";
-  const portable = filename
-    .split("")
-    .map((character) => (safeFilenameCharacter(character) ? character : "-"))
-    .join("")
-    .replaceAll(/-+/gu, "-")
-    .replaceAll(/^[.\s]+|[.\s]+$/gu, "")
-    .slice(0, MAX_DOWNLOAD_FILENAME_LENGTH);
-  return portable === "" ? "download" : portable;
-}
-
-const MIN_PRINTABLE_CODE_POINT = 32;
-const DELETE_CODE_POINT = 127;
-const MAX_DOWNLOAD_FILENAME_LENGTH = 180;
-
-function safeFilenameCharacter(character: string): boolean {
-  const codePoint = character.codePointAt(0) ?? 0;
-  return (
-    codePoint >= MIN_PRINTABLE_CODE_POINT &&
-    codePoint !== DELETE_CODE_POINT &&
-    !String.raw`\/:*?"<>|`.includes(character)
-  );
 }
 
 function bytesToHex(bytes: Uint8Array): string {

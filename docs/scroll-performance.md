@@ -463,7 +463,7 @@ must not reclaim scrolling, and the end button must still work without rebound.
 
 `nativeTimelineScroll` complements the JS journal on supported APKs. An always-on
 native listener observes only the `conversation-timeline` ScrollView, with no
-per-event bridge traffic. A backward jump of at least half a viewport within
+per-event bridge traffic. A jump in either direction of at least half a viewport within
 300 ms, at unchanged content/viewport size, captures the synchronous Android
 stack. Collection does not require an earlier app command and also covers flings.
 Only approved framework class/method names and line numbers are exported; no

@@ -199,3 +199,118 @@ value on its own; the destination is fixed.
   and the client-tool MCP server answers its handshake live instead of the
   SDK's `sdkMcpServerManifests` in `initialize`. The check is kept as
   `pnpm claude:live` (`scripts/claude-live/`), run on request only.
+- 2026-11-05: Stage 3b done: Claude turns are byte ranges of Claude's own
+  session files and sub-agent transcripts on the shared index. The deferral
+  criterion of 2026-10-14 (read time) ignored memory and how often the read
+  repeated: the running companion re-read whole sessions (12–57 MB) on every
+  file change, every 30 s for sessions with a running sub-agent and after
+  every finished turn, held every turn as a `serde_json::Value` tree and
+  rewrote copies of all turns (`claude_session_turns`,
+  `claude_subagent_turns`; `state.redb` grew to 4 GB), with spikes to
+  1.1–2.95 GB. What changed:
+  - `crates/agent-index` gained segmented scans (`segment.rs`,
+    `segment_store.rs`) for formats whose boundaries depend on earlier
+    records: a source state persisted with every checkpoint and every turn
+    start, turns that start at an earlier record (wakes before the first
+    message), renamed turns, rollback to a keyed record (a rewind tombstones
+    the turns after the record's turn and ends that turn after it), record
+    keys, facts merged per group of files, and a bounded rescan from the
+    turn before a record. Codex's `IndexSource` path, tables, encodings,
+    cursors, witnesses and `ROLLOUT_LOGIC_VERSION` are unchanged (one
+    shared write step was factored out; a turn rewritten under another id
+    loses its former id, which a rollout never does).
+  - `crates/agent-provider-claude/src/index/`: `ClaudeSource` decides
+    boundaries with `transcript::segments::decide`, the one rule turn reads
+    share; a turn read replays its range from its start state. Only the
+    records after a file's checkpoint are scanned, only turns whose range
+    moved are read back (their digest: preview, person's turn, sub-agent
+    launches, resources), and search documents are written per turn
+    (`agent_search::documents::replace_turns`). Pages, search windows and
+    child threads read their own turns' ranges; resources come from
+    digests. Sub-agent and background command states are settled at read
+    time from facts (any transcript of the session) and the activity the
+    last pass saw. Rows are scanned through borrowed raw fields
+    (`index/line.rs`), never whole `Value` trees.
+  - Hint contract: prompt uuids reach `state.json` before `claude` gets the
+    prompt; a provider turn's first frame is recorded after Claude reports
+    it, so each pass compares the turn index hints with those the file was
+    scanned with and rescans from the turn before the earliest record a
+    changed hint names.
+  - Claude index logic version 17; the turn copy tables are dropped and the
+    index rebuilds from the files once.
+  - Parity (`native/parity_tests.rs`, ignored; old and new reads of a
+    snapshot of the 176 local sessions, activity stopped): 155 identical.
+    The 21 others differ in four classes, each a deliberate change:
+    (1) compaction: rows a compaction preserved stay where Claude wrote
+    them, before the compaction item, as the live turn showed them (the
+    former read moved them after the summary: 7 final answers in 6 sessions
+    left their own turn for the compaction turn, 11 turns reordered, and in
+    4 sessions the relink produced turns out of time order or two turns
+    with one id — the former reads held 2 duplicate turn ids, the new
+    none); (2) the rows of one response (parallel tool calls) stay in write
+    order instead of timestamp order beside the parent chain; (3) one forked
+    session (`forkedFrom` rows whose copy restarts with a parentless row)
+    keeps its 110 earlier turns, as Stage 3a keeps the history before a
+    compaction (597 → 707 turns); (4) 19 background commands of sub-agents
+    in one session are `completed`/`failed` instead of `unknown`, settled by
+    the reports Claude queued into the sub-agent. Rewinds: none in the local
+    sessions; covered by contract tests.
+  - Memory (`examples/index_memory.rs`, peak resident memory a step adds, own
+    process each, release build, a copy of the largest local session,
+    60 MB): appending its last 1.8 MB costs +9.8 MB and 74 ms (8 turns read
+    back); an unchanged pass +6.2 MB, 36 ms; the newest page of 20 turns
+    +13 MB, 48 ms; the first full index of 58.6 MB +26 MB, 1.7 s (once per
+    logic version); the former whole read of the same file +222 MB, 457 ms.
+    The index of all 176 local sessions (1.4 GB of files) is built from
+    scratch in 22 s and takes 93 MB (digests 20 MB, record keys 9 MB, no
+    turn copies).
+  - Still reading whole sessions: the thread service's own history read
+    (`threads/history.rs`, used while a turn runs or the index is behind,
+    for fork cuts and a replacement session's history prefix).
+- 2026-11-05: Stage 3b follow-up: no Claude read takes a session whole.
+  - The thread service reads through the index (`SessionIndex`, shared with
+    the indexer, one pass per session at a time): a read while a turn runs
+    or the index lags catches the index up (appended records only) and
+    reads its own turns' ranges; the fork cut finds the boundary turn by id
+    and reads only that turn's last message; a replacement session's
+    history prefix reads newest pages until 16 KiB of lines; a discovered
+    session's recorded model is kept with its file's checkpoint. Without
+    host storage the index is kept in memory. Removed: `files::rows`, the
+    thread service's whole-branch reads (`session_messages`,
+    `session_values`, `stored_turns`) and the message-based `fork_cut`.
+  - Remaining whole-file work, each deliberate: a fork writes a full copy
+    of the source session (`native/write.rs`, user-initiated; the SDK's
+    fork rebuilds the branch to remap uuids, so the source rows are read
+    once); the first index of a file after a logic version change (once,
+    streamed, about 26 MB peak for 58 MB); a session whose file was
+    rewritten or truncated is indexed again from byte 0. Listings read the
+    first and last 64 KiB of each session file. `background_task_facts`
+    pages a thread newest first until the launching call (a task the
+    thread never launched walks every page).
+  - `state.redb`: the companion compacts it while it opens it alone, after
+    the derived migrations (Claude's schema now migrates there too) and
+    before sharing it, when at least half of the file and 256 MiB are free.
+    On a consistent copy of the live 4.29 GB file: migration 82–122 ms,
+    compaction 2.6–2.9 s, 4 294 971 392 → 898 224 128 bytes, the rows of
+    all 70 tables unchanged, `check_integrity` clean, 25 MB peak resident
+    memory; a compaction killed after about 1 s reopened in 0.5 s and
+    finished on the next open with the same result.
+  - Rewinds: a real one written by `claude` 2.1.310 (`--resume <session>
+    --resume-session-at <first answer>`: the new prompt is appended to the
+    same file with `parentUuid` = that answer) is a sanitized fixture
+    (`fixtures/raw/rewind-resume-session-at.jsonl`); the index and Claude's
+    own branch rule keep the same turns.
+  - A prompt Claude queued while no turn with messages was open is decided
+    by the next reply (delivered: it takes its place) or the person's next
+    message (dropped), as Claude's branch decides it; a still-undecided one
+    at the file's end shows once the next row arrives.
+  - Facts from rows on a branch the person rewound past still count: a task
+    report states that a process ended, and a rewind returns the
+    conversation, not the background agent or command.
+  - Search: the position each session of a thread was indexed at is kept;
+    a session that joins its chain before earlier-indexed ones rewrites
+    that thread's documents once.
+  - Parity and memory re-run: unchanged (155 identical of 176, the same 21
+    in the same four classes, byte-identical to the previous run); a 1.8 MB
+    append to the 60 MB session +9.7 MB peak, 102 ms; the former whole read
+    +222 MB.

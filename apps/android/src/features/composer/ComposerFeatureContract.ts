@@ -1,3 +1,4 @@
+import type { ThreadCatalogControls } from "../../data/threadCatalogControls";
 import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { Observable } from "@legendapp/state";
@@ -34,6 +35,7 @@ export type ComposerFeatureProps = {
   applyModelSettings: (choice: ModelSettingsChoice) => void;
   attachments: StoredDraftAttachment[];
   cancelQueuedComposerEdit: () => void;
+  catalogControls?: ThreadCatalogControls | null;
   closeGoalAttachment: () => void;
   closeQuickControlMenu: (_scope: "model-menu" | "permissions-menu") => undefined;
   composerDiscardEnabled: boolean;
@@ -48,6 +50,7 @@ export type ComposerFeatureProps = {
   currentTurnId: string | null;
   cwd: string;
   deliveryActions: ActionMenuItem[];
+  detailCursor?: number;
   discardComposer: () => void;
   dismissComposerKeyboardForOverlay: () => void;
   draft: string;
@@ -75,12 +78,14 @@ export type ComposerFeatureProps = {
   openQuickControlMenu: (_scope: "model-menu" | "permissions-menu") => void;
   pastedAttachmentPending: boolean;
   pendingVoiceSelection: { end: number; start: number } | null;
+  questionReplyActive?: boolean;
   queuedComposerEdit: QueuedComposerEdit | null;
   queuedComposerEditBusy: boolean;
   queuedComposerEditError: string | null;
   readOnly: boolean;
   remoteThread: Thread | null | undefined;
   removeComposerAttachment: (attachmentId: string) => void;
+  restoringDraft?: boolean;
   resumeAction: "Resume goal" | "Continue response" | null;
   retryVoice: () => Promise<void>;
   searchComposerSuggestions: (query: {

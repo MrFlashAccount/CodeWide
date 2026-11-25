@@ -22,6 +22,31 @@ jest.mock("@expo/ui/jetpack-compose/modifiers", () => ({
   width: jest.fn(),
 }));
 
+it("keeps closed popup content outside the measured trigger and opens with the current actions", () => {
+  const select = jest.fn();
+  const menu = (expanded: boolean, label: string) => (
+    <CodeWideMenu
+      actions={[{ id: "action", label }]}
+      expanded={expanded}
+      onDismiss={jest.fn()}
+      onSelect={select}
+    >
+      <Text>Trigger</Text>
+    </CodeWideMenu>
+  );
+  const view = render(menu(false, "First choice"));
+  const trigger = view.getByText("Trigger");
+  expect(view.queryByText("First choice")).toBeNull();
+  view.rerender(menu(true, "First choice"));
+  fireEvent.press(view.getByRole("menuitem", { name: "First choice" }));
+  expect(select).toHaveBeenCalledWith("action");
+  view.rerender(menu(false, "Second choice"));
+  expect(view.queryByText("Second choice")).toBeNull();
+  expect(view.getByText("Trigger")).toBe(trigger);
+  view.rerender(menu(true, "Second choice"));
+  expect(view.getByRole("menuitem", { name: "Second choice" })).toBeOnTheScreen();
+});
+
 it.each([{ label: "legacy", Menu: CodeWideMenu }])(
   "$label moves selection without remounting menu rows",
   ({ Menu }) => {

@@ -1,6 +1,20 @@
+import { createContext } from "react";
+
+import type { PullRequestKey } from "../../data/forgeContract";
+import type { PullRequestBadge } from "../../data/forgePullRequestContract";
+import type { ForgeResources } from "../../data/forgeResources";
 import type { ThreadForkOptions } from "../../data/thread-fork";
 import type { ForkTargetPicker } from "./forkTargetPicker";
 import type { ReadForkOffer } from "./forkTargets";
+
+/** The mounted conversation that can present its server's PR picker. */
+export const ThreadPullRequestPickerContext = createContext<{
+  readonly badges: readonly PullRequestBadge[];
+  readonly connectionId: string;
+  readonly forge: ForgeResources;
+  readonly onAttach: (pullRequest: PullRequestKey) => Promise<void>;
+  readonly threadId: string;
+} | null>(null);
 
 /** Thread identity, state, and mutation actions exposed to its header. */
 export type ThreadHeaderProps = {
@@ -23,5 +37,7 @@ export type ThreadHeaderProps = {
    */
   openElsewhere?: boolean;
   pinned: boolean;
+  /** The thread refuses changes (a sub-agent): mutating actions show disabled with the reason. */
+  readOnly?: boolean;
   threadId: string;
 };

@@ -23,9 +23,16 @@ export function formatNumber(value: number, format?: Intl.NumberFormatOptions): 
 
 /** V1 number-format owner, extracted without changing interaction or resource lifetime. */
 
+const defaultDecimalFormat = new Intl.NumberFormat();
+
+/** Localized full-precision labels share one formatter across static and live metadata. */
+export function formatLocaleNumber(value: number): string {
+  return defaultDecimalFormat.format(value);
+}
+
 export function compactNumber(value: number): string {
   if (Math.abs(value) < 1000) {
-    return value.toLocaleString();
+    return formatLocaleNumber(value);
   }
   if (Math.abs(value) < 1_000_000) {
     return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}k`;

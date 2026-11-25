@@ -17,7 +17,7 @@ export function VoiceCaptureStatus({
   startedAt,
 }: {
   backend: VoiceInputRow["backend"];
-  controller: VoiceInputController | null;
+  controller: Pick<VoiceInputController, "level" | "subscribeLevel"> | null;
   phase: VoiceInputRow["phase"];
   scope: string;
   startedAt: number;
