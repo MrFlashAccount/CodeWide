@@ -200,34 +200,42 @@ async fn branch_detection_links_open_pull_requests_and_respects_tombstones() {
     assert_eq!(harness.lines("writes.jsonl").len(), 0);
 }
 
-#[tokio::test]
-async fn the_link_tool_writes_only_companion_state() {
+async fn link_from_chat(
+    harness: &Harness,
+    url: &str,
+) -> companion_core::agent::model::ToolCallResult {
     use companion_core::agent::{
         model::{AppThreadId, ProviderId, ToolCallParams, TurnId},
         provider::ClientToolHost,
     };
-    let harness = Harness::start(&base_fixture());
-    let tools = harness.forge.tools();
-    let call = |url: &str| ToolCallParams {
+    let call = ToolCallParams {
         app_thread_id: AppThreadId::parse("thread-tool").expect("thread"),
         turn_id: TurnId::parse("turn-1").expect("turn"),
         call_id: "call-1".into(),
         tool: "codewide_link_pull_request".into(),
         arguments: json!({"pullRequestUrl": url}),
     };
-    let provider = ProviderId::parse("codex").expect("provider");
-    let missing = tools
-        .call(&provider, call("https://forge.test/octo/repo/pull/7"))
-        .await;
+    harness
+        .forge
+        .tools()
+        .call(&ProviderId::parse("codex").expect("provider"), call)
+        .await
+}
+
+#[tokio::test]
+async fn the_link_tool_writes_only_companion_state() {
+    let url = "https://forge.test/octo/repo/pull/7";
+    let mut fixture = base_fixture();
+    fixture["webUrl"] = json!(url);
+    let harness = Harness::start(&fixture);
+    let missing = link_from_chat(&harness, url).await;
     assert!(!missing.success);
     assert_eq!(
         serde_json::to_value(&missing.content).expect("content")[0]["text"],
         "no connected forge account"
     );
     harness.link().await;
-    let linked = tools
-        .call(&provider, call("https://forge.test/octo/repo/pull/7"))
-        .await;
+    let linked = link_from_chat(&harness, url).await;
     assert!(linked.success, "{linked:?}");
     let links = harness
         .forge
@@ -239,15 +247,124 @@ async fn the_link_tool_writes_only_companion_state() {
         serde_json::to_value(links[0].source).expect("source"),
         json!("agent")
     );
-    let foreign = tools
-        .call(&provider, call("https://elsewhere.example/a/b/pull/1"))
-        .await;
+    let foreign = link_from_chat(&harness, "https://elsewhere.example/a/b/pull/1").await;
     assert!(!foreign.success);
     assert_eq!(
         harness.lines("writes.jsonl").len(),
         0,
         "the tool never writes to a forge"
     );
+}
+
+#[tokio::test]
+async fn agent_link_on_a_declared_web_host_appears_in_both_directions() {
+    let number = "700001";
+    let url = format!("https://a.yandex-team.ru/review/{number}");
+    let host = "arcanum.yandex.net";
+    let mut fixture = base_fixture();
+    fixture["webHosts"] = json!(["a.yandex-team.ru"]);
+    fixture["webUrl"] = json!(url);
+    fixture["pullRequest"] = json!({"host": host, "repository": "arc_vcs", "number": number});
+    let harness = Harness::start(&fixture);
+    harness.ok("companion/forge/auth/start", json!({"pluginId":"fixture","methodId":"existing","host":host,"login":"octocat","idempotencyKey":"link-api-host"})).await;
+    let catalog_key = harness.pull_request().await;
+    let overview = |key: &str| json!({"pullRequest": key});
+    // A cached overview opened before the call must immediately expose the new link too.
+    let before = harness
+        .ok("companion/pullRequest/read", overview(&catalog_key))
+        .await;
+    assert_eq!(before["links"], json!([]));
+    let linked = link_from_chat(&harness, &url).await;
+    assert!(linked.success, "{linked:?}");
+    let after = harness
+        .ok("companion/pullRequest/read", overview(&catalog_key))
+        .await;
+    assert_eq!(
+        after["links"],
+        json!([{"threadId":"thread-tool","source":"agent"}])
+    );
+    let badges = harness
+        .ok(
+            "companion/pullRequestLinks/read",
+            json!({"threadIds":["thread-tool", "thread-other"]}),
+        )
+        .await;
+    let threads = badges["threads"].as_array().expect("threads");
+    let calling = threads
+        .iter()
+        .find(|thread| thread["threadId"] == "thread-tool")
+        .expect("caller");
+    let prs = calling["pullRequests"].as_array().expect("badges");
+    assert_eq!(prs.len(), 1);
+    assert_eq!(prs[0]["number"], number);
+    let from_chat = harness
+        .ok(
+            "companion/pullRequest/read",
+            json!({"pullRequest":prs[0]["pullRequest"]}),
+        )
+        .await;
+    assert_eq!(from_chat["webUrl"], url);
+    assert_eq!(from_chat["repository"], "arc_vcs");
+    assert_eq!(from_chat["number"], number);
+    assert_eq!(from_chat["account"]["host"], host);
+    assert_eq!(from_chat["links"], after["links"]);
+    assert!(
+        threads.iter().all(
+            |thread| thread["threadId"] == "thread-tool" || thread["pullRequests"] == json!([])
+        )
+    );
+    assert_eq!(
+        harness.plugin_requests(forge_protocol::methods::REPOSITORY_RESOLVE),
+        0
+    );
+    assert!(harness.lines("writes.jsonl").is_empty());
+}
+
+#[tokio::test]
+async fn agent_link_rejects_unsupported_unreadable_and_ambiguous_targets_without_writing() {
+    let url = "https://forge.test/octo/repo/pull/7";
+    let mut fixture = base_fixture();
+    fixture["webUrl"] = json!(url);
+    fixture["hostLogins"] = json!(["octocat", "reviewer"]);
+    let harness = Harness::start(&fixture);
+    harness.link().await;
+    for invalid in [
+        "https://forge.test/octo/repo/issues/7",
+        "https://elsewhere.example/octo/repo/pull/7",
+        "https://user@forge.test/octo/repo/pull/7",
+    ] {
+        assert!(!link_from_chat(&harness, invalid).await.success);
+    }
+    fixture["hideCapabilities"] = json!([forge_protocol::capability::PR_LINK]);
+    harness.set_fixture(&fixture);
+    assert!(!link_from_chat(&harness, url).await.success);
+    fixture["hideCapabilities"] = json!([]);
+    fixture["pullRequest"] = json!({"host":"unlinked.test","repository":"octo/repo","number":"7"});
+    harness.set_fixture(&fixture);
+    assert!(!link_from_chat(&harness, url).await.success);
+    fixture["pullRequest"] = serde_json::Value::Null;
+    fixture["expiredLogins"] = json!(["octocat"]);
+    harness.set_fixture(&fixture);
+    assert!(!link_from_chat(&harness, url).await.success);
+    fixture["expiredLogins"] = json!([]);
+    harness.set_fixture(&fixture);
+    harness.ok("companion/forge/auth/start", json!({"pluginId":"fixture","methodId":"existing","host":"forge.test","login":"reviewer","idempotencyKey":"link-reviewer"})).await;
+    let ambiguous = link_from_chat(&harness, url).await;
+    assert!(!ambiguous.success);
+    assert!(
+        harness
+            .forge
+            .context()
+            .links
+            .all()
+            .expect("links")
+            .is_empty()
+    );
+    assert_eq!(
+        harness.plugin_requests(forge_protocol::methods::REPOSITORY_RESOLVE),
+        0
+    );
+    assert!(harness.lines("writes.jsonl").is_empty());
 }
 
 #[tokio::test]

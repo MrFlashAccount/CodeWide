@@ -29,7 +29,7 @@ use tracing::info;
 use super::limits;
 
 /// Every capability this companion understands, sent in `initialize`.
-const KNOWN_CAPABILITIES: [&str; 15] = [
+const KNOWN_CAPABILITIES: [&str; 18] = [
     capability::AUTH,
     capability::LIST,
     capability::SEARCH,
@@ -38,11 +38,14 @@ const KNOWN_CAPABILITIES: [&str; 15] = [
     capability::ACTIONS,
     capability::REVIEW,
     capability::CHECKS,
+    capability::CHECK_TRIGGERS,
     capability::VIEWED,
+    capability::PR_LINK,
     capability::RESOLVE,
     capability::SCENARIO_CONTEXT,
     capability::CONVERSATION,
     capability::COMMENTS,
+    capability::COMMENT_ATTACHMENTS,
     capability::RESOLVE_CONVERSATION,
     capability::FILE_CONTENT,
 ];
@@ -185,6 +188,7 @@ impl PluginSession {
                 capabilities: Vec::new(),
                 media_hosts: Vec::new(),
                 web_hosts: Vec::new(),
+                check_viewer_hosts: Vec::new(),
             },
             poisoned: false,
             _permit: permit,

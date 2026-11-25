@@ -14,7 +14,8 @@ use std::sync::Arc;
 
 use agent_core::model::ProviderId;
 use agent_core::user_text::{
-    CleanedText, NoUserTextFormats, UserTextCleaner, file_envelope, is_companion_context,
+    CleanedText, NoUserTextFormats, UserTextCleaner, before_review_chat_context, file_envelope,
+    is_companion_context,
 };
 use serde_json::{Map, Value, json};
 
@@ -275,7 +276,18 @@ fn project_user_message(object: &mut Map<String, Value>, cleaner: &dyn UserTextC
     if parts.is_empty() {
         return true;
     }
-    parts.retain(|part| !text_of(part).is_some_and(is_companion_context));
+    parts.retain_mut(|part| {
+        let Some(text) = text_of(part) else {
+            return true;
+        };
+        if is_companion_context(text) {
+            return false;
+        }
+        if let Some(authored) = before_review_chat_context(text) {
+            part["text"] = Value::String(authored.to_owned());
+        }
+        true
+    });
     project_desktop_content(parts);
     parts.retain_mut(|part| clean_text_part(part, cleaner));
     !parts.is_empty()

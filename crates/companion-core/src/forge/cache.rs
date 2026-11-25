@@ -152,10 +152,12 @@ impl ForgeCache {
     /// every list page, so the next read refetches after a write.
     pub fn invalidate_pull_request(&self, key: &PullRequestKey) {
         if let Ok(mut entries) = self.entries.lock() {
-            entries.overviews.remove(key);
+            entries
+                .overviews
+                .retain(|pr, _| pr.canonical_str() != key.canonical_str());
             entries
                 .conversations
-                .retain(|(pull_request, _), _| pull_request != key);
+                .retain(|(pull_request, _), _| pull_request.canonical_str() != key.canonical_str());
             entries.lists.clear();
         }
     }

@@ -56,6 +56,7 @@ impl ResponseRejection {
 /// The owners one resolution touches.
 #[derive(Clone)]
 pub(super) struct ServerRequestResolver {
+    pub(super) files: Option<Arc<crate::files::FileService>>,
     pub(super) requests: Arc<tokio::sync::Mutex<PendingServerRequests>>,
     pub(super) gateway: Arc<ClientWireGateway>,
     pub(super) local_events: tokio::sync::mpsc::Sender<Value>,
@@ -86,6 +87,17 @@ impl ServerRequestResolver {
                 return Err(ResponseRejection::AlreadyResolving);
             }
             (request_class, request_method, request_thread_id)
+        };
+        let response = if request_method == "item/tool/requestUserInput" {
+            let Ok(prepared) =
+                crate::remote_inputs::prepare_question_files(response, self.files.as_deref()).await
+            else {
+                self.requests.lock().await.resolving.remove(&key);
+                return Err(ResponseRejection::UpstreamDeliveryFailed);
+            };
+            prepared
+        } else {
+            response
         };
         let response = enforce_dynamic_tool_output_limit(response, request_class);
         let delivered = provider_rpc::deliver_server_response(
@@ -376,6 +388,7 @@ mod tests {
         Ok(Fixture {
             desk: ChildInputDeskAdapter {
                 resolver: ServerRequestResolver {
+                    files: None,
                     requests: Arc::new(tokio::sync::Mutex::new(pending)),
                     gateway,
                     local_events,

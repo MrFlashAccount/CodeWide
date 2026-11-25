@@ -134,15 +134,11 @@ async fn the_list_and_atomic_overview_carry_keys_states_and_a_validated_catalog(
         .iter()
         .find(|action| action["kind"] == "fixCi")
         .expect("fixCi");
+    assert_eq!(fix_ci["actionId"], "codewide.scenario.fixCi");
+    assert_eq!(fix_ci["anchor"], json!({"kind": "checksSection"}));
     assert_eq!(
-        fix_ci["anchor"],
-        json!({"kind": "checks", "checkId": "ci-1"}),
-        "the failed check carries its own fix"
-    );
-    assert_eq!(fix_ci["availability"]["state"], "disabled");
-    assert_eq!(
-        fix_ci["availability"]["reason"],
-        "No local checkout of this branch on the companion"
+        fix_ci["availability"]["state"], "enabled",
+        "diagnosis reads the current checks without a checkout"
     );
 }
 
@@ -542,4 +538,59 @@ async fn an_expired_account_degrades_only_its_own_section() {
         .find(|section| section["account"]["login"] == "octocat")
         .expect("octocat");
     assert_eq!(octocat["rows"].as_array().map(Vec::len), Some(1));
+}
+
+#[tokio::test]
+async fn explicit_pr_links_admit_each_account_independently() {
+    let mut fixture = base_fixture();
+    fixture["hostLogins"] = json!(["octocat", "reviewer"]);
+    let harness = Harness::start(&fixture);
+    let first = harness.link().await;
+    let second = harness.ok("companion/forge/auth/start", json!({"pluginId":"fixture","methodId":"existing","host":"forge.test","login":"reviewer","idempotencyKey":"link-2"})).await;
+    let second = second["account"]["account"]
+        .as_str()
+        .expect("second account");
+    let resolve = "companion/pullRequest/resolveLink";
+    let input =
+        json!({"pluginId":"fixture","url":"https://forge.test/octo/repo/7?private=secret#file"});
+    let before = harness.plugin_requests(forge_protocol::methods::PULL_REQUEST_RESOLVE_LINK);
+    assert_eq!(
+        harness
+            .ok(
+                resolve,
+                json!({"pluginId":"fixture","url":"https://other.test/octo/repo/7"})
+            )
+            .await,
+        json!([])
+    );
+    assert_eq!(
+        harness.plugin_requests(forge_protocol::methods::PULL_REQUEST_RESOLVE_LINK),
+        before
+    );
+    let result = harness.ok(resolve, input.clone()).await;
+    let targets = result.as_array().expect("account choices");
+    assert_eq!(targets.len(), 2);
+    assert_eq!(targets[0]["canonical"], targets[1]["canonical"]);
+    assert_ne!(targets[0]["pullRequest"], targets[1]["pullRequest"]);
+    for target in targets {
+        let overview = harness
+            .ok(
+                "companion/pullRequest/read",
+                json!({"pullRequest":target["pullRequest"]}),
+            )
+            .await;
+        assert_eq!(overview["account"]["account"], target["account"]);
+    }
+    assert!(targets.iter().any(|target| target["account"] == first));
+    fixture["expiredLogins"] = json!(["octocat"]);
+    harness.set_fixture(&fixture);
+    let result = harness.ok(resolve, input).await;
+    assert_eq!(
+        result
+            .as_array()
+            .expect("remaining accessible accounts")
+            .len(),
+        1
+    );
+    assert_eq!(result[0]["account"], second);
 }

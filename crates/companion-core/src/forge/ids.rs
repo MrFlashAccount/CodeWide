@@ -44,10 +44,40 @@ impl PullRequestKey {
         ))
     }
 
+    /// Access through a specific linked identity. The durable PR/thread relationship uses the base key.
+    #[must_use]
+    pub fn with_account(&self, account: &ForgeAccountKey) -> Self {
+        Self(format!("{}~{}", self.canonical_str(), account.as_str()))
+    }
+
+    pub(crate) fn canonical_str(&self) -> &str {
+        self.0.split_once('~').map_or(&self.0, |(base, _)| base)
+    }
+
+    pub(crate) fn canonical(&self) -> Self {
+        Self(self.canonical_str().to_owned())
+    }
+
+    pub(crate) fn bound_account(&self) -> Option<ForgeAccountKey> {
+        self.0
+            .split_once('~')
+            .and_then(|(_, account)| ForgeAccountKey::parse(account))
+            .map(|(key, _)| key)
+    }
+
     /// Brands a client value after decoding it.
     #[must_use]
     pub fn parse(value: &str) -> Option<(Self, PullRequestIdentity)> {
-        let [plugin_id, host, repository, number] = decode_parts::<4>(value, PULL_REQUEST_PREFIX)?;
+        let (base, account) = value
+            .split_once('~')
+            .map_or((value, None), |(pr, account)| (pr, Some(account)));
+        let [plugin_id, host, repository, number] = decode_parts::<4>(base, PULL_REQUEST_PREFIX)?;
+        if let Some(account) = account {
+            let (_, identity) = ForgeAccountKey::parse(account)?;
+            if identity.plugin_id != plugin_id || identity.account.host != host {
+                return None;
+            }
+        }
         let identity = PullRequestIdentity {
             plugin_id,
             pr_ref: ForgePrRef {
@@ -59,7 +89,7 @@ impl PullRequestKey {
         // Only the canonical encoding is accepted, so one pull request has
         // exactly one key.
         let key = Self::issue(&identity.plugin_id, &identity.pr_ref);
-        (key.0 == value).then_some((key, identity))
+        (key.0 == base).then(|| (Self(value.to_owned()), identity))
     }
 
     #[must_use]

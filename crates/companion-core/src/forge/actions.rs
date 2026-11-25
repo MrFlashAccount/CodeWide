@@ -43,6 +43,9 @@ pub enum ActionKind {
     UpdateBranch,
     Close,
     FixCi,
+    SetCheckRequired,
+    RestartCheck,
+    ManualTrigger,
     Rebase,
     AddressComments,
     ReviewPr,
@@ -58,6 +61,9 @@ impl ActionKind {
             "updateBranch" => Self::UpdateBranch,
             "close" => Self::Close,
             "fixCi" => Self::FixCi,
+            "setCheckRequired" => Self::SetCheckRequired,
+            "restartCheck" => Self::RestartCheck,
+            "manualTrigger" => Self::ManualTrigger,
             "rebase" => Self::Rebase,
             "addressComments" => Self::AddressComments,
             "reviewPr" => Self::ReviewPr,
@@ -76,8 +82,8 @@ impl ActionKind {
     }
 
     /// The companion's own agent scenarios. Only the companion declares
-    /// them, from the pull request's own state (a `fixCi` only on a failed
-    /// check); a plugin descriptor of one of these kinds is dropped.
+    /// them from the pull request's own state; a plugin descriptor of one
+    /// of these kinds is dropped.
     #[must_use]
     pub fn is_scenario(self) -> bool {
         matches!(
@@ -112,6 +118,9 @@ pub struct ActionDescriptor {
     pub placement: String,
     pub order: i64,
     pub is_default: bool,
+    /// The viewer may submit this verdict on its own, without opening the review composer.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub quick_submit: bool,
     pub anchor: Option<ActionAnchor>,
 }
 
@@ -202,8 +211,13 @@ pub fn parse_descriptor(raw: &Value) -> Option<ActionDescriptor> {
         }
         _ => "overflow".to_owned(),
     };
+    let kind = ActionKind::parse(raw.get("kind").and_then(Value::as_str).unwrap_or(""));
     Some(ActionDescriptor {
-        kind: ActionKind::parse(raw.get("kind").and_then(Value::as_str).unwrap_or("")),
+        kind,
+        quick_submit: kind == ActionKind::Verdict
+            && confirm == Confirmation::None
+            && input.is_none()
+            && raw.get("quickSubmit").and_then(Value::as_bool) == Some(true),
         group: text("group").unwrap_or_default(),
         label: text("label").filter(|label| !label.is_empty())?,
         availability,
@@ -253,7 +267,9 @@ pub fn parse_catalog(raw: &[Value]) -> Vec<ActionDescriptor> {
         .iter()
         .filter_map(parse_descriptor)
         .filter(|action| {
-            !action.action_id.starts_with(SCENARIO_ACTION_PREFIX) && !action.kind.is_scenario()
+            !action.action_id.starts_with(SCENARIO_ACTION_PREFIX)
+                && !action.kind.is_scenario()
+                && action.kind != ActionKind::ManualTrigger
         })
         .collect();
     actions.sort_by_key(|action| action.order);
@@ -311,12 +327,19 @@ pub fn validate_input(action: &ActionDescriptor, input: &Value) -> Result<(), Fo
             Err(ForgeError::invalid("this action takes no input"))
         };
     };
-    // Turning a toggle off needs no input.
-    if input.is_null() && action.toggle_on() == Some(true) {
+    // Existing switches with setup inputs need them only when enabling the feature.
+    // A merge requirement can require a reason specifically when it is waived.
+    if input.is_null()
+        && action.toggle_on() == Some(true)
+        && action.kind != ActionKind::SetCheckRequired
+    {
         return Ok(());
     }
     let valid = match spec.get("type").and_then(Value::as_str) {
-        Some("text") => input.as_str().is_some_and(|text| text.len() <= 4_096),
+        Some("text") => input.as_str().is_some_and(|text| {
+            text.len() <= 4_096
+                && (action.kind != ActionKind::SetCheckRequired || !text.trim().is_empty())
+        }),
         Some("boolean") => input.is_boolean(),
         Some("enum") => input.as_str().is_some_and(|value| {
             spec.get("options")
@@ -346,6 +369,8 @@ pub enum RunState {
 #[serde(rename_all = "camelCase")]
 pub enum RunKind {
     Action,
+    /// The journal target binds a manual start to its check and head.
+    CheckTrigger,
     Submit,
     Scenario,
     /// `companion/pullRequest/comment/create`; `actionId` is `comment`.
@@ -574,6 +599,47 @@ mod tests {
     }
 
     #[test]
+    fn quick_submit_requires_an_explicit_input_free_verdict_without_confirmation() {
+        let mut wire = raw("provider-choice", "verdict", "none");
+        assert!(!parse_descriptor(&wire).expect("valid verdict").quick_submit);
+        wire["quickSubmit"] = json!(true);
+        let parsed = parse_descriptor(&wire).expect("valid verdict");
+        assert_eq!(
+            serde_json::to_value(parsed).expect("wire descriptor")["quickSubmit"],
+            true
+        );
+        for (field, value) in [
+            ("kind", json!("extension")),
+            ("confirm", json!("destructive")),
+            ("input", json!({"type": "text", "label": "Reason"})),
+            ("quickSubmit", json!("true")),
+        ] {
+            let mut changed = wire.clone();
+            changed[field] = value;
+            assert!(
+                !parse_descriptor(&changed)
+                    .expect("valid action")
+                    .quick_submit
+            );
+        }
+    }
+
+    #[test]
+    fn waiving_a_requirement_with_a_reason_accepts_only_nonempty_text() {
+        let mut wire = raw("waive", "setCheckRequired", "none");
+        wire["toggle"] = json!({"on": true});
+        wire["input"] = json!({"type": "text", "label": "Reason"});
+        let requirement = parse_descriptor(&wire).expect("valid requirement");
+        assert!(validate_input(&requirement, &Value::Null).is_err());
+        assert!(validate_input(&requirement, &json!("  ")).is_err());
+        assert!(validate_input(&requirement, &json!("Covered by the other job")).is_ok());
+
+        wire["kind"] = json!("autoMerge");
+        let existing_toggle = parse_descriptor(&wire).expect("valid auto-merge");
+        assert!(validate_input(&existing_toggle, &Value::Null).is_ok());
+    }
+
+    #[test]
     fn floors_raise_levels_and_unknown_values_follow_the_contract() {
         let merge = parse_descriptor(&raw("merge", "merge", "none")).expect("merge");
         assert_eq!(merge.effective_confirmation(), Confirmation::Destructive);
@@ -637,8 +703,7 @@ mod tests {
         c["isDefault"] = json!(true);
         c["order"] = json!(3);
         let spoof = raw("codewide.scenario.fixCi", "fixCi", "none");
-        // A plugin's own fixCi, anchored to a check the companion never
-        // judged failed, is dropped like a spoofed scenario id.
+        // A plugin cannot attach the companion's whole-PR diagnosis to a check.
         let mut plugin_fix = raw("plugin.fix", "fixCi", "none");
         plugin_fix["anchor"] = json!({"kind": "checks", "checkId": "passing"});
         let actions = parse_catalog(&[a, b, c, spoof, plugin_fix]);

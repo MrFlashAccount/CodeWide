@@ -23,6 +23,8 @@ pub mod auth;
 pub mod bundled;
 pub mod cache;
 pub mod chat_workspace;
+mod check_triggers;
+mod comment_attachments;
 pub mod comments;
 pub mod conversation;
 pub mod declarations;
@@ -34,6 +36,7 @@ pub mod icons;
 pub mod identity;
 pub mod ids;
 pub mod limits;
+mod link_resolver;
 pub mod links;
 pub mod media;
 pub mod plugin_client;
@@ -42,6 +45,7 @@ pub mod providers;
 pub mod reads;
 pub mod registry;
 pub mod review_chat;
+pub(crate) mod review_chat_input;
 pub mod scenario_runs;
 pub mod scenarios;
 pub mod submit;
@@ -127,18 +131,6 @@ impl ForgeEvents {
     pub async fn list(&self) {
         self.send(json!({"scope": "list"})).await;
     }
-
-    pub async fn pull_request(&self, key: &PullRequestKey) {
-        self.send(json!({"scope": "pullRequest", "pullRequest": key}))
-            .await;
-    }
-
-    /// Only the pull request's scenario states changed (a run's turn
-    /// started or ended); no plugin read is stale.
-    pub async fn scenarios(&self, key: &PullRequestKey) {
-        self.send(json!({"scope": "scenarios", "pullRequest": key}))
-            .await;
-    }
 }
 
 /// Everything the forge flows share.
@@ -166,6 +158,26 @@ pub struct ForgeContext {
 }
 
 impl ForgeContext {
+    // Account-specific views cache independently, while edits and scenario state belong to the PR.
+    async fn publish_pr(&self, key: &PullRequestKey, scope: &str) {
+        let mut params = json!({"scope": scope, "pullRequest": key.canonical_str()});
+        if let Some(identity) = key.identity() {
+            let links = self
+                .accounts
+                .links_of(&identity.plugin_id)
+                .unwrap_or_default();
+            let aliases: Vec<_> = links
+                .iter()
+                .filter(|link| link.host.eq_ignore_ascii_case(&identity.pr_ref.host))
+                .map(|link| key.with_account(&link.key))
+                .collect();
+            if !aliases.is_empty() {
+                params["aliases"] = json!(aliases);
+            }
+        }
+        self.events.send(params).await;
+    }
+
     /// A started and initialized session of an enabled provider.
     ///
     /// # Errors
@@ -203,6 +215,15 @@ impl ForgeContext {
             .into_iter()
             .filter(|link| link.host.eq_ignore_ascii_case(&identity.pr_ref.host))
             .collect();
+        if let Some(selected) = key.bound_account() {
+            return candidates
+                .into_iter()
+                .find(|link| link.key == selected)
+                .ok_or_else(|| ForgeError::AuthRequired {
+                    account: Some(selected),
+                    hint: "Reconnect the selected account".into(),
+                });
+        }
         if let Some(listed) = self.cache.listed_by(key)
             && let Some(link) = candidates.iter().find(|link| link.key == listed)
         {
@@ -324,6 +345,7 @@ impl ForgeService {
         matches!(
             method,
             "companion/forge/accounts/read"
+                | "companion/pullRequest/resolveLink"
                 | "companion/pullRequestLinks/read"
                 | "companion/pullRequests/list"
                 | "companion/pullRequests/search"
@@ -331,6 +353,7 @@ impl ForgeService {
                 | "companion/pullRequest/activity/read"
                 | "companion/pullRequest/conversation/read"
                 | "companion/pullRequest/scenarios/read"
+                | "companion/pullRequest/checkTriggers/read"
                 | "companion/pullRequest/files/read"
                 | "companion/pullRequest/fileContent/read"
                 | "companion/review/hunks/read"
@@ -347,6 +370,7 @@ impl ForgeService {
     pub async fn handle(&self, method: &str, params: &Value) -> Result<Value, ForgeError> {
         let context = &self.context;
         match method {
+            "companion/pullRequest/resolveLink" => link_resolver::resolve(context, params).await,
             "companion/forge/accounts/read" => directory::read(context).await,
             "companion/forge/provider/setEnabled" => directory::set_enabled(context, params).await,
             "companion/forge/auth/start" => auth::start(context, params).await,
@@ -367,6 +391,9 @@ impl ForgeService {
                 thread_resolution::resolve(context, params).await
             }
             "companion/pullRequest/files/read" => reads::files(context, params).await,
+            "companion/pullRequest/checkTriggers/read" => {
+                check_triggers::read(context, params).await
+            }
             "companion/pullRequest/fileContent/read" => file_content::read(context, params).await,
             "companion/pullRequest/action/run" => action_run::run(context, params).await,
             "companion/pullRequest/review/submit" => submit::submit(context, params).await,

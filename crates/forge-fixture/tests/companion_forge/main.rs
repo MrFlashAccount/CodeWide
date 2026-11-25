@@ -3,6 +3,7 @@
 #![allow(clippy::expect_used)]
 
 mod auth;
+mod check_triggers;
 mod conversation;
 mod file_content;
 mod hosts;

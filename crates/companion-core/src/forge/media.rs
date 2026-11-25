@@ -84,8 +84,7 @@ pub async fn route(context: &ForgeContext, url: &url::Url) -> MediaRoute {
             }
             None => Declaration {
                 capabilities: vec![capability::CONVERSATION.to_owned()],
-                media_hosts: Vec::new(),
-                web_hosts: Vec::new(),
+                ..Declaration::default()
             },
         };
         let candidates = candidates(&declaration, &authority, &on_host, &connected);

@@ -79,6 +79,61 @@ async fn thread_start_binds_the_requested_provider_and_turns_bypass_the_primary(
 }
 
 #[tokio::test]
+async fn queued_composer_submission_delivers_the_selected_link_to_the_provider() -> TestResult {
+    use codewide_companion::forge::{ids::PullRequestKey, links::Links, wire::LinkSource};
+    use forge_protocol::ForgePrRef;
+
+    let mut harness = Harness::start(default_answer, |_| Vec::new()).await?;
+    let id = harness.new_fake_thread().await?;
+    let thread = AppThreadId::parse(&id).ok_or("invalid thread")?;
+    let links = Links::new(harness.store.clone());
+    let link = |provider, host: &str, repository: &str| {
+        let key = PullRequestKey::issue(
+            provider,
+            &ForgePrRef {
+                host: host.into(),
+                repository: repository.into(),
+                number: "42".into(),
+            },
+        );
+        links
+            .link(&key, provider, "42", &thread, LinkSource::Manual)
+            .map_err(|e| format!("{e:?}"))?;
+        Ok::<_, String>(key)
+    };
+    link("github", "github.example", "acme/first")?;
+    let selected = link("arcanum", "arcanum.example", "second")?;
+    let command = "message-from-pr";
+    let queued = harness.rpc("put", "companion/queue/put", json!({"command":{
+        "commandId":command, "remoteThreadId":id, "method":"turn/start", "presentation":"delivery",
+        "params":{"threadId":id, "clientUserMessageId":command, "codewideReviewPullRequest":selected,
+            "input":[{"type":"text","text":"Address the questions in the PR"}]}
+    }})).await?;
+    assert!(queued.get("error").is_none(), "{queued}");
+    wait_for_state(&harness.store, command, OutboxState::Delivered).await?;
+    let started = harness
+        .fake
+        .started
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let [turn] = started.as_slice() else {
+        return Err("expected one provider turn".into());
+    };
+    let input = serde_json::to_value(&turn.input)?;
+    assert_eq!(input[0]["text"], "Address the questions in the PR");
+    let context = input[1]["text"]
+        .as_str()
+        .ok_or("provider received no PR context")?;
+    for token in ["arcanum.example", "second", "42"] {
+        assert!(context.contains(token));
+    }
+    assert!(!context.contains("github.example"));
+    drop(started);
+    harness.stop();
+    Ok(())
+}
+
+#[tokio::test]
 async fn turn_start_overrides_become_thread_settings_before_the_turn() -> TestResult {
     // A new chat sends its effort and access choice only with its first
     // `turn/start`; a neutral provider must receive them as thread settings.

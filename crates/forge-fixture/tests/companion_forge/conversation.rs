@@ -31,7 +31,11 @@ async fn invalidations(harness: &Harness, key: &str) -> usize {
         .lock()
         .expect("events")
         .iter()
-        .filter(|event| event["params"] == json!({"scope": "pullRequest", "pullRequest": key}))
+        .filter(|event| {
+            event["method"] == "companion/forge/invalidated"
+                && event["params"]["scope"] == "pullRequest"
+                && event["params"]["pullRequest"] == key
+        })
         .count()
 }
 
@@ -508,4 +512,87 @@ async fn a_focused_scenario_context_holds_only_its_review_thread() {
         .await
         .expect_err("only addressComments is focused");
     assert_eq!(refused["code"], -32_602);
+}
+
+#[tokio::test]
+async fn a_legacy_per_check_start_replays_its_record_but_cannot_start_another_turn()
+-> Result<(), Box<dyn std::error::Error>> {
+    use companion_core::forge::actions::{Begin, RunKind, RunState};
+
+    let (harness, key) = connected(&base_fixture()).await;
+    let (key_value, _) = ForgeContext::pull_request(&json!(key)).expect("issued key");
+    let journal = &harness.forge.context().journal;
+    let old_id = "legacy-job-diagnosis";
+    let Begin::Run(record) = journal
+        .begin(
+            old_id,
+            RunKind::Scenario,
+            &key_value,
+            "codewide.scenario.fixCi",
+        )
+        .expect("old scenario")
+    else {
+        return Err("fresh journal unexpectedly replayed an existing intent".into());
+    };
+    let result = json!({"threadId":"previous-review-chat","created":false});
+    journal
+        .finish(
+            old_id,
+            &record,
+            RunState::Succeeded,
+            Some(result.clone()),
+            None,
+        )
+        .expect("previous response");
+
+    let request = |id| {
+        json!({"pullRequest":key,"headRevision":"head-1","scenario":"fixCi",
+                       "checkId":"ci-1","target":{"kind":"reviewChat"},"idempotencyKey":id})
+    };
+    assert_eq!(
+        harness
+            .ok("companion/pullRequest/scenario/start", request(old_id))
+            .await,
+        result
+    );
+    let error = harness
+        .call(
+            "companion/pullRequest/scenario/start",
+            request("fresh-job-diagnosis"),
+        )
+        .await
+        .expect_err("refresh to use the PR-wide action");
+    assert_eq!(error["code"], -32_602);
+    assert_eq!(harness.writes("forge.pullRequest.action.run"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn selected_attachment_is_uploaded_to_the_pr_account_before_a_separate_comment_write() {
+    let mut fixture = base_fixture();
+    fixture["commentAttachment"] = json!({
+        "name":"a screenshot.png", "contentType":"image/png", "bytesBase64":"cG5n",
+        "ref":{"host":"forge.test","repository":"octo/repo","number":"7"},
+        "url":"https://forge.test/media/test"
+    });
+    let (harness, key) = connected(&fixture).await;
+    let asset = harness
+        .forge
+        .upload_comment_attachment(&key, "a screenshot.png".into(), "image/png".into(), b"png")
+        .await
+        .expect("upload");
+    assert_eq!(asset.url, "https://forge.test/media/test");
+    assert_eq!(harness.writes(COMMENT_CREATE), 0);
+    let (older, key) = connected(&base_fixture()).await;
+    assert!(
+        older
+            .forge
+            .upload_comment_attachment(&key, "a.png".into(), "image/png".into(), b"png")
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        older.plugin_requests(forge_protocol::methods::COMMENT_ATTACHMENT_UPLOAD),
+        0
+    );
 }

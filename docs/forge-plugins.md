@@ -132,12 +132,20 @@ pages on `a.yandex-team.ru`). It is optional and omitted when empty. A pull requ
 a comment `url`, a review's `reviewUrl` and an action's `openUrl` reach a client only as `https`
 on the account host or one of these; anything else is dropped.
 
+For a check's job page a plugin supplies `detailsUrl`. It may declare additional
+exact hosts in `checkViewerHosts` for job results served separately from forge pages.
+Only check links use this declaration. Companion keeps an accepted account-host
+page in `detailsUrl` for older clients and returns an accepted page on a declared
+web or check-viewer host in `viewerUrl`. It drops other pages and ignores any
+`viewerUrl` in plugin input. A client reading older cached data checks the
+account host before opening `detailsUrl`.
+
 ## Capabilities
 
 Required: `forge.auth@1`, `forge.list@1`, `forge.read@1`, `forge.diff@1`, `forge.actions@1`,
 `forge.review@1`.
 
-Optional: `forge.search@1`, `forge.checks@1`, `forge.viewed@1`, `forge.resolve@1`,
+Optional: `forge.search@1`, `forge.checks@1`, `forge.checkTriggers@1`, `forge.viewed@1`, `forge.resolve@1`,
 `forge.scenarioContext@1`, `forge.conversation@1`, `forge.comments@1`,
 `forge.conversation.resolve@1` (these three are specified in
 [Pull request conversation](forge-conversation.md); `forge.conversation.resolve@1` resolves review
@@ -178,21 +186,24 @@ known and takes only the remotes.
 | `forge.pullRequests.search` | `forge.search@1` | `{ account, query, cursor \| null, limit ≤ 50 }` → the same page shape; `query` has text, quick-view category, include/exclude sets for repositories, people, review, state, checks, labels and branches, plus sort; values within one field are ORed and different fields are ANDed |
 | `forge.pullRequests.byBranch` | `forge.resolve@1` | `{ account, repository, branch }` → `{ refs: ForgePrRef[] }`, open PRs only |
 | `forge.repository.resolve` | `forge.resolve@1` | `{ remotes: string[] }` → `{ host, repository }` or `-32004` |
+| `forge.pullRequest.resolveLink` | `forge.pullRequestLink@1` | `{ url }` → an account-independent `ForgePrRef` or JSON `null` for other pages. Input is an HTTPS URL on a linked account host or a declared `webHosts` host, without credentials, query or fragment. Companion verifies read access for each linked account before offering it. |
 | `forge.pullRequest.read` | `forge.read@1` | `{ account, ref }` → overview fields except `links`, `localCheckout` and `catalog`; `activityRevision`, `checks`, `checkItems` and `activity` are optional, and `forge.checks@1` results take precedence |
 | `forge.pullRequest.activity` | `forge.read@1` | `{ account, ref, cursor }` → `ActivityPage`: items newest first by `createdAt` within a page; the first page (also the `activity` of `forge.pullRequest.read`) holds the newest, `nextCursor` continues to older items (a review-thread reply may stay on the page of its thread's first comment) |
 | `forge.pullRequest.checks` | `forge.checks@1` | `{ account, ref, headRevision }` → `{ summary: CheckSummary, items: CheckItem[] }` |
+| `forge.pullRequest.checkTriggers` | `forge.checkTriggers@1` | `{ account, ref, headRevision, checkId? }` → `{ headRevision, actions }` for startable jobs inside checks |
 | `forge.pullRequest.files` | `forge.diff@1` | `{ account, ref, headRevision, cursor \| null }` → `{ headRevision, files, truncated, nextCursor }`; a file's `patch` is `{ state: "present", text }`, `tooLarge`, `binary` or `notProvided` (the companion adds hunks), and `viewed: boolean \| null` |
 | `forge.pullRequest.actions` | `forge.actions@1` | `{ account, ref }` → `ActionCatalog` |
-| `forge.pullRequest.action.run` | `forge.actions@1` | `{ account, ref, actionId, headRevision, input, idempotencyKey }` → `{ message \| null, openUrl? }` |
+| `forge.pullRequest.action.run` | `forge.actions@1` | `{ account, ref, actionId, headRevision, input, idempotencyKey, triggerCheckId? }` → `{ message \| null, openUrl? }` |
 | `forge.pullRequest.review.submit` | `forge.review@1` | `{ account, ref, headRevision, verdictActionId, body \| null, comments: { draftId, path, side, startLine, endLine, body }[], idempotencyKey }` → `{ reviewUrl \| null, comments: { draftId, state: "published" \| "failed" \| "outdated", error \| null }[] }` |
 | `forge.pullRequest.viewed.set` | `forge.viewed@1` | `{ account, ref, headRevision, path, viewed }` → `{}` |
 | `forge.pullRequest.conversation` | `forge.conversation@1` | `{ account, ref, cursor \| null }` → `ConversationPage` (see [forge-conversation.md](forge-conversation.md)); comments may carry credential-free direct image URLs in `media`, which the companion keeps only on declared `mediaHosts` |
 | `forge.media.read` | `forge.conversation@1` | `{ account, url }` → `{ contentType, bytesBase64 }`, at most 10 MiB; a URL outside the account's forge and media hosts, or a redirect there, answers `-32602`; larger media answer `-32113` with `data.kind = "tooLarge"` |
+| `forge.pullRequest.commentAttachment.upload` | `forge.commentAttachments@1` | `{ account, ref, name, contentType, bytesBase64 }` → `{ url }`. Uploads up to 10 MiB to the forge and returns a stable HTTPS URL for readers of the PR. The separate comment write includes that URL in Markdown. |
 | `forge.pullRequest.comment.create` | `forge.comments@1` | `{ account, ref, body, idempotencyKey }` → `{ comment }` |
 | `forge.pullRequest.reviewThread.reply` | `forge.comments@1` | `{ account, ref, threadId, body, idempotencyKey }` → `{ comment }`; a thread of another pull request answers `-32115` |
 | `forge.pullRequest.reviewThread.resolve` | `forge.conversation.resolve@1` | `{ account, ref, threadId, resolved, idempotencyKey }` → `{ resolved, viewerCanToggle }`; a thread of another pull request answers `-32115`, a thread that is not a conversation or a change the viewer may not make `-32113` |
 | `forge.pullRequest.fileContent` | `forge.fileContent@1` | `{ account, ref, headRevision, path }` → `{ state: "text", content }`, `{ state: "tooLarge", bytes \| null }`, `{ state: "binary" }` or `{ state: "missing" }`; see [Whole-file content](#whole-file-content) |
-| `forge.pullRequest.scenarioContext` | `forge.scenarioContext@1` | `{ account, ref, scenario, checkId \| null }` → `{ conflicts, failingChecks: { checkId, name, logExcerpt }[], comments: { author, path \| null, line \| null, body }[] }`, at most 64 KiB |
+| `forge.pullRequest.scenarioContext` | `forge.scenarioContext@1` | `{ account, ref, scenario, checkId \| null }` → `{ headRevision?, conflicts, failingChecks: { checkId, name, logExcerpt }[], comments: { author, path \| null, line \| null, body }[] }`, at most 64 KiB |
 
 The shared shapes (`AuthMethod`, `CheckSummary`, `CheckItem`, `ActivityPage`, `ActionCatalog`,
 `ActionDescriptor`, overview and file fields) are defined once in `crates/forge-protocol`; the
@@ -207,7 +218,23 @@ companion re-validates every result before it becomes a project type.
   becomes `patchState: "tooLarge"`; forge file limits (GitHub: 300 and 3 000 files) become
   `truncated { shown, total }`.
 
-### Whole-file content
+### Manual check triggers
+
+Opening Checks loads `companion/pullRequest/checkTriggers/read` with the PR key and head revision
+when the provider declares `forge.checkTriggers@1`. This catalog holds enabled `manualTrigger`
+actions anchored to `{ kind: "checks", checkId }`. Each has the provider's display label,
+an opaque action ID unique to the launch and job, null input and toggle, and confirmation
+`none`. Ordinary PR actions and trigger discovery have separate catalogs.
+
+A selection submits one `companion/pullRequest/action/run` per job with its own idempotency key,
+the displayed revision, `actionId`, and `triggerCheckId`. The companion rereads triggers scoped to
+that check. The provider validates the current revision, launch and job again at dispatch. The CI
+service enforces the account's permission when it receives the start. A successful scoped run has `catalog: null`. The client refreshes the trigger read
+and handles each selected job's result individually. If the provider sent a write and cannot
+determine its outcome, it returns plugin error `-32118`. The companion journals the unknown
+outcome and returns `outcomeUnknown` on replay.
+
+## Whole-file content
 
 `forge.fileContent@1` lets a client show a changed file whole, with its changes inline, instead of
 only the recorded patch hunks. `forge.pullRequest.fileContent` reads one file of the head side:
@@ -252,8 +279,15 @@ capability, keeps the patch-only diff while it loads, and keeps it for every sta
 
 ### Action descriptors
 
+A check can report `required` (true or false), `activity` (`queued`,
+`running` or `inactive`) and `onDemand`. A missing value is unknown.
+`setCheckRequired` uses the check's current merge requirement in `toggle.on`.
+A text input on this action requires a nonblank reason, including when the
+switch is on. `restartCheck` targets a single provider job. Both actions are
+anchored to that job's check ID and inherit the provider's permissions.
+
 A plugin declares PR actions as `ActionDescriptor`s for one `headRevision`. Known kinds are
-`verdict`, `merge`, `autoMerge`, `updateBranch`, `close`; the companion adds its own scenario
+`verdict`, `merge`, `autoMerge`, `updateBranch`, `close`, `setCheckRequired` and `restartCheck`. The companion adds its own scenario
 kinds (`fixCi`, `rebase`, `addressComments`, `reviewPr`) under `codewide.scenario.<kind>`. Any
 other kind is treated as `extension`.
 
@@ -277,7 +311,7 @@ the header row, by `placement`:
 | `{ "kind": "header" }` | the header action row | — |
 | `{ "kind": "checks", "checkId" }` | that check's row in the checks sheet | overflow |
 | `{ "kind": "checksSection" }` | the Checks row of the Status section, for whole-PR CI actions such as Start CI; the row is shown for it even when the plugin reports no checks (no `forge.checks@1`, or none ran yet) | overflow (merged or closed PR) |
-| `{ "kind": "conflict" }` | the merge-conflict state | overflow (no conflict) |
+| `{ "kind": "conflict" }` | the conflict warning beside the target branch in the PR header | overflow (no conflict) |
 | `{ "kind": "reviewThread", "reviewThreadId" }` | that review thread | overflow |
 | `{ "kind": "file", "path" }` | that file in Changes | overflow |
 
@@ -292,19 +326,25 @@ list the overflow menu after the page's own Copy link, Share and Open in the for
 
 Scenario actions belong to the companion. A plugin descriptor whose `actionId` starts with
 `codewide.scenario.` or whose kind is a scenario kind is dropped, so no plugin can attach an agent
-scenario to a target the companion did not judge. The companion derives `fixCi` from the checks:
+scenario to a target the companion did not judge. The companion offers one **Address all checks** action when the
+fresh PR overview contains individual checks, including when they pass or are still running.
+It has the stable ID `codewide.scenario.fixCi`, the `checksSection` anchor, and no `checkId`.
+The scenario takes the displayed head revision and runs in the PR's canonical chat, including
+when there is no local checkout. Its fenced inventory includes the current job IDs, names, states
+and any requirement or execution metadata the provider supplied. Failure log excerpts are included
+only for the same head and an unambiguous failed job ID. An admitted job URL is included only
+when it has neither a query nor a fragment. The scenario asks for a read-only diagnosis.
+A restart or a change to the selected jobs is a separate forge action. Stored check-specific
+runs from older clients remain readable, and their submitted idempotency keys still replay.
 
-- every `failed` `CheckItem` gets its own `fixCi` action anchored `{ kind: "checks", checkId }`,
-  with a distinct opaque `actionId`; starting it names that `checkId`, and its run state is that
-  check's scenario slot;
-- `passed`, `skipped`, `pending` and `cancelled` checks never get one: there is nothing for an
-  agent to repair, and a cancelled run is re-run rather than fixed. A plugin maps
-  `timed_out`, `action_required` and similar problem outcomes to `failed`;
-- a `checkId` shared by several items is ambiguous and is never an anchor (a client would show the
-  action on every row with that id). When checks are failing but no failed item can be anchored,
-  one whole-PR `fixCi` (`codewide.scenario.fixCi`, no anchor) is offered instead.
+When an open or draft PR reports `merge.state: "conflicts"`, the companion offers
+**Rebase in agent** in the PR header. It opens the canonical PR chat with the head and base
+branches and asks the agent to resolve conflicts. The normal workspace selection applies if a
+chat must be created. A blocked merge or a pending mergeability calculation alone does not
+offer a rebase.
 
-A plugin must therefore give each `CheckItem` a `checkId` unique within its pull request.
+Give every `CheckItem` a `checkId` unique within its pull request so row-specific controls
+and job diagnostics can identify the correct check.
 
 An action the forge accepts only from its own web page answers `openUrl`: the pull request's page
 for the person to finish it there, with a `message` saying so. The companion keeps it only as
@@ -324,17 +364,17 @@ them:
 | `extension` | plugin level |
 
 Verdicts are a plugin-declared group (for example Approve, Request changes, Comment on GitHub;
-Arcanum's Block is a destructive verdict). The Submit sheet is their confirmation and their only
-trigger. Clients decide how to offer them only by availability:
+Arcanum's Block is a destructive verdict). An enabled verdict can opt into standalone submission with
+`quickSubmit: true` when it has no input and `confirm: "none"`. All other verdicts use the review composer.
 
 - the plugin marks the verdict it recommends now `isDefault` (for example Ship or Sticky ship on
   Arcanum, by the pull request and its settings); a client leads with it while it is enabled;
 - a verdict the viewer cannot give stays in the catalog as `disabled` with the forge's reason (for
   example on the author's own pull request), so the client can show why;
 - when at least two verdicts are enabled, Android shows a split button on Details whose main
-  segment is the lead verdict and whose menu lists every verdict; any choice opens the Submit
-  sheet with that verdict. With only one enabled verdict (typically Comment) nothing prominent is
-  shown and Submit review stays in the overflow menu.
+  segment is the lead verdict and whose menu lists every verdict. A standalone approval submits only
+  the chosen verdict on the displayed head. Drafts and summaries are published from the composer.
+  A lone standalone approval remains prominent. A lone composer verdict lives in the overflow menu.
 
 ## Authentication and credentials
 
@@ -475,6 +515,7 @@ Plugin errors (`forge-protocol` namespace):
 | `-32113` | forgeRejected |
 | `-32114` | rateLimited |
 | `-32115` | notFound |
+| `-32118` | dispatched write with unknown outcome |
 
 The companion maps them to its own client range `-32080..-32089`:
 
@@ -483,6 +524,7 @@ The companion maps them to its own client range `-32080..-32089`:
 - `-32112` with `data.headRevision` → `-32082` with a refreshed catalog; without a head revision
   it becomes `-32083`;
 - `-32113` and any unknown plugin code → `-32083 forgeRejected`;
+- `-32118` during an action write → `-32083 outcomeUnknown` with its journaled run ID;
 - `-32114` → `-32087` with `data.retryAfterSeconds` when the plugin sent it;
 - `-32004` and `-32115` → `-32088 notFound`;
 - `-32602` → `-32602`.
@@ -657,7 +699,8 @@ The Arcanum plugin is built outside this repository and uses the same forge prot
 - `forge.fileContent@1` (optional): `forge.pullRequest.fileContent` answers the file's content at
   that diff set's head, by the rules in [Whole-file content](#whole-file-content).
 - Verdicts are a plugin-declared group; Block is marked `destructive`. The verdict the pull
-  request calls for (Ship or Sticky ship) is the group's `isDefault`; verdicts the viewer cannot
+  request permits and the viewer prefers (Ship or Sticky ship, from `settings.stickyShipByDefault`
+  in Arcanum’s `GET /settings`) is the group's `isDefault`; verdicts the viewer cannot
   give stay `disabled` with Arcanum's reason.
 - Start CI is anchored `{ "kind": "checksSection" }`; Discard is a `close` action with
   `placement: "overflow"` and `confirm: "destructive"`.

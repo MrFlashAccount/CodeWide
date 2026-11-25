@@ -11,6 +11,7 @@ use serde_json::Value;
 
 use super::{
     attention::AttentionWire,
+    declarations::Declaration,
     ids::{AuthFlowId, ForgeAccountKey, HeadRevision, PullRequestKey},
 };
 use crate::review::hunks::Hunk;
@@ -55,6 +56,7 @@ pub struct ForgeProviderWire {
     pub plugin_id: String,
     pub forge_name: String,
     pub icon: Option<ProviderIconWire>,
+    pub link_hosts: Vec<String>,
     pub built_in: bool,
     pub enabled: bool,
     pub capabilities: Vec<String>,
@@ -130,6 +132,24 @@ pub fn page_on_host(candidate: String, host: &str, web_hosts: &[String]) -> Stri
         candidate
     } else {
         String::new()
+    }
+}
+
+/// Same-host job pages keep the legacy field. Only an admitted cross-host page
+/// may use the new field, so clients can also safely open older cached overviews.
+pub(super) fn admit_check_page(item: &mut CheckItem, host: &str, declaration: &Declaration) {
+    let Some(url) = item.details_url.take() else {
+        return;
+    };
+    if https_on_host(&url, host) {
+        item.details_url = Some(url);
+    } else if declaration
+        .web_hosts
+        .iter()
+        .chain(&declaration.check_viewer_hosts)
+        .any(|web| https_on_host(&url, web))
+    {
+        item.viewer_url = Some(url);
     }
 }
 
@@ -360,6 +380,42 @@ pub fn rfc3339(moment: time::OffsetDateTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn job_pages_keep_legacy_same_host_links_and_admit_declared_viewer_hosts()
+    -> serde_json::Result<()> {
+        let same = "https://forge.example/jobs/1";
+        let viewer = "https://ci.example/jobs/1";
+        let site = "https://web.example/jobs/1";
+        let declaration = Declaration {
+            web_hosts: vec!["web.example".into()],
+            check_viewer_hosts: vec!["ci.example".into()],
+            ..Declaration::default()
+        };
+        assert!(!https_on_page_host(
+            viewer,
+            "forge.example",
+            &declaration.web_hosts
+        ));
+        for (candidate, expected_legacy, expected_viewer) in [
+            (Some(same), Some(same), None),
+            (Some(site), None, Some(site)),
+            (Some(viewer), None, Some(viewer)),
+            (Some("https://unknown.example/jobs/1"), None, None),
+            (Some("http://ci.example/jobs/1"), None, None),
+            (Some("https://ci.example:8000/jobs/1"), None, None),
+            (None, None, None),
+        ] {
+            let mut item: CheckItem = serde_json::from_value(serde_json::json!({
+                "checkId": "build", "name": "Build", "state": "pending",
+                "detailsUrl": candidate, "viewerUrl": "https://untrusted.example/job"
+            }))?;
+            admit_check_page(&mut item, "forge.example", &declaration);
+            assert_eq!(item.details_url.as_deref(), expected_legacy);
+            assert_eq!(item.viewer_url.as_deref(), expected_viewer);
+        }
+        Ok(())
+    }
 
     #[test]
     fn token_pages_must_be_https_on_the_provider_host() {

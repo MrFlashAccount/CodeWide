@@ -116,6 +116,7 @@
     "DELETE /v1/device",
     "GET /v1/files/download",
     "HEAD /v1/files/download",
+    "POST /v1/forge/comment-attachment",
     "HEAD /v1/files/upload",
     "PUT /v1/files/upload",
     "DELETE /v1/files/upload",

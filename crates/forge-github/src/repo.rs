@@ -40,6 +40,40 @@ impl Repo {
     }
 }
 
+/// Recognizes GitHub PR pages and their Files, Commits and Checks tabs.
+pub(super) fn pull_request_link(input: &str) -> Option<ForgePrRef> {
+    let url = url::Url::parse(input).ok()?;
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+    {
+        return None;
+    }
+    let mut parts = url
+        .path()
+        .trim_end_matches('/')
+        .strip_prefix('/')?
+        .split('/');
+    let repository = Repo::parse(&format!("{}/{}", parts.next()?, parts.next()?))
+        .ok()?
+        .full();
+    if parts.next()? != "pull" {
+        return None;
+    }
+    let number = parts.next()?.parse::<u64>().ok().filter(|n| *n > 0)?;
+    if !matches!(parts.next(), None | Some("files" | "commits" | "checks"))
+        || parts.next().is_some()
+    {
+        return None;
+    }
+    Some(ForgePrRef {
+        host: url.host_str()?.to_owned(),
+        repository,
+        number: number.to_string(),
+    })
+}
+
 fn safe_segment(segment: &str) -> bool {
     !segment.is_empty()
         && segment.len() <= 100
@@ -170,6 +204,26 @@ pub async fn stale_or(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pr_links_accept_the_pr_and_its_tabs() {
+        for path in ["pull/7", "pull/7/files", "pull/7/commits/"] {
+            assert_eq!(
+                pull_request_link(&format!("https://enterprise.test/team/repo/{path}")),
+                Some(ForgePrRef {
+                    host: "enterprise.test".into(),
+                    repository: "team/repo".into(),
+                    number: "7".into(),
+                })
+            );
+        }
+        for path in ["issues/7", "pull/0", "pull/nope", "pull/7/files/not-a-tab"] {
+            assert!(
+                super::pull_request_link(&format!("https://enterprise.test/team/repo/{path}"))
+                    .is_none()
+            );
+        }
+    }
 
     #[test]
     fn parses_common_remote_forms_and_strips_credentials() {

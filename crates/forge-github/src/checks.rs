@@ -1,6 +1,6 @@
 //! `forge.pullRequest.checks`: check runs and commit statuses of one head.
 
-use forge_protocol::{CheckItem, CheckItemState, ChecksResult, PluginError};
+use forge_protocol::{CheckActivity, CheckItem, CheckItemState, ChecksResult, PluginError};
 use serde_json::Value;
 
 use crate::{
@@ -67,6 +67,10 @@ pub async fn checks(
                 Some(_) => CheckItemState::Failed,
                 None => CheckItemState::Pending,
             },
+            required: None,
+            activity: run_activity(conclusion, status),
+            on_demand: None,
+            viewer_url: None,
             duration_seconds: duration(run),
             details_url: run
                 .get("html_url")
@@ -94,6 +98,10 @@ pub async fn checks(
                 "failure" | "error" => CheckItemState::Failed,
                 _ => CheckItemState::Pending,
             },
+            required: None,
+            activity: None,
+            on_demand: None,
+            viewer_url: None,
             duration_seconds: None,
             details_url: status
                 .get("target_url")
@@ -105,6 +113,14 @@ pub async fn checks(
         summary: tally.summary(),
         items,
     })
+}
+
+fn run_activity(conclusion: Option<&str>, status: &str) -> Option<CheckActivity> {
+    match (conclusion, status) {
+        (None, "in_progress") => Some(CheckActivity::Running),
+        (None, "queued" | "waiting" | "requested" | "pending") => Some(CheckActivity::Queued),
+        _ => None,
+    }
 }
 
 fn duration(run: &Value) -> Option<u64> {

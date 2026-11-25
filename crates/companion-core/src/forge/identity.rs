@@ -268,6 +268,7 @@ mod tests {
             capabilities: Vec::new(),
             media_hosts: Vec::new(),
             web_hosts: Vec::new(),
+            check_viewer_hosts: Vec::new(),
         }
     }
 

@@ -557,7 +557,7 @@ pub async fn load_overview(
         // head the overview does not show.
         actions.clear();
     }
-    let (checks, check_items) = match checks {
+    let (checks, mut check_items) = match checks {
         Some(Ok(result)) => (result.summary, result.items),
         Some(Err(reason)) => (CheckSummary::unavailable(reason), Vec::new()),
         None => (
@@ -569,7 +569,6 @@ pub async fn load_overview(
     };
     actions.extend(scenarios::descriptors(
         &read,
-        &checks,
         &check_items,
         local_checkout.is_some(),
     ));
@@ -582,6 +581,13 @@ pub async fn load_overview(
         super::attention::AttentionStore::revision,
     );
     let attention = context.attention.state(key, attention_revision)?;
+    let declaration = context
+        .declarations
+        .get(&identity.plugin_id)
+        .unwrap_or_default();
+    for item in &mut check_items {
+        super::wire::admit_check_page(item, &identity.pr_ref.host, &declaration);
+    }
     let overview = OverviewWire {
         pull_request: key.clone(),
         account: context.accounts.wire(&account),
@@ -593,7 +599,7 @@ pub async fn load_overview(
         web_url: super::wire::page_on_host(
             read.web_url,
             &identity.pr_ref.host,
-            &context.declarations.web_hosts(&identity.plugin_id),
+            &declaration.web_hosts,
         ),
         fetched_at: now_rfc3339(),
         catalog: catalog_wire(head_revision.clone(), &actions),

@@ -90,6 +90,10 @@ pub struct InitializeResult {
     /// an action's `openUrl` point only at an account's host or one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub web_hosts: Vec<String>,
+    /// Extra exact hosts whose check-result pages can open in the browser.
+    /// This grants no access to authenticated media or general forge pages.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub check_viewer_hosts: Vec<String>,
 }
 
 /// The largest icon image, in decoded bytes, the companion accepts.
@@ -387,6 +391,15 @@ pub enum CheckItemState {
     Cancelled,
 }
 
+/// Provider evidence about a job whose execution has not finished.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum CheckActivity {
+    Running,
+    Queued,
+    Inactive,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckItem {
@@ -395,6 +408,16 @@ pub struct CheckItem {
     pub state: CheckItemState,
     pub duration_seconds: Option<u64>,
     pub details_url: Option<String>,
+    /// The provider's merge requirement. Absent when it did not report one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<CheckActivity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_demand: Option<bool>,
+    /// Assigned only by Companion after it validates the provider's job page.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub viewer_url: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -686,6 +709,16 @@ pub struct ChecksParams {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct CheckTriggersParams {
+    #[serde(flatten)]
+    pub checks: ChecksParams,
+    /// Filter to this exact parent check when authorizing a start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ChecksResult {
     pub summary: CheckSummary,
     pub items: Vec<CheckItem>,
@@ -794,6 +827,9 @@ pub struct ActionDescriptor {
     pub confirm: String,
     pub placement: String,
     pub order: i64,
+    /// An input-free verdict with no confirmation may be submitted without review drafts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub quick_submit: bool,
     pub is_default: bool,
     pub anchor: Option<Value>,
 }
@@ -814,6 +850,9 @@ pub struct ActionRunParams {
     pub pr_ref: ForgePrRef,
     pub action_id: String,
     pub head_revision: String,
+    /// Present only for a manual start within this check at this head.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_check_id: Option<String>,
     /// `string | boolean | null`, matching the descriptor's input.
     pub input: Value,
     pub idempotency_key: String,
@@ -955,6 +994,9 @@ pub struct ScenarioComment {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ScenarioContext {
+    /// The revision used to read the failing jobs. Absent for unpinned evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_revision: Option<String>,
     pub conflicts: Vec<String>,
     pub failing_checks: Vec<FailingCheck>,
     pub comments: Vec<ScenarioComment>,
@@ -1457,6 +1499,24 @@ pub struct MediaReadParams {
 pub struct MediaReadResult {
     pub content_type: String,
     pub bytes_base64: String,
+}
+
+/// Selected device bytes for a shareable attachment. The provider owns the upload destination.
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentAttachmentParams {
+    pub account: ForgeAccountRef,
+    #[serde(rename = "ref")]
+    pub pr_ref: ForgePrRef,
+    pub name: String,
+    pub content_type: String,
+    pub bytes_base64: String,
+}
+
+/// A stable URL for other readers of this PR, never a Companion URL.
+#[derive(Deserialize, Serialize)]
+pub struct CommentAttachmentResult {
+    pub url: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

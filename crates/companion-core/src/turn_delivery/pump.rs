@@ -544,6 +544,24 @@ async fn deliver_outbox_start(context: &PumpContext, target: &Target, command: O
             }
         };
     }
+    if claimed.presentation != OutboxPresentation::Notice
+        && let Err(error) = crate::forge::review_chat_input::prepare(
+            &context.turn_delivery.store,
+            &claimed.remote_thread_id,
+            &mut prepared_params,
+        )
+    {
+        context
+            .turn_delivery
+            .resolve_claim(
+                &claimed.remote_thread_id,
+                &claimed.command_id,
+                claim_token,
+                ClaimResolution::Rejected(error.to_string()),
+            )
+            .await;
+        return;
+    }
     let resolution = match target.native() {
         Some(native) => {
             let start = json!({

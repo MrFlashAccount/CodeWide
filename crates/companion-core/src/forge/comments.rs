@@ -199,7 +199,7 @@ async fn publish(
     info!(run_id = %record.run_id, outcome = ?state, "forge comment write ended");
     if state != RunState::Rejected {
         context.cache.invalidate_pull_request(&key);
-        context.events.pull_request(&key).await;
+        context.publish_pr(&key, "pullRequest").await;
     }
     outcome.map_err(|error| context.observe(&account, error))
 }

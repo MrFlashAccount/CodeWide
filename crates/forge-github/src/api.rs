@@ -262,6 +262,74 @@ impl Api {
         request.bearer_auth(self.token.expose())
     }
 
+    /// Uploads one asset to the GitHub repository using the first-party user-attachments endpoint.
+    ///
+    /// # Errors
+    /// Returns a permission, size or service error without exposing the token or response body.
+    pub async fn upload_comment_asset(
+        &self,
+        repository_id: u64,
+        params: forge_protocol::CommentAttachmentParams,
+    ) -> Result<forge_protocol::CommentAttachmentResult, PluginError> {
+        self.upload_asset_to(
+            "https://uploads.github.com/user-attachments/assets",
+            repository_id,
+            params,
+        )
+        .await
+    }
+
+    async fn upload_asset_to(
+        &self,
+        endpoint: &str,
+        repository_id: u64,
+        params: forge_protocol::CommentAttachmentParams,
+    ) -> Result<forge_protocol::CommentAttachmentResult, PluginError> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        let bytes = STANDARD
+            .decode(params.bytes_base64)
+            .map_err(|_| PluginError::invalid_params("Invalid attachment bytes."))?;
+        if bytes.is_empty() || bytes.len() > forge_protocol::MAX_MEDIA_BYTES {
+            return Err(PluginError::invalid_params(
+                "Attachment exceeds the 10 MiB limit or is empty.",
+            ));
+        }
+        // One fixed origin owns both the credential and these private file bytes.
+        let client = reqwest::Client::builder()
+            .user_agent(concat!("codewide-forge-github/", env!("CARGO_PKG_VERSION")))
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .map_err(|_| unreachable_error())?;
+        let request = client
+            .post(endpoint)
+            .query(&[
+                ("repository_id", repository_id.to_string()),
+                ("name", params.name),
+                ("content_type", params.content_type),
+            ])
+            .header("Content-Type", "application/octet-stream")
+            .body(bytes);
+        let response = self
+            .authorized(request)
+            .send()
+            .await
+            .map_err(|_| unreachable_error())?;
+        if !response.status().is_success() {
+            return Err(PluginError::new(
+                forge_protocol::code::FORGE_REJECTED,
+                format!(
+                    "GitHub refused the attachment (HTTP {}). Check repository write access, file type and credential support.",
+                    response.status().as_u16()
+                ),
+            ));
+        }
+        response
+            .json()
+            .await
+            .map_err(|_| PluginError::internal("GitHub did not return an attachment URL."))
+    }
+
     fn authorized(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         self.authorized_as(request, JSON_MEDIA_TYPE)
     }
@@ -350,4 +418,49 @@ pub fn oauth_scopes(headers: &HeaderMap) -> Option<Vec<String>> {
             .map(str::to_owned)
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod comment_assets {
+    use super::*;
+    use axum::{Json, Router, body::Bytes, extract::Query, http::HeaderMap, routing::post};
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn upload_sends_binary_to_the_repository_and_returns_the_shared_asset_url()
+    -> Result<(), Box<dyn std::error::Error>> {
+        async fn receive(
+            query: Query<HashMap<String, String>>,
+            headers: HeaderMap,
+            body: Bytes,
+        ) -> Json<Value> {
+            assert_eq!(query["repository_id"], "42");
+            assert_eq!(query["content_type"], "image/png");
+            assert_eq!(query["name"], "screen #1.png");
+            assert_eq!(headers["content-type"], "application/octet-stream");
+            assert_eq!(headers["authorization"], "Bearer fixture");
+            assert_eq!(&body[..], b"png test");
+            Json(json!({"url": "https://github.com/user-attachments/assets/example"}))
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let endpoint = format!("http://{}/user-attachments/assets", listener.local_addr()?);
+        let app = Router::new().route("/user-attachments/assets", post(receive));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let api = Api::new(
+            Endpoints::for_host("github.com"),
+            Secret::new("fixture".into()),
+        )?;
+        let params = serde_json::from_value(json!({
+            "ref": {"host":"github.com","repository":"org/repo","number":"1"},
+            "account":{"host":"github.com","login":"test"},
+            "name":"screen #1.png","contentType":"image/png","bytesBase64":"cG5nIHRlc3Q="
+        }))?;
+        let result = api.upload_asset_to(&endpoint, 42, params).await?;
+        assert_eq!(
+            result.url,
+            "https://github.com/user-attachments/assets/example"
+        );
+        server.abort();
+        Ok(())
+    }
 }

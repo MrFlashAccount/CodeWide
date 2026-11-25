@@ -34,6 +34,7 @@ use super::{
 struct RunRequest {
     pull_request: Value,
     action_id: String,
+    trigger_check_id: Option<String>,
     head_revision: String,
     input: Value,
     confirmation: Confirmation,
@@ -50,11 +51,22 @@ pub async fn run(context: &ForgeContext, raw: &Value) -> Result<Value, ForgeErro
     if !valid_idempotency_key(&request.idempotency_key) {
         return Err(ForgeError::invalid("invalid idempotencyKey"));
     }
+    if request
+        .trigger_check_id
+        .as_deref()
+        .is_some_and(|id| id.trim().is_empty())
+    {
+        return Err(ForgeError::invalid("invalid triggerCheckId"));
+    }
     let (key, identity) = ForgeContext::pull_request(&request.pull_request)?;
     let head = HeadRevision::parse(&request.head_revision)
         .ok_or_else(|| ForgeError::invalid("invalid headRevision"))?;
-    if let Some(replay) = replay(context, &request, &key)? {
-        return replay;
+    let (kind, target) = request.journal_target();
+    if let Some(outcome) = context
+        .journal
+        .peek(&request.idempotency_key, kind, &key, &target)?
+    {
+        return outcome.map_err(ForgeError::Replayed);
     }
     let account = context.account_for(&key, &identity)?;
     let mut session = context.session(&identity.plugin_id).await?;
@@ -65,29 +77,31 @@ pub async fn run(context: &ForgeContext, raw: &Value) -> Result<Value, ForgeErro
     };
     let result = run_in_session(context, &mut session, &request, &addressed, &head).await;
     session.shutdown().await;
-    if result.is_ok() || matches!(result, Err(ForgeError::StaleHead { .. })) {
+    let trigger_may_have_started = request.trigger_check_id.is_some()
+        && matches!(result, Err(ForgeError::OutcomeUnknown { .. }));
+    if result.is_ok()
+        || matches!(result, Err(ForgeError::StaleHead { .. }))
+        || trigger_may_have_started
+    {
         context.cache.invalidate_pull_request(&key);
-        context.events.pull_request(&key).await;
+        context.publish_pr(&key, "pullRequest").await;
         context.events.list().await;
     }
     result.map_err(|error| context.observe(&account, error))
 }
 
-/// A known idempotency key answers from the journal without a plugin call.
-fn replay(
-    context: &ForgeContext,
-    request: &RunRequest,
-    key: &PullRequestKey,
-) -> Result<Option<Result<Value, ForgeError>>, ForgeError> {
-    Ok(context
-        .journal
-        .peek(
-            &request.idempotency_key,
-            RunKind::Action,
-            key,
-            &request.action_id,
-        )?
-        .map(|outcome| outcome.map_err(ForgeError::Replayed)))
+impl RunRequest {
+    fn journal_target(&self) -> (RunKind, std::borrow::Cow<'_, str>) {
+        match &self.trigger_check_id {
+            Some(check) => (
+                RunKind::CheckTrigger,
+                json!([self.head_revision, check, self.action_id])
+                    .to_string()
+                    .into(),
+            ),
+            None => (RunKind::Action, self.action_id.as_str().into()),
+        }
+    }
 }
 
 /// The pull request and account a write addresses.
@@ -146,18 +160,23 @@ async fn run_in_session(
 ) -> Result<Value, ForgeError> {
     let key = addressed.key;
     let target = addressed.target();
-    let actions = catalog_at(session, addressed, head).await?;
-    let action = authorize(&actions, request)?;
-    let record = match context.journal.begin(
-        &request.idempotency_key,
-        RunKind::Action,
-        key,
-        &request.action_id,
-    )? {
-        Begin::Run(record) => record,
-        Begin::Replay(Ok(value)) => return Ok(value),
-        Begin::Replay(Err(error)) => return Err(ForgeError::Replayed(error)),
+    let actions = match request.trigger_check_id.as_deref() {
+        Some(check_id) => {
+            super::check_triggers::catalog_at(session, addressed, head, Some(check_id)).await?
+        }
+        None => catalog_at(session, addressed, head).await?,
     };
+    let action = authorize(&actions, request)?;
+    let (kind, journal_target) = request.journal_target();
+    let record =
+        match context
+            .journal
+            .begin(&request.idempotency_key, kind, key, &journal_target)?
+        {
+            Begin::Run(record) => record,
+            Begin::Replay(Ok(value)) => return Ok(value),
+            Begin::Replay(Err(error)) => return Err(ForgeError::Replayed(error)),
+        };
     info!(
         pull_request = %key.log_hash(),
         action_id = %action.action_id,
@@ -172,6 +191,7 @@ async fn run_in_session(
                 pr_ref: addressed.identity.pr_ref.clone(),
                 action_id: action.action_id.clone(),
                 head_revision: head.as_str().to_owned(),
+                trigger_check_id: request.trigger_check_id.clone(),
                 input: request.input.clone(),
                 idempotency_key: request.idempotency_key.clone(),
             },
@@ -179,7 +199,11 @@ async fn run_in_session(
         .await;
     match ran {
         Ok(result) => {
-            let refreshed = refreshed_catalog(session, &target).await;
+            let refreshed = if request.trigger_check_id.is_some() {
+                None
+            } else {
+                refreshed_catalog(session, &target).await
+            };
             let value = json!({
                 "runId": record.run_id,
                 "message": result.message.map(|message| message.chars().take(300).collect::<String>()),
@@ -310,6 +334,7 @@ mod tests {
         RunRequest {
             pull_request: Value::Null,
             action_id: action_id.into(),
+            trigger_check_id: None,
             head_revision: "h".into(),
             input,
             confirmation,

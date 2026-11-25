@@ -62,7 +62,7 @@ impl ReviewChats {
     /// Returns a storage failure or corrupt internal record.
     pub fn get(&self, pull_request: &PullRequestKey) -> Result<Option<AppThreadId>, ForgeError> {
         self.store
-            .kv_get(FORGE_PR_REVIEW_THREADS, pull_request.as_str())?
+            .kv_get(FORGE_PR_REVIEW_THREADS, pull_request.canonical_str())?
             .map(|value| {
                 let thread = std::str::from_utf8(&value)
                     .ok()
@@ -76,7 +76,7 @@ impl ReviewChats {
     fn put(&self, pull_request: &PullRequestKey, thread: &AppThreadId) -> Result<(), ForgeError> {
         self.store.kv_apply(vec![KvOp::Put {
             table: FORGE_PR_REVIEW_THREADS,
-            key: pull_request.as_str().to_owned(),
+            key: pull_request.canonical_str().to_owned(),
             value: thread.as_str().as_bytes().to_vec(),
         }])?;
         Ok(())
@@ -97,7 +97,7 @@ impl ReviewChats {
         }
         self.store.kv_apply(vec![KvOp::Delete {
             table: FORGE_PR_REVIEW_THREADS,
-            key: pull_request.as_str().to_owned(),
+            key: pull_request.canonical_str().to_owned(),
         }])?;
         Ok(())
     }
@@ -292,7 +292,7 @@ where
 pub(crate) async fn publish(context: &ForgeContext, key: &PullRequestKey, canonical: &Canonical) {
     if !matches!(canonical, Canonical::Kept(_)) {
         context.cache.invalidate_pull_request(key);
-        context.events.pull_request(key).await;
+        context.publish_pr(key, "pullRequest").await;
         // List rows carry the canonical chat, so a reassignment changes them too.
         context.events.list().await;
     }
@@ -760,6 +760,102 @@ mod tests {
         assert!(fixture.resolve(&created).await.is_err());
         assert_eq!(fixture.chats.get(&fixture.key)?, Some(canonical));
         assert!(!fixture.linked()?.contains(&created.as_str().to_owned()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn chat_open_then_first_submission_targets_the_pr_and_preserves_authored_content()
+    -> Result<(), ForgeError> {
+        use super::super::review_chat_input::prepare;
+        use crate::user_message_projection::{project_notification, project_rpc_result};
+        use agent_core::user_text::NoUserTextFormats;
+        let fixture = Fixture::new()?;
+        let thread = AppThreadId::from_static("review-chat");
+        fixture.resolve(&thread).await?;
+        let authored = json!([{"type":"text", "text":"Address the review questions"}, {"type":"localImage", "path":"/some/screenshot.png"}]);
+        for selection in [Some(fixture.key.as_str()), None] {
+            let mut params = json!({"input":authored});
+            if let Some(selected) = selection {
+                params["codewideReviewPullRequest"] = json!(selected);
+            }
+            prepare(&fixture.chats.store, thread.as_str(), &mut params).expect("prepare turn");
+            assert!(params.get("codewideReviewPullRequest").is_none());
+            let input = &params["input"];
+            let context = input
+                .as_array()
+                .and_then(|parts| parts.last())
+                .and_then(|part| part["text"].as_str())
+                .expect("model context");
+            for identity in ["github", "github.com", "acme/widget", "42"] {
+                assert!(context.contains(identity));
+            }
+
+            let item = json!({"type":"userMessage","content":input});
+            let live = project_notification(
+                json!({"method":"item/completed","params":{"item":item}}),
+                &NoUserTextFormats,
+            )
+            .expect("visible user message");
+            assert_eq!(live["params"]["item"]["content"], authored);
+            let history = project_rpc_result(
+                "thread/read",
+                json!({"thread":{"turns":[{"items":[item]}]}}),
+                &NoUserTextFormats,
+            );
+            assert_eq!(
+                history["thread"]["turns"][0]["items"][0]["content"],
+                authored
+            );
+            let merged = format!("Address the review questions{context}");
+            assert_eq!(
+                agent_core::user_text::display_text(&merged, &NoUserTextFormats).as_deref(),
+                Some("Address the review questions")
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shared_chats_require_a_target_and_unlink_invalidates_pending_submissions()
+    -> Result<(), ForgeError> {
+        use super::super::review_chat_input::prepare;
+        let fixture = Fixture::new()?;
+        let thread = AppThreadId::from_static("shared-chat");
+        fixture.chats.put(&fixture.key, &thread)?;
+        let other = PullRequestKey::issue(
+            "arcanum",
+            &ForgePrRef {
+                host: "arcanum.example".into(),
+                repository: "other".into(),
+                number: "42".into(),
+            },
+        );
+        fixture.chats.put(&other, &thread)?;
+        let submission = || json!({"input":[{"type":"text","text":"Check the PR"}]});
+        let prepare_for =
+            |params: &mut Value| prepare(&fixture.chats.store, thread.as_str(), params);
+        let mut ambiguous = submission();
+        prepare_for(&mut ambiguous).expect("shared review chat");
+        assert!(
+            ambiguous["input"][1]["text"]
+                .as_str()
+                .expect("context")
+                .contains("ask which PR")
+        );
+        let mut selected = submission();
+        selected["codewideReviewPullRequest"] = json!(other);
+        prepare_for(&mut selected).expect("selected route");
+        let context = selected["input"][1]["text"].as_str().expect("context");
+        assert!(context.contains("arcanum.example"));
+        assert!(!context.contains("github.com"));
+        fixture.chats.clear_if(&other, &thread)?;
+        let mut stale = submission();
+        stale["codewideReviewPullRequest"] = json!(other);
+        assert!(prepare_for(&mut stale).is_err());
+        fixture.chats.clear_if(&fixture.key, &thread)?;
+        let mut normal = submission();
+        prepare_for(&mut normal).expect("ordinary chat");
+        assert_eq!(normal, submission());
         Ok(())
     }
 

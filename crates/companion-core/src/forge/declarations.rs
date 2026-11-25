@@ -21,6 +21,8 @@ pub struct Declaration {
     pub media_hosts: Vec<String>,
     /// Hosts of the forge's web pages besides the account host, sanitized the same way.
     pub web_hosts: Vec<String>,
+    /// Additional hosts solely for check result pages, never for credentials or actions.
+    pub check_viewer_hosts: Vec<String>,
 }
 
 impl Declaration {
@@ -37,6 +39,7 @@ impl Declaration {
             capabilities: info.capabilities.clone(),
             media_hosts: sanitized_hosts(&info.media_hosts),
             web_hosts: sanitized_hosts(&info.web_hosts),
+            check_viewer_hosts: sanitized_hosts(&info.check_viewer_hosts),
         }
     }
 }
@@ -107,6 +110,7 @@ mod tests {
                 ".example.com".into(),
             ],
             web_hosts: vec!["A.Yandex-Team.ru".into(), "https://evil.test".into()],
+            check_viewer_hosts: Vec::new(),
         };
         let declaration = Declaration::from_info(&info);
         assert_eq!(declaration.media_hosts, ["media.example.com"]);

@@ -226,6 +226,10 @@ fn build_router(
         .layer(DefaultBodyLimit::max(8 * 1024))
         .layer(v1_compression());
     let files = Router::new()
+        .route(
+            "/v1/forge/comment-attachment",
+            post(forge_comment_attachment),
+        )
         .route("/v1/files/download", get(file_download).head(file_download))
         .route("/v1/files/preview", get(file_preview).head(file_preview))
         .route(
@@ -374,6 +378,10 @@ fn build_secure_router(state: AppState) -> Router {
         .layer(DefaultBodyLimit::max(8 * 1024))
         .layer(v1_compression());
     let files = Router::new()
+        .route(
+            "/v1/forge/comment-attachment",
+            post(forge_comment_attachment),
+        )
         .route("/v1/files/download", get(file_download).head(file_download))
         .route("/v1/files/preview", get(file_preview).head(file_preview))
         .route(

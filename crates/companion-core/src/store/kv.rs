@@ -40,6 +40,29 @@ impl IndexStore {
         Ok(table.get(key)?.map(|value| value.value().to_vec()))
     }
 
+    /// Finds keys with this value in one read snapshot, stopping at the requested limit.
+    pub(crate) fn kv_keys_with_value(
+        &self,
+        table: BytesTable,
+        value: &[u8],
+        limit: usize,
+    ) -> Result<Vec<String>, StoreError> {
+        let read = self.database.begin_read()?;
+        let table = match read.open_table(table) {
+            Ok(table) => table,
+            Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(error) => return Err(error.into()),
+        };
+        table
+            .iter()?
+            .filter_map(|row| match row {
+                Ok((key, stored)) => (stored.value() == value).then(|| Ok(key.value().to_owned())),
+                Err(error) => Some(Err(error.into())),
+            })
+            .take(limit)
+            .collect()
+    }
+
     /// Every entry whose key starts with `prefix`, in key order.
     ///
     /// # Errors

@@ -3,12 +3,16 @@
 //! bounded to [`forge_protocol::MAX_SCENARIO_CONTEXT_BYTES`].
 
 use forge_protocol::{
-    FailingCheck, MAX_SCENARIO_CONTEXT_BYTES, PluginError, ScenarioComment, ScenarioContext,
-    ScenarioKind,
+    FailingCheck, MAX_SCENARIO_CONTEXT_BYTES, MergeState, PluginError, ScenarioComment,
+    ScenarioContext, ScenarioKind,
 };
 use serde_json::Value;
 
-use crate::{api::Api, repo::PullTarget};
+use crate::{
+    api::Api,
+    pull::{merge_status, rest_state},
+    repo::PullTarget,
+};
 
 const MAX_EXCERPT_CHARS: usize = 4_000;
 const MAX_FAILING_CHECKS: usize = 10;
@@ -25,7 +29,7 @@ pub async fn context(
 ) -> Result<ScenarioContext, PluginError> {
     let pull = target.fetch(api).await?;
     let mut context = ScenarioContext::default();
-    if pull.get("mergeable_state").and_then(Value::as_str) == Some("dirty") {
+    if merge_status(&pull, rest_state(&pull)).state == MergeState::Conflicts {
         let text = |pointer: &str| {
             pull.pointer(pointer)
                 .and_then(Value::as_str)
@@ -76,6 +80,7 @@ pub async fn context(
             })
             .take(MAX_FAILING_CHECKS)
             .collect();
+        context.head_revision = Some(head);
     }
     if !matches!(scenario, ScenarioKind::FixCi | ScenarioKind::Rebase) {
         let query = [("per_page", "100".to_owned())];
@@ -145,6 +150,7 @@ mod tests {
     #[test]
     fn bounding_drops_oldest_comments_first() {
         let mut context = ScenarioContext {
+            head_revision: None,
             conflicts: Vec::new(),
             failing_checks: Vec::new(),
             comments: (0..40)

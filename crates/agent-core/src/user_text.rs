@@ -100,12 +100,30 @@ fn file_mention(line: &str) -> Option<FileMention<'_>> {
         .then_some(FileMention { name, path })
 }
 
+/// Start of the model-only PR identity block. Some history sources concatenate text blocks.
+pub const REVIEW_CHAT_OPEN: &str = "[CodeWide review chat]";
+/// End of the model-only PR identity block.
+pub const REVIEW_CHAT_CLOSE: &str = "[/CodeWide review chat]";
+
+/// Authored prefix when the companion's separate final PR context block is present.
+#[must_use]
+pub fn before_review_chat_context(text: &str) -> Option<&str> {
+    let body = text
+        .trim_end()
+        .strip_suffix(REVIEW_CHAT_CLOSE)?
+        .strip_suffix('\n')?;
+    let (authored, context) = body.rsplit_once(REVIEW_CHAT_OPEN)?;
+    (context.starts_with('\n') && (authored.is_empty() || authored.ends_with('\n')))
+        .then(|| authored.trim_end_matches('\n'))
+}
+
 /// Whether a text input is the companion's own model-only context: a fork
-/// handoff or a delegated-task completion wake.
+/// handoff, PR review context, or a delegated-task completion wake.
 #[must_use]
 pub fn is_companion_context(text: &str) -> bool {
     let text = text.trim_start();
-    text.starts_with("Context handoff (fork):")
+    before_review_chat_context(text).is_some_and(str::is_empty)
+        || text.starts_with("Context handoff (fork):")
         || text
             .strip_prefix("Continue the unfinished work from the ")
             .and_then(|rest| rest.split_once(" session.\n\n[CodeWide session handoff]\n"))
@@ -122,6 +140,7 @@ pub fn display_text(text: &str, cleaner: &dyn UserTextCleaner) -> Option<String>
     if is_companion_context(text) {
         return None;
     }
+    let text = before_review_chat_context(text).unwrap_or(text);
     let request = file_envelope(text).map_or(text, |envelope| envelope.request);
     match cleaner.clean(request) {
         CleanedText::Unchanged => Some(request.trim().to_owned()),

@@ -122,7 +122,7 @@ pub async fn submit(context: &ForgeContext, raw: &Value) -> Result<Value, ForgeE
     context.review.events().invalidated(&source).await;
     if result.is_ok() {
         context.cache.invalidate_pull_request(&key);
-        context.events.pull_request(&key).await;
+        context.publish_pr(&key, "pullRequest").await;
     }
     result.map_err(|error| context.observe(&account, error))
 }

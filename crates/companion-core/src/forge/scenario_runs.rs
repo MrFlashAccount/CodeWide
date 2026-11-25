@@ -2,8 +2,8 @@
 //! request.
 //!
 //! A slot is one intent: (pull request, scenario kind, scenario-specific
-//! target). `fixCi` targets its `checkId`, a focused `addressComments` its
-//! `reviewThreadId`; `message` has no slot and is never deduplicated. One
+//! target). `fixCi` uses the PR-wide slot; historical per-check slot keys
+//! remain readable. A focused `addressComments` targets its `reviewThreadId`; `message` has no slot and is never deduplicated. One
 //! durable record per slot keeps the latest run: the review chat thread, the
 //! outbox command carrying its turn, the head revision it started at and,
 //! once known, its settlement. Records are prompt-free: no instruction,
@@ -234,7 +234,7 @@ impl ScenarioRuns {
     }
 
     fn key(pull_request: &PullRequestKey, slot: &ScenarioSlot) -> String {
-        format!("{}\0{}", pull_request.as_str(), slot.key_part())
+        format!("{}\0{}", pull_request.canonical_str(), slot.key_part())
     }
 
     /// The latest run of one slot.
@@ -275,7 +275,10 @@ impl ScenarioRuns {
     ) -> Result<Vec<ScenarioRun>, ForgeError> {
         Ok(self
             .store
-            .kv_scan(FORGE_SCENARIO_RUNS, &format!("{}\0", pull_request.as_str()))?
+            .kv_scan(
+                FORGE_SCENARIO_RUNS,
+                &format!("{}\0", pull_request.canonical_str()),
+            )?
             .into_iter()
             .filter_map(|(_, value)| serde_json::from_slice(&value).ok())
             .collect())
@@ -615,7 +618,7 @@ async fn observe_turn(context: &ForgeContext, thread: &str, ended: bool) {
         .map(|run| (run.pull_request.as_str(), &run.pull_request))
         .collect();
     for pull_request in pull_requests.into_values() {
-        context.events.scenarios(pull_request).await;
+        context.publish_pr(pull_request, "scenarios").await;
     }
 }
 

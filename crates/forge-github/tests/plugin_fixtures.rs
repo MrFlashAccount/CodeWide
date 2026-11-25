@@ -233,6 +233,10 @@ fn respond(
             "updated_at": "2026-10-01T00:00:00Z"
         })),
         ("GET", "/repos/octo/repo") => json(json!({"allow_merge_commit": true})),
+        ("GET", "/repos/octo/repo/commits/abc123/check-runs") => json(json!({
+            "check_runs": [{"id": 17, "name": "Android", "conclusion": "failure",
+                "output": {"summary": "A UI assertion failed"}}]
+        })),
         ("GET", path) if path.ends_with("/comments") || path.ends_with("/reviews") => {
             json(json!([]))
         }
@@ -1363,6 +1367,22 @@ async fn media_reads_only_forge_hosts_and_never_follow_a_foreign_redirect() {
     for frame in harness.close().await {
         assert!(!frame.contains(GH_TOKEN), "token leaked: {frame}");
     }
+}
+
+#[tokio::test]
+async fn check_diagnostics_identify_the_commit_that_produced_the_failure_excerpt() {
+    let mut harness = linked_hubot().await;
+    let response = harness
+        .call("forge.pullRequest.scenarioContext",
+            json!({"account": account("hubot"), "ref": pull_ref(), "scenario":"fixCi", "checkId":null}))
+        .await;
+    let evidence = &response["result"];
+    assert_eq!(evidence["headRevision"], "abc123");
+    assert_eq!(evidence["failingChecks"][0]["checkId"], "run:17");
+    assert_eq!(
+        evidence["failingChecks"][0]["logExcerpt"],
+        "A UI assertion failed"
+    );
 }
 
 #[tokio::test]

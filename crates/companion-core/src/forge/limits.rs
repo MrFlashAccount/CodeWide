@@ -69,6 +69,7 @@ pub fn call_timeout(method: &str) -> Duration {
     match method {
         methods::PULL_REQUEST_ACTION_RUN
         | methods::PULL_REQUEST_REVIEW_SUBMIT
+        | methods::COMMENT_ATTACHMENT_UPLOAD
         | methods::PULL_REQUEST_COMMENT_CREATE
         | methods::PULL_REQUEST_REVIEW_THREAD_REPLY
         | methods::PULL_REQUEST_REVIEW_THREAD_RESOLVE => PLUGIN_WRITE_TIMEOUT,

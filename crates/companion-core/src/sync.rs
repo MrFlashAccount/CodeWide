@@ -537,6 +537,7 @@ impl SyncHub {
         if let Some(orchestration) = &agents.orchestration {
             orchestration.install_input_desk(Arc::new(server_responses::ChildInputDeskAdapter {
                 resolver: server_responses::ServerRequestResolver {
+                    files: None,
                     requests: server_requests.clone(),
                     gateway: gateway.clone(),
                     local_events: local_events.clone(),
@@ -1334,6 +1335,7 @@ impl SyncHub {
             return Err(());
         }
         let resolver = server_responses::ServerRequestResolver {
+            files: self.files(),
             requests: self.server_requests.clone(),
             gateway: self.gateway.clone(),
             local_events: self.local_events.clone(),
@@ -1498,12 +1500,20 @@ impl SyncHub {
         }
         if matches!(method.as_str(), "turn/start" | "turn/steer") {
             let params = self.agents.fork.inject(&method, params);
-            let prepared = match prepare_remote_file_inputs(&method, params, self.files()).await {
+            let mut prepared = match prepare_remote_file_inputs(&method, params, self.files()).await
+            {
                 Ok(prepared) => prepared,
                 Err(error) => {
                     return send_rpc_error(socket, id, -32602, &error.to_string()).await;
                 }
             };
+            if let Err(error) = crate::forge::review_chat_input::prepare(
+                &self.store,
+                target.thread_id.as_str(),
+                &mut prepared,
+            ) {
+                return send_rpc_error(socket, id, -32602, &error.to_string()).await;
+            }
             if let Some(object) = request.as_object_mut() {
                 object.insert("params".into(), prepared);
             }
@@ -2300,7 +2310,7 @@ impl SyncHub {
             }
             Err(error) => return send_rpc_error(socket, id, -32010, &error.to_string()).await,
         };
-        let mut prepared =
+        let prepared =
             match prepare_remote_file_inputs("turn/steer", command.params.clone(), self.files())
                 .await
             {
@@ -2327,38 +2337,23 @@ impl SyncHub {
                 return send_rpc_error(socket, id, -32010, &error.to_string()).await;
             }
         };
-        if claimed.params != command.params {
-            prepared = match prepare_remote_file_inputs(
-                "turn/steer",
-                claimed.params.clone(),
-                self.files(),
-            )
+        let steer = match self
+            .claimed_steer_request(&command, &claimed, prepared, expected_turn_id)
             .await
-            {
-                Ok(prepared) => prepared,
-                Err(error) => {
-                    self.turn_delivery
-                        .resolve_claim(
-                            &claimed.remote_thread_id,
-                            &claimed.command_id,
-                            claim_token,
-                            ClaimResolution::Rejected(error.to_string()),
-                        )
-                        .await;
-                    return send_rpc_error(socket, id, -32602, &error.to_string()).await;
-                }
-            };
-        }
-        let steer = json!({
-            "id": "outbox-steer",
-            "method": "turn/steer",
-            "params": {
-                "threadId": claimed.remote_thread_id.as_str(),
-                "clientUserMessageId": claimed.command_id.as_str(),
-                "input": prepared.get("input").cloned().unwrap_or_else(|| json!([])),
-                "expectedTurnId": expected_turn_id,
+        {
+            Ok(request) => request,
+            Err(message) => {
+                self.turn_delivery
+                    .resolve_claim(
+                        &claimed.remote_thread_id,
+                        &claimed.command_id,
+                        claim_token,
+                        ClaimResolution::Rejected(message.clone()),
+                    )
+                    .await;
+                return send_rpc_error(socket, id, -32602, &message).await;
             }
-        });
+        };
         let response = match self.send_claimed_steer(&claimed, claim_token, steer).await {
             Ok(response) => response,
             Err(error) => {
@@ -2366,6 +2361,37 @@ impl SyncHub {
             }
         };
         send_passthrough_rpc_response(socket, id, &response).await
+    }
+
+    async fn claimed_steer_request(
+        &self,
+        original: &OutboxCommand,
+        claimed: &OutboxCommand,
+        mut prepared: Value,
+        expected_turn_id: &str,
+    ) -> Result<Value, String> {
+        if claimed.params != original.params {
+            prepared =
+                prepare_remote_file_inputs("turn/steer", claimed.params.clone(), self.files())
+                    .await
+                    .map_err(|error| error.to_string())?;
+        }
+        crate::forge::review_chat_input::prepare(
+            &self.store,
+            &claimed.remote_thread_id,
+            &mut prepared,
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(json!({
+            "id": "outbox-steer",
+            "method": "turn/steer",
+            "params": {
+                "threadId": claimed.remote_thread_id.as_str(),
+                "clientUserMessageId": claimed.command_id.as_str(),
+                "input": prepared["input"].take(),
+                "expectedTurnId": expected_turn_id,
+            }
+        }))
     }
 
     async fn send_claimed_steer(

@@ -5,8 +5,8 @@
 //! A scenario goes to the pull request's canonical review chat
 //! (`{"kind": "reviewChat"}`), resolved by `review_chat::resolve` exactly as
 //! `chat/ensure` resolves it. For an older client a thread created there
-//! lives in the local checkout (`:workspace`) or, for `reviewPr` and
-//! `message` without a checkout, is a `:read-only` thread in the companion
+//! lives in the local checkout (`:workspace`) or, for `rebase`, `fixCi`, `reviewPr`
+//! and `message` without a checkout, is a `:read-only` thread in the companion
 //! home; an opted-in client is asked (`needsWorkspace`) and names the
 //! directory instead (see `chat_workspace.rs`). Third-party pull request text reaches the agent only as a separate
 //! fenced input naming its source and authors. Scenario prompts require the
@@ -18,9 +18,11 @@
 //! thread: its context, read fresh through `forge.pullRequest.conversation`,
 //! holds only that thread's comments, path and lines.
 
+mod checks;
+
 use forge_protocol::{
-    ActionAnchor, CheckItem, CheckItemState, CheckSummary, MergeState, PullRequestOverview,
-    ReviewThread, ScenarioContext, ScenarioContextParams, ScenarioKind, capability, methods,
+    ActionAnchor, CheckItem, MergeState, PullRequestOverview, ReviewThread, ScenarioContext,
+    ScenarioContextParams, ScenarioKind, capability, methods,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -57,50 +59,14 @@ fn scenario_id(kind: ScenarioKind) -> String {
     format!("{SCENARIO_ACTION_PREFIX}{name}")
 }
 
-/// The checks that get their own `fixCi` action: every `failed` check whose
-/// id names exactly one listed check and can start a scenario slot. Passed,
-/// skipped, pending and cancelled checks never get one: there is nothing for
-/// an agent to fix, and a cancelled run is re-run, not repaired. An id shared
-/// by several checks is ambiguous, so a client would attach the action to
-/// every row with that id, passing ones included; such a check gets none.
-fn fix_ci_targets(check_items: &[CheckItem]) -> Vec<&str> {
-    let mut seen = std::collections::HashMap::<&str, usize>::new();
-    for item in check_items {
-        *seen.entry(item.check_id.as_str()).or_default() += 1;
-    }
-    let mut targets: Vec<&str> = Vec::new();
-    for item in check_items {
-        let id = item.check_id.as_str();
-        if item.state == CheckItemState::Failed
-            && seen.get(id) == Some(&1)
-            && super::ids::valid_forge_id(id)
-        {
-            targets.push(id);
-        }
-    }
-    targets
-}
-
-/// A per-check `fixCi` action id: distinct per check, so a client keys each
-/// row's pending and run state apart, and bounded whatever the check id's
-/// length. The scenario start names the check through the anchor, not this id.
-fn fix_ci_check_action_id(check_id: &str) -> String {
-    let digest = blake3::hash(check_id.as_bytes()).to_hex();
-    format!("{}.{}", scenario_id(ScenarioKind::FixCi), &digest[..16])
-}
-
 fn needs_checkout(kind: ScenarioKind) -> bool {
-    matches!(
-        kind,
-        ScenarioKind::FixCi | ScenarioKind::Rebase | ScenarioKind::AddressComments
-    )
+    kind == ScenarioKind::AddressComments
 }
 
 /// The companion's scenario descriptors for an overview.
 #[must_use]
 pub fn descriptors(
     read: &PullRequestOverview,
-    checks: &CheckSummary,
     check_items: &[CheckItem],
     local_checkout: bool,
 ) -> Vec<ActionDescriptor> {
@@ -127,47 +93,27 @@ pub fn descriptors(
             confirm: Confirmation::None,
             placement: "secondary".into(),
             order,
+            quick_submit: false,
             is_default: false,
             anchor,
         }
     };
     let mut actions = Vec::new();
-    let anchored = fix_ci_targets(check_items);
-    for check_id in &anchored {
-        let mut action = descriptor(
-            ScenarioKind::FixCi,
-            ActionKind::FixCi,
-            "Fix in agent",
-            100,
-            Some(ActionAnchor::Checks {
-                check_id: (*check_id).to_owned(),
-            }),
-        );
-        action.action_id = fix_ci_check_action_id(check_id);
-        actions.push(action);
-    }
-    let checks_failing = matches!(
-        checks,
-        CheckSummary::Counted {
-            state: forge_protocol::CheckRollup::Failing,
-            ..
-        }
-    );
-    let any_failed = check_items
-        .iter()
-        .any(|item| item.state == CheckItemState::Failed);
-    if anchored.is_empty() && (checks_failing || any_failed) {
-        // No failed check can carry its own action (none listed, or only
-        // ambiguous or invalid ids): one whole-PR fix keeps the scenario.
+    if !check_items.is_empty() {
         actions.push(descriptor(
             ScenarioKind::FixCi,
             ActionKind::FixCi,
-            "Fix in agent",
+            "Address all checks",
             100,
-            None,
+            Some(ActionAnchor::ChecksSection),
         ));
     }
-    if read.merge.state == MergeState::Conflicts {
+    if read.merge.state == MergeState::Conflicts
+        && matches!(
+            read.state,
+            forge_protocol::PullRequestState::Open | forge_protocol::PullRequestState::Draft
+        )
+    {
         actions.push(descriptor(
             ScenarioKind::Rebase,
             ActionKind::Rebase,
@@ -259,6 +205,11 @@ pub async fn start(context: &ForgeContext, raw: &Value) -> Result<Value, ForgeEr
     )? {
         return outcome.map_err(ForgeError::Replayed);
     }
+    if request.scenario == ScenarioKind::FixCi && request.check_id.is_some() {
+        return Err(ForgeError::invalid(
+            "Refresh checks and start Address all checks",
+        ));
+    }
     let text = message_text(request.scenario, request.text.as_deref())?;
     let focus = review_thread(request.scenario, request.review_thread_id.as_deref())?;
     let slot = slot_of(&request, focus.as_ref())?;
@@ -268,18 +219,7 @@ pub async fn start(context: &ForgeContext, raw: &Value) -> Result<Value, ForgeEr
         .ok_or_else(|| ForgeError::CapabilityUnavailable {
             reason: "agents are unavailable on this companion".into(),
         })?;
-    let overview = load_overview(context, &key, &identity).await?;
-    if overview.head_revision != head {
-        return Err(ForgeError::StaleHead {
-            head_revision: overview.head_revision.clone(),
-            catalog: serde_json::to_value(&overview.catalog).ok(),
-        });
-    }
-    if needs_checkout(request.scenario) && overview.local_checkout.is_none() {
-        return Err(ForgeError::CapabilityUnavailable {
-            reason: NO_CHECKOUT.into(),
-        });
-    }
+    let overview = scenario_overview(context, &key, &identity, &head, request.scenario).await?;
     let placement = request.target.placement();
     // An active run of the same intent at this head is joined before any
     // context is read; admission re-checks it inside the lane.
@@ -315,6 +255,9 @@ pub async fn start(context: &ForgeContext, raw: &Value) -> Result<Value, ForgeEr
     let focused_thread = focused.is_some();
     let context_text = match focused {
         Some(text) => text,
+        None if request.scenario == ScenarioKind::FixCi => {
+            checks::context(context, &key, &overview).await
+        }
         None => {
             scenario_context(
                 context,
@@ -347,6 +290,34 @@ pub async fn start(context: &ForgeContext, raw: &Value) -> Result<Value, ForgeEr
     finish_start(context, &request, &placement, &key, &record, launched).await
 }
 
+/// Admits a scenario against the current head and the inputs it actually requires.
+async fn scenario_overview(
+    context: &ForgeContext,
+    key: &PullRequestKey,
+    identity: &PullRequestIdentity,
+    head: &HeadRevision,
+    scenario: ScenarioKind,
+) -> Result<OverviewWire, ForgeError> {
+    let overview = load_overview(context, key, identity).await?;
+    if &overview.head_revision != head {
+        return Err(ForgeError::StaleHead {
+            head_revision: overview.head_revision.clone(),
+            catalog: serde_json::to_value(&overview.catalog).ok(),
+        });
+    }
+    if scenario == ScenarioKind::FixCi && overview.check_items.is_empty() {
+        return Err(ForgeError::CapabilityUnavailable {
+            reason: "No checks are available for this revision".into(),
+        });
+    }
+    if needs_checkout(scenario) && overview.local_checkout.is_none() {
+        return Err(ForgeError::CapabilityUnavailable {
+            reason: NO_CHECKOUT.into(),
+        });
+    }
+    Ok(overview)
+}
+
 /// Journals the outcome of a scenario start. Its thread is already linked:
 /// the canonical review chat is always one of the pull request's links.
 async fn finish_start(
@@ -368,7 +339,7 @@ async fn finish_start(
                 None,
             )?;
             context.cache.invalidate_pull_request(key);
-            context.events.pull_request(key).await;
+            context.publish_pr(key, "pullRequest").await;
             info!(pull_request = %key.log_hash(), run_id = %record.run_id, "scenario started");
             Ok(result)
         }
@@ -619,11 +590,9 @@ fn instruction(overview: &OverviewWire, scenario: ScenarioKind, text: Option<Str
     );
     let push_rule = "Ask the user before any git push, and always before a force push.";
     match scenario {
-        ScenarioKind::FixCi => format!(
-            "Fix the failing CI checks of {identity} in this workspace. The failing checks are in the next input. {push_rule}"
-        ),
+        ScenarioKind::FixCi => checks::INSTRUCTION.to_owned(),
         ScenarioKind::Rebase => format!(
-            "Rebase the head branch of {identity} onto its base branch in this workspace and resolve the conflicts. {push_rule}"
+            "Rebase the head branch of {identity} onto its current base and resolve the conflicts. Verify that you have a writable checkout of this PR head before changing files. Ask the user before pushing the result, including a force push."
         ),
         ScenarioKind::AddressComments => format!(
             "Address the review comments on {identity} in this workspace. The comments are in the next input. {push_rule}"
@@ -674,33 +643,39 @@ async fn scenario_context(
         ],
         &format!("Title: {}\n\n{}", overview.title, overview.description),
     );
-    let Some(identity) = key.identity() else {
-        return text.finish();
-    };
-    let Ok(account) = context.account_for(key, &identity) else {
-        return text.finish();
-    };
-    let Ok(mut session) = context.session(&identity.plugin_id).await else {
-        return text.finish();
-    };
-    if session.supports(capability::SCENARIO_CONTEXT) {
-        let fetched: Result<ScenarioContext, _> = session
+    if let Some(extra) = fetch_scenario_context(context, key, scenario, check_id).await {
+        append_context(&mut text, &extra);
+    }
+    text.finish()
+}
+
+async fn fetch_scenario_context(
+    context: &ForgeContext,
+    key: &PullRequestKey,
+    scenario: ScenarioKind,
+    check_id: Option<String>,
+) -> Option<ScenarioContext> {
+    let identity = key.identity()?;
+    let account = context.account_for(key, &identity).ok()?;
+    let mut session = context.session(&identity.plugin_id).await.ok()?;
+    let extra = if session.supports(capability::SCENARIO_CONTEXT) {
+        session
             .call(
                 methods::PULL_REQUEST_SCENARIO_CONTEXT,
                 &ScenarioContextParams {
                     account: account.account_ref(),
-                    pr_ref: identity.pr_ref.clone(),
+                    pr_ref: identity.pr_ref,
                     scenario,
                     check_id,
                 },
             )
-            .await;
-        if let Ok(extra) = fetched {
-            append_context(&mut text, &extra);
-        }
-    }
+            .await
+            .ok()
+    } else {
+        None
+    };
     session.shutdown().await;
-    text.finish()
+    extra
 }
 
 fn append_context(text: &mut UntrustedText, extra: &ScenarioContext) {
@@ -838,7 +813,7 @@ pub async fn links_set(context: &ForgeContext, raw: &Value) -> Result<Value, For
         context.review_chats.clear_if(&key, &thread)?;
     }
     context.cache.invalidate_pull_request(&key);
-    context.events.pull_request(&key).await;
+    context.publish_pr(&key, "pullRequest").await;
     context.events.list().await;
     let links: Vec<_> = context
         .links
@@ -865,96 +840,57 @@ mod tests {
         .expect("overview")
     }
 
-    fn check(check_id: &str, state: CheckItemState) -> CheckItem {
-        CheckItem {
-            check_id: check_id.into(),
-            name: check_id.into(),
-            state,
-            duration_seconds: None,
-            details_url: None,
-        }
-    }
-
-    fn failing_summary() -> CheckSummary {
-        serde_json::from_value(json!({"state": "failing", "passed": 1, "failing": 2, "pending": 0}))
-            .expect("summary")
-    }
-
-    /// The `checkId` each `fixCi` action is anchored to; `None` for a whole-PR one.
-    fn fix_ci_anchors(actions: &[ActionDescriptor]) -> Vec<Option<String>> {
-        actions
-            .iter()
-            .filter(|action| action.kind == ActionKind::FixCi)
-            .map(|action| match &action.anchor {
-                Some(ActionAnchor::Checks { check_id }) => Some(check_id.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
     #[test]
-    fn every_failed_check_gets_its_own_fix_and_no_other_check_does() {
-        let items = [
-            check("macos", CheckItemState::Failed),
-            check("linux", CheckItemState::Failed),
-            check("plan", CheckItemState::Passed),
-            check("lint", CheckItemState::Skipped),
-            check("docs", CheckItemState::Pending),
-            check("e2e", CheckItemState::Cancelled),
-        ];
-        let actions = descriptors(&overview_read(), &failing_summary(), &items, true);
-        assert_eq!(
-            fix_ci_anchors(&actions),
-            vec![Some("macos".to_owned()), Some("linux".to_owned())]
-        );
-        let ids: std::collections::HashSet<&str> = actions
-            .iter()
-            .filter(|action| action.kind == ActionKind::FixCi)
-            .map(|action| action.action_id.as_str())
-            .collect();
-        assert_eq!(ids.len(), 2, "each check's fix has its own action id");
-        assert!(
-            ids.iter()
-                .all(|id| id.starts_with("codewide.scenario.fixCi."))
-        );
-    }
-
-    #[test]
-    fn an_id_shared_with_a_passing_check_falls_back_to_one_whole_pr_fix() {
-        // Two checks reported under one id: anchoring to it would put the
-        // action on the passing row as well.
-        let items = [
-            check("CI", CheckItemState::Failed),
-            check("CI", CheckItemState::Passed),
-            check("plan", CheckItemState::Passed),
-        ];
-        let actions = descriptors(&overview_read(), &failing_summary(), &items, true);
-        assert_eq!(fix_ci_anchors(&actions), vec![None]);
-        assert!(
-            actions
+    fn offers_one_global_diagnosis_for_any_nonempty_set_of_checks_without_a_checkout() {
+        for state in ["passed", "failed", "pending", "cancelled", "skipped"] {
+            let check = serde_json::from_value(json!({
+                "checkId": "job", "name": "Build", "state": state
+            }))
+            .expect("check");
+            let items = [check];
+            let actions = descriptors(&overview_read(), &items, false);
+            let mut matching = actions
                 .iter()
-                .any(|action| action.action_id == "codewide.scenario.fixCi")
+                .filter(|action| action.kind == ActionKind::FixCi);
+            let action = matching.next().expect("all checks diagnosis");
+            assert!(matching.next().is_none());
+            assert_eq!(action.action_id, "codewide.scenario.fixCi");
+            assert_eq!(action.label, "Address all checks");
+            assert_eq!(action.anchor, Some(ActionAnchor::ChecksSection));
+            assert_eq!(action.availability, json!({"state":"enabled"}));
+        }
+        assert!(
+            descriptors(&overview_read(), &[], true)
+                .iter()
+                .all(|action| action.kind != ActionKind::FixCi)
         );
     }
 
     #[test]
-    fn passing_checks_offer_no_fix() {
-        let items = [
-            check("plan", CheckItemState::Passed),
-            check("e2e", CheckItemState::Cancelled),
-        ];
-        let passing: CheckSummary = serde_json::from_value(
-            json!({"state": "passing", "passed": 1, "failing": 0, "pending": 0}),
-        )
-        .expect("summary");
-        let actions = descriptors(&overview_read(), &passing, &items, true);
-        assert!(fix_ci_anchors(&actions).is_empty());
-    }
+    fn rebase_is_offered_for_a_live_conflict_even_before_a_checkout_is_selected() {
+        use forge_protocol::PullRequestState::{Closed, Draft, Merged, Open};
 
-    #[test]
-    fn a_failing_rollup_without_items_keeps_one_whole_pr_fix() {
-        let actions = descriptors(&overview_read(), &failing_summary(), &[], true);
-        assert_eq!(fix_ci_anchors(&actions), vec![None]);
+        let mut read = overview_read();
+        for (state, merge, offered) in [
+            (Open, MergeState::Conflicts, true),
+            (Draft, MergeState::Conflicts, true),
+            (Closed, MergeState::Conflicts, false),
+            (Merged, MergeState::Conflicts, false),
+            (Open, MergeState::Blocked, false),
+            (Open, MergeState::Unknown, false),
+        ] {
+            read.state = state;
+            read.merge.state = merge;
+            let actions = descriptors(&read, &[], false);
+            let rebase = actions
+                .iter()
+                .find(|action| action.kind == ActionKind::Rebase);
+            assert_eq!(rebase.is_some(), offered);
+            if let Some(rebase) = rebase {
+                assert_eq!(rebase.anchor, Some(ActionAnchor::Conflict));
+                assert_eq!(rebase.availability, json!({"state":"enabled"}));
+            }
+        }
     }
 
     #[test]

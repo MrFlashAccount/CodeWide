@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::{
     activity::activity,
     api::Api,
-    repo::{PullTarget, head_sha},
+    repo::{PullTarget, Repo, head_sha},
 };
 
 /// `forge.pullRequest.read`.
@@ -42,7 +42,11 @@ fn overview(
     };
     let state = rest_state(pull);
     Ok(PullRequestOverview {
-        repository: target.repo.full(),
+        repository: pull
+            .pointer("/base/repo/full_name")
+            .and_then(Value::as_str)
+            .and_then(|name| Repo::parse(name).ok())
+            .map_or_else(|| target.repo.full(), |repo| repo.full()),
         number: target.number.to_string(),
         title: text("/title"),
         author: pull
@@ -90,7 +94,7 @@ pub fn rest_state(pull: &Value) -> PullRequestState {
     }
 }
 
-/// The merge readiness GitHub computed (`mergeable_state`).
+/// The merge readiness GitHub computed for the head and its target.
 #[must_use]
 pub fn merge_status(pull: &Value, state: PullRequestState) -> MergeStatus {
     let blocked = |reason: &str| MergeStatus {
@@ -100,6 +104,14 @@ pub fn merge_status(pull: &Value, state: PullRequestState) -> MergeStatus {
     match state {
         PullRequestState::Merged => return blocked("The pull request is merged."),
         PullRequestState::Closed => return blocked("The pull request is closed."),
+        _ if pull.get("mergeable").and_then(Value::as_bool) == Some(false)
+            || pull.get("mergeable_state").and_then(Value::as_str) == Some("dirty") =>
+        {
+            return MergeStatus {
+                state: MergeState::Conflicts,
+                reason: Some("This branch has conflicts with the base branch.".into()),
+            };
+        }
         PullRequestState::Draft => return blocked("Draft pull requests cannot be merged."),
         PullRequestState::Open => {}
     }
@@ -112,10 +124,6 @@ pub fn merge_status(pull: &Value, state: PullRequestState) -> MergeStatus {
             state: MergeState::Ready,
             reason: Some("Some checks are not passing.".into()),
         },
-        Some("dirty") => MergeStatus {
-            state: MergeState::Conflicts,
-            reason: Some("This branch has conflicts with the base branch.".into()),
-        },
         Some("behind") => blocked("The branch is out of date with the base branch."),
         Some("blocked") => blocked("Merging is blocked by branch protection."),
         Some("draft") => blocked("Draft pull requests cannot be merged."),
@@ -123,5 +131,52 @@ pub fn merge_status(pull: &Value, state: PullRequestState) -> MergeStatus {
             state: MergeState::Unknown,
             reason: None,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn distinguishes_merge_conflicts_from_other_github_blockers() {
+        for (pull, expected) in [
+            (json!({"mergeable": false}), MergeState::Conflicts),
+            (
+                json!({"draft": true, "mergeable": false}),
+                MergeState::Conflicts,
+            ),
+            (
+                json!({"mergeable": null, "mergeable_state": "dirty"}),
+                MergeState::Conflicts,
+            ),
+            (
+                json!({"mergeable": null, "mergeable_state": "unknown"}),
+                MergeState::Unknown,
+            ),
+            (
+                json!({"mergeable": true, "mergeable_state": "behind"}),
+                MergeState::Blocked,
+            ),
+            (
+                json!({"mergeable": true, "mergeable_state": "blocked"}),
+                MergeState::Blocked,
+            ),
+            (
+                json!({"state": "closed", "mergeable": false}),
+                MergeState::Blocked,
+            ),
+            (
+                json!({"merged": true, "mergeable_state": "dirty"}),
+                MergeState::Blocked,
+            ),
+        ] {
+            assert_eq!(
+                merge_status(&pull, rest_state(&pull)).state,
+                expected,
+                "{pull}"
+            );
+        }
     }
 }

@@ -6,12 +6,13 @@
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
-use forge_protocol::{ForgePrRef, ResolveParams, ResolveResult, capability, methods};
+use forge_protocol::ForgePrRef;
 use serde_json::{Value, json};
 
 use super::{
     ForgeContext,
     ids::{PullRequestKey, parse_thread_id},
+    link_resolver::{self, PageUrl},
     wire::LinkSource,
 };
 use crate::agent::{
@@ -67,88 +68,70 @@ impl ForgeTools {
             .and_then(Value::as_str)
             .filter(|url| url.len() <= MAX_URL_BYTES)
             .ok_or_else(|| "pullRequestUrl must be a URL".to_owned())?;
-        let parsed = url::Url::parse(url).map_err(|_| "pullRequestUrl must be a URL".to_owned())?;
-        if parsed.scheme() != "https" {
-            return Err("pullRequestUrl must be an https URL".into());
-        }
-        let number = parsed
-            .path_segments()
-            .and_then(|mut segments| {
-                segments.rfind(|segment| {
-                    !segment.is_empty() && segment.bytes().all(|byte| byte.is_ascii_digit())
-                })
-            })
-            .map(str::to_owned)
-            .ok_or_else(|| "the URL does not name a pull request".to_owned())?;
+        let page = PageUrl::parse(url)
+            .map_err(|_| "pullRequestUrl must be a credential-free HTTPS URL".to_owned())?;
         let thread = parse_thread_id(call.app_thread_id.as_str())
             .ok_or_else(|| "the calling thread is unknown".to_owned())?;
+        let (plugin_id, reference) = unique_target(&context, &page).await?;
+        let key = PullRequestKey::issue(&plugin_id, &reference);
+        context
+            .links
+            .link(
+                &key,
+                &plugin_id,
+                &reference.number,
+                &thread,
+                LinkSource::Agent,
+            )
+            .map_err(|_| "the link could not be stored".to_owned())?;
+        context.cache.invalidate_pull_request(&key);
+        context.publish_pr(&key, "pullRequest").await;
+        context.events.list().await;
+        Ok(json!({"linked": true, "repository": reference.repository, "number": reference.number}))
+    }
+}
+
+async fn unique_target(
+    context: &ForgeContext,
+    page: &PageUrl,
+) -> Result<(String, ForgePrRef), String> {
+    let entries = context
+        .providers
+        .entries()
+        .map_err(|_| "forge providers are unavailable".to_owned())?;
+    let mut target = None;
+    let mut connected = false;
+    for entry in entries
+        .into_iter()
+        .filter(|entry| entry.enabled && entry.spec.is_some())
+    {
         let links = context
             .accounts
-            .links()
+            .links_of(&entry.plugin_id)
             .map_err(|_| "forge accounts are unavailable".to_owned())?;
-        let entries = context
-            .providers
-            .entries()
-            .map_err(|_| "forge providers are unavailable".to_owned())?;
-        let mut connected = false;
-        for entry in entries
-            .into_iter()
-            .filter(|entry| entry.enabled && entry.spec.is_some())
-        {
-            if !links.iter().any(|link| link.plugin_id == entry.plugin_id) {
-                continue;
-            }
-            connected = true;
-            let Ok(mut session) = context.session(&entry.plugin_id).await else {
-                continue;
-            };
-            let resolved: Option<ResolveResult> = if session.supports(capability::RESOLVE) {
-                session
-                    .call(
-                        methods::REPOSITORY_RESOLVE,
-                        &ResolveParams {
-                            remotes: vec![url.to_owned()],
-                        },
-                    )
-                    .await
-                    .ok()
-            } else {
-                None
-            };
-            session.shutdown().await;
-            let Some(resolved) = resolved else {
-                continue;
-            };
-            if !links.iter().any(|link| {
-                link.plugin_id == entry.plugin_id && link.host.eq_ignore_ascii_case(&resolved.host)
-            }) {
-                continue;
-            }
-            let pr_ref = ForgePrRef {
-                host: resolved.host,
-                repository: resolved.repository.clone(),
-                number: number.clone(),
-            };
-            let key = PullRequestKey::issue(&entry.plugin_id, &pr_ref);
-            context
-                .links
-                .link(&key, &entry.plugin_id, &number, &thread, LinkSource::Agent)
-                .map_err(|_| "the link could not be stored".to_owned())?;
-            context.cache.invalidate_pull_request(&key);
-            context.events.pull_request(&key).await;
-            context.events.list().await;
-            return Ok(json!({
-                "linked": true,
-                "repository": resolved.repository,
-                "number": number,
-            }));
+        if links.is_empty() {
+            continue;
         }
-        if connected {
-            Err("no connected forge account owns this URL".into())
-        } else {
-            Err("no connected forge account".into())
+        connected = true;
+        let choices = link_resolver::admit(context, &entry.plugin_id, page, &links)
+            .await
+            .map_err(|_| "could not verify pull request access".to_owned())?;
+        let mut choices = choices.into_iter();
+        if let Some(choice) = choices.next() {
+            if target.is_some() || choices.next().is_some() {
+                return Err("multiple connected forge accounts match this URL".into());
+            }
+            target = Some((entry.plugin_id, choice.reference));
         }
     }
+    target.ok_or_else(|| {
+        if connected {
+            "no connected forge account owns this URL"
+        } else {
+            "no connected forge account"
+        }
+        .to_owned()
+    })
 }
 
 #[async_trait]

@@ -269,6 +269,11 @@ fn insert_message(
     text: &str,
     representation: i64,
 ) -> Result<(), SearchError> {
+    let text = if kind == "user_message" {
+        agent_core::user_text::before_review_chat_context(text).unwrap_or(text)
+    } else {
+        text
+    };
     if text.is_empty() || source.turn_id.is_empty() {
         return Ok(());
     }

@@ -105,6 +105,7 @@ impl Action {
             confirm: self.confirm.to_owned(),
             placement: self.placement.to_owned(),
             order: self.order,
+            quick_submit: false,
             is_default: self.is_default,
             anchor: self.in_header.then(|| json!({"kind": "header"})),
         };

@@ -52,7 +52,18 @@ impl LinkRecord {
 }
 
 fn pair_key(pull_request: &PullRequestKey, thread: &str) -> String {
-    format!("{}\0{thread}", pull_request.as_str())
+    format!("{}\0{thread}", pull_request.canonical_str())
+}
+
+/// Whether this PR has a live link to the thread (including a non-canonical related chat).
+pub(super) fn is_linked(
+    store: &IndexStore,
+    pull_request: &PullRequestKey,
+    thread: &str,
+) -> Result<bool, crate::store::StoreError> {
+    Ok(store
+        .kv_get(FORGE_PR_LINKS, &pair_key(pull_request, thread))?
+        .is_some())
 }
 
 /// The outcome of a link request.
@@ -86,7 +97,10 @@ impl Links {
     ) -> Result<Vec<LinkRecord>, ForgeError> {
         Ok(self
             .store
-            .kv_scan(FORGE_PR_LINKS, &format!("{}\0", pull_request.as_str()))?
+            .kv_scan(
+                FORGE_PR_LINKS,
+                &format!("{}\0", pull_request.canonical_str()),
+            )?
             .into_iter()
             .filter_map(|(_, value)| serde_json::from_slice(&value).ok())
             .collect())
@@ -143,7 +157,7 @@ impl Links {
         }
         let record = LinkRecord {
             version: LINK_VERSION,
-            pull_request: pull_request.clone(),
+            pull_request: pull_request.canonical(),
             thread_id: thread.as_str().to_owned(),
             source,
             linked_at: now_rfc3339(),

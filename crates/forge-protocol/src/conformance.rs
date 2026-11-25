@@ -249,7 +249,8 @@ async fn initialize(
                     capability::AUTH, capability::LIST, capability::READ, capability::DIFF,
                     capability::ACTIONS, capability::REVIEW, capability::CHECKS, capability::VIEWED,
                     capability::RESOLVE, capability::SCENARIO_CONTEXT, capability::CONVERSATION,
-                    capability::COMMENTS, capability::RESOLVE_CONVERSATION, capability::FILE_CONTENT
+                    capability::COMMENTS, capability::COMMENT_ATTACHMENTS, capability::RESOLVE_CONVERSATION, capability::FILE_CONTENT,
+                    capability::CHECK_TRIGGERS
                 ],
                 "stateDirectory": state,
             }),
@@ -470,6 +471,9 @@ async fn check_pull_request(
             }),
         );
     }
+    if declared.iter().any(|cap| cap == capability::CHECK_TRIGGERS) {
+        check_triggers(session, account, pr, &head, report).await;
+    }
     let readable = check_files(session, account, pr, &head, report).await;
     if declared.iter().any(|cap| cap == capability::FILE_CONTENT) {
         check_file_content(
@@ -490,6 +494,34 @@ async fn check_pull_request(
                     return Err("the catalog names another head".into());
                 }
                 Ok(format!("{} actions", catalog.actions.len()))
+            },
+        ),
+    );
+}
+
+async fn check_triggers(
+    session: &mut Session,
+    account: &ForgeAccountRef,
+    pr: &ForgePrRef,
+    head: &str,
+    report: &mut Report,
+) {
+    let method = methods::PULL_REQUEST_CHECK_TRIGGERS;
+    let reply = session
+        .call(
+            method,
+            &json!({"account": account, "ref": pr, "headRevision": head}),
+        )
+        .await;
+    report.record(
+        method,
+        expect::<RawActionCatalog>(method, reply, &[code::CAPABILITY_UNAVAILABLE]).and_then(
+            |catalog| match catalog {
+                None => Ok("unavailable".into()),
+                Some(catalog) if catalog.head_revision == head => {
+                    Ok(format!("{} triggers", catalog.actions.len()))
+                }
+                Some(_) => Err("the check triggers name another head".into()),
             },
         ),
     );

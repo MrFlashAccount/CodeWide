@@ -253,6 +253,11 @@ impl ForgeError {
                         .and_then(|data| data.get("retryAfterSeconds"))
                         .and_then(Value::as_u64),
                 },
+                // A write caller journals an inconclusive provider response the
+                // same way as a lost reply on the plugin transport.
+                plugin_code::OUTCOME_UNKNOWN => {
+                    Self::Internal("The forge could not confirm the write".into())
+                }
                 plugin_code::NOT_FOUND | plugin_code::NOT_OWNED => Self::NotFound,
                 plugin_code::INVALID_PARAMS => Self::InvalidParams(bounded(&message)),
                 // `forgeRejected` and any unknown plugin code.

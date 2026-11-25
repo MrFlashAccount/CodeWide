@@ -51,9 +51,13 @@ pub mod capability {
     pub const FILE_REVIEW: &str = "forge.review.file@1";
     /// Optional: `forge.pullRequest.checks`.
     pub const CHECKS: &str = "forge.checks@1";
+    /// Optional on-demand catalog of startable jobs inside PR checks.
+    pub const CHECK_TRIGGERS: &str = "forge.checkTriggers@1";
     /// Optional: `forge.pullRequest.viewed.set`.
     pub const VIEWED: &str = "forge.viewed@1";
     /// Optional: `forge.repository.resolve` and `forge.pullRequests.byBranch`.
+    /// Resolve a provider-owned PR web page before an account read.
+    pub const PR_LINK: &str = "forge.pullRequestLink@1";
     pub const RESOLVE: &str = "forge.resolve@1";
     /// Optional: `forge.pullRequest.scenarioContext`.
     pub const SCENARIO_CONTEXT: &str = "forge.scenarioContext@1";
@@ -62,6 +66,8 @@ pub mod capability {
     /// Optional: `forge.pullRequest.comment.create` and
     /// `forge.pullRequest.reviewThread.reply`, both published immediately.
     pub const COMMENTS: &str = "forge.comments@1";
+    /// Optional: a repository-scoped media upload for a comment.
+    pub const COMMENT_ATTACHMENTS: &str = "forge.commentAttachments@1";
     /// Optional: `forge.pullRequest.reviewThread.resolve`, resolving and
     /// unresolving a conversation (a thread whose resolution is
     /// `conversation`). Unrelated to [`RESOLVE`], which maps remotes to
@@ -93,6 +99,8 @@ pub mod code {
     pub const RATE_LIMITED: i64 = -32_114;
     /// The pull request or repository does not exist for this account.
     pub const NOT_FOUND: i64 = -32_115;
+    /// The provider dispatched a write but could not establish its outcome.
+    pub const OUTCOME_UNKNOWN: i64 = -32_118;
     /// JSON-RPC: invalid params.
     pub const INVALID_PARAMS: i64 = -32_602;
     /// JSON-RPC: method not found.

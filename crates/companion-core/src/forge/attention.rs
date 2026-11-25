@@ -59,7 +59,7 @@ impl AttentionStore {
     ) -> Result<AttentionWire, ForgeError> {
         let seen = self
             .store
-            .kv_get(FORGE_PR_ATTENTION, pull_request.as_str())?
+            .kv_get(FORGE_PR_ATTENTION, pull_request.canonical_str())?
             .is_some_and(|stored| stored == revision.as_bytes());
         Ok(AttentionWire {
             revision,
@@ -86,7 +86,7 @@ impl AttentionStore {
         }
         self.store.kv_apply(vec![KvOp::Put {
             table: FORGE_PR_ATTENTION,
-            key: pull_request.as_str().to_owned(),
+            key: pull_request.canonical_str().to_owned(),
             value: revision.as_bytes().to_vec(),
         }])?;
         Ok(AttentionWire {

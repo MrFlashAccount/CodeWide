@@ -137,7 +137,7 @@ pub async fn detect<S: std::hash::BuildHasher>(
         .await;
         for key in &changed {
             context.cache.invalidate_pull_request(key);
-            context.events.pull_request(key).await;
+            context.publish_pr(key, "pullRequest").await;
         }
         if !changed.is_empty() {
             context.events.list().await;

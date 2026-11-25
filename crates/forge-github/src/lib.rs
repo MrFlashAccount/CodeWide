@@ -132,6 +132,32 @@ impl GithubPlugin {
         self.credentials
             .set_secrets(SecretStore::new(&params.state_directory));
         self.initialized = true;
+        let mut capabilities = vec![
+            capability::AUTH.into(),
+            capability::LIST.into(),
+            capability::SEARCH.into(),
+            capability::READ.into(),
+            capability::DIFF.into(),
+            capability::ACTIONS.into(),
+            capability::REVIEW.into(),
+            capability::FILE_REVIEW.into(),
+            capability::CHECKS.into(),
+            capability::VIEWED.into(),
+            capability::PR_LINK.into(),
+            capability::RESOLVE.into(),
+            capability::SCENARIO_CONTEXT.into(),
+            capability::CONVERSATION.into(),
+            capability::COMMENTS.into(),
+            capability::RESOLVE_CONVERSATION.into(),
+            capability::FILE_CONTENT.into(),
+        ];
+        if params
+            .capabilities
+            .iter()
+            .any(|cap| cap == capability::COMMENT_ATTACHMENTS)
+        {
+            capabilities.push(capability::COMMENT_ATTACHMENTS.into());
+        }
         Ok(InitializeResult {
             protocol_version: PROTOCOL_VERSION,
             provider: PLUGIN_ID.into(),
@@ -139,29 +165,13 @@ impl GithubPlugin {
             version: self.version.clone(),
             default_host: Some(DEFAULT_HOST.into()),
             provider_icon: Some(github_mark()),
-            capabilities: vec![
-                capability::AUTH.into(),
-                capability::LIST.into(),
-                capability::SEARCH.into(),
-                capability::READ.into(),
-                capability::DIFF.into(),
-                capability::ACTIONS.into(),
-                capability::REVIEW.into(),
-                capability::FILE_REVIEW.into(),
-                capability::CHECKS.into(),
-                capability::VIEWED.into(),
-                capability::RESOLVE.into(),
-                capability::SCENARIO_CONTEXT.into(),
-                capability::CONVERSATION.into(),
-                capability::COMMENTS.into(),
-                capability::RESOLVE_CONVERSATION.into(),
-                capability::FILE_CONTENT.into(),
-            ],
+            capabilities,
             media_hosts: media::GITHUB_MEDIA_HOSTS
                 .iter()
                 .map(|&host| host.to_owned())
                 .collect(),
             web_hosts: Vec::new(),
+            check_viewer_hosts: Vec::new(),
         })
     }
 
@@ -281,6 +291,13 @@ impl GithubPlugin {
                     .await?,
                 )
             }
+            methods::PULL_REQUEST_RESOLVE_LINK => {
+                let url = params
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| PluginError::invalid_params("url is required"))?;
+                to_result(&repo::pull_request_link(url))
+            }
             methods::REPOSITORY_RESOLVE => {
                 let params: ResolveParams = from_params(params)?;
                 resolve(&params.remotes)
@@ -397,6 +414,24 @@ impl GithubPlugin {
                 to_result(
                     &conversation::conversation(&api, &target, params.cursor.as_deref()).await?,
                 )
+            }
+            methods::COMMENT_ATTACHMENT_UPLOAD => {
+                let params: forge_protocol::CommentAttachmentParams = from_params(params)?;
+                if params.pr_ref.host != "github.com" {
+                    return Err(PluginError::new(
+                        code::FORGE_REJECTED,
+                        "Attachments require a github.com repository.",
+                    ));
+                }
+                let (api, target) = self.pull_request(&params.account, &params.pr_ref).await?;
+                let pull = target.fetch(&api).await?;
+                let repo_id = pull
+                    .pointer("/base/repo/id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| {
+                        PluginError::invalid_params("Missing attachment target repository.")
+                    })?;
+                to_result(&api.upload_comment_asset(repo_id, params).await?)
             }
             methods::PULL_REQUEST_COMMENT_CREATE => {
                 let params: CommentCreateParams = from_params(params)?;
