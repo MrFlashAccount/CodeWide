@@ -1,3 +1,4 @@
+import { HALF_PERCENT } from "../ui/paneSplitSizes";
 import { observable, type Observable } from "@legendapp/state";
 import { useSelector } from "@legendapp/state/react";
 import { createContext, useContext, useLayoutEffect } from "react";
@@ -18,10 +19,10 @@ import {
   type PaneArrangement,
   type PaneGeometry,
 } from "./paneGeometry";
-import { PANE_SPRING_DURATION_MS, paneSpring } from "./paneMotionSpec";
+import { paneSpring } from "./paneMotionSpec";
 
-/** Slack after which an armed rearrangement that moved no pane disarms. */
-const SETTLE_SLACK_MS = 80;
+/** Allow a slow destination commit to claim a rearrangement even when the spring is short. */
+const UNCLAIMED_MOTION_TIMEOUT_MS = 540;
 
 /**
  * Pane geometry animates only for an intentional rearrangement (opening, closing or resizing a
@@ -35,6 +36,8 @@ export type PaneMotion = {
   readonly claim: () => number | null;
   /** Arms the pane motion and applies `change` at once; its geometry change springs. */
   readonly rearrange: (change: () => void) => void;
+  /** Resizes live reading content as the divider moves and settles. */
+  readonly resize: (change: () => void) => void;
   /** Ends rearrangement `generation` once its panes have settled. */
   readonly settle: (generation: number) => void;
   readonly subscribeCapture: (capture: () => void) => () => void;
@@ -45,6 +48,7 @@ export function createPaneMotion(): PaneMotion {
   const armed$ = observable(false);
   const captures = new Set<() => void>();
   let generation = 0;
+  let captureOnClaim = false;
   let fallback: ReturnType<typeof setTimeout> | null = null;
   const clearFallback = (): void => {
     if (fallback !== null) {
@@ -58,30 +62,39 @@ export function createPaneMotion(): PaneMotion {
       armed$.set(false);
     }
   };
+  function arm(change: () => void, capture: boolean): void {
+    generation += 1;
+    const current = generation;
+    captureOnClaim = capture;
+    clearFallback();
+    armed$.set(true);
+    fallback = setTimeout(() => {
+      settle(current);
+    }, UNCLAIMED_MOTION_TIMEOUT_MS);
+    change();
+  }
   return {
     armed$,
     captureBodies() {
-      for (const capture of captures) {
-        capture();
+      if (captureOnClaim) {
+        captureOnClaim = false;
+        for (const capture of captures) {
+          capture();
+        }
       }
     },
     claim() {
       if (!armed$.peek()) {
         return null;
       }
-      // The spring now owns the window and settles it.
       clearFallback();
       return generation;
     },
     rearrange(change) {
-      generation += 1;
-      const current = generation;
-      clearFallback();
-      armed$.set(true);
-      fallback = setTimeout(() => {
-        settle(current);
-      }, PANE_SPRING_DURATION_MS + SETTLE_SLACK_MS);
-      change();
+      arm(change, true);
+    },
+    resize(change) {
+      arm(change, false);
     },
     settle,
     subscribeCapture(capture) {
@@ -101,6 +114,9 @@ const UNARMED: PaneMotion = {
   rearrange: (change) => {
     change();
   },
+  resize(change) {
+    change();
+  },
   settle: () => undefined,
   subscribeCapture: () => () => undefined,
 };
@@ -116,10 +132,16 @@ export const PaneMotionContext = createContext<PaneMotion>(UNARMED);
  */
 export type PaneMotionState = {
   readonly arrangement: SharedValue<PaneArrangement>;
+  readonly dividerPressed: SharedValue<boolean>;
+  readonly drag: SharedValue<PaneGeometry | null>;
   /** The pane frame view, measured when a rearrangement starts. */
   readonly frameRef: AnimatedRef<View>;
   readonly frameWidth: SharedValue<number>;
   readonly from: SharedValue<PaneGeometry>;
+  /** Identifies a preset already started from its press before React commits that same change. */
+  readonly generation: SharedValue<number>;
+  /** Known final reading widths, published once a preset is chosen or the finger lifts. */
+  readonly landing: SharedValue<PaneGeometry | null>;
   readonly moving: SharedValue<boolean>;
   readonly progress: SharedValue<number>;
 };
@@ -127,6 +149,10 @@ export type PaneMotionState = {
 /** The geometry the moving panes stand at now; meaningful only while `moving`. */
 export function movingPaneGeometry(state: PaneMotionState): PaneGeometry {
   "worklet";
+  const drag = state.drag.get();
+  if (drag !== null) {
+    return drag;
+  }
   const to = paneGeometry(state.arrangement.get(), state.frameWidth.get());
   return interpolatePaneGeometry(state.from.get(), to, state.progress.get());
 }
@@ -147,6 +173,8 @@ function standingPaneGeometry(state: PaneMotionState, frameWidth: number): PaneG
 function settlePanes(state: PaneMotionState, next: PaneArrangement): void {
   "worklet";
   cancelAnimation(state.progress);
+  state.drag.set(null);
+  state.landing.set(null);
   state.frameWidth.set(0);
   state.arrangement.set(next);
   state.moving.set(false);
@@ -163,6 +191,32 @@ export type PaneMotionRequest = {
   readonly onSettled: (generation: number) => void;
 };
 
+function sameArrangement(current: PaneArrangement, next: PaneArrangement): boolean {
+  "worklet";
+  return (
+    current.left === next.left &&
+    current.right === next.right &&
+    current.sidebar === next.sidebar &&
+    current.catalogPercent === next.catalogPercent &&
+    current.centerPercent === next.centerPercent &&
+    current.centerLeftRadius === next.centerLeftRadius &&
+    current.centerRightRadius === next.centerRightRadius
+  );
+}
+
+function isRunningRequest(
+  state: PaneMotionState,
+  request: PaneMotionRequest,
+  width: number,
+): boolean {
+  "worklet";
+  return (
+    state.generation.get() === request.generation &&
+    state.frameWidth.get() === width &&
+    sameArrangement(state.arrangement.get(), request.next)
+  );
+}
+
 /**
  * Starts one rearrangement on the UI thread. It measures the frame now, so the motion's ends come
  * from the actual layout rather than an earlier JavaScript measurement, and springs from wherever
@@ -170,11 +224,9 @@ export type PaneMotionRequest = {
  * panes return to Yoga, whose layout equals the motion's explicit end. Without `animate`, or
  * without a measurable frame, the panes settle into `next` at once.
  */
-export function startPaneMotion(
-  state: PaneMotionState,
-  { animate, generation, next, onSettled }: PaneMotionRequest,
-): void {
+export function startPaneMotion(state: PaneMotionState, request: PaneMotionRequest): void {
   "worklet";
+  const { animate, generation, next, onSettled } = request;
   const frameWidth = animate ? (measure(state.frameRef)?.width ?? 0) : 0;
   if (frameWidth <= 0) {
     settlePanes(state, next);
@@ -183,15 +235,22 @@ export function startPaneMotion(
     }
     return;
   }
+  if (isRunningRequest(state, request, frameWidth)) {
+    return;
+  }
+  state.generation.set(generation);
   state.from.set(standingPaneGeometry(state, frameWidth));
+  state.drag.set(null);
   state.frameWidth.set(frameWidth);
   state.arrangement.set(next);
+  state.landing.set(paneGeometry(next, frameWidth));
   state.moving.set(true);
   state.progress.set(0);
   state.progress.set(
     paneSpring((finished) => {
       if (finished === true) {
         state.moving.set(false);
+        state.landing.set(null);
         scheduleOnRN(onSettled, generation);
       }
     }),
@@ -214,9 +273,21 @@ export function usePaneMotionState(
   // Both are written when a motion starts; at rest no pane reads them.
   const frameWidth = useSharedValue(0);
   const from = useSharedValue(paneGeometry(arrangement, 0));
+  const stagedGeneration = useSharedValue(-1);
+  const drag = useSharedValue<PaneGeometry | null>(null);
+  const landing = useSharedValue<PaneGeometry | null>(null);
   const moving = useSharedValue(false);
+  const dividerPressed = useSharedValue(false);
   const progress = useSharedValue(1);
-  const { centerLeftRadius, centerRightRadius, left, right, sidebar } = arrangement;
+  const {
+    catalogPercent = null,
+    centerLeftRadius,
+    centerPercent = HALF_PERCENT,
+    centerRightRadius,
+    left,
+    right,
+    sidebar,
+  } = arrangement;
   // WHY: the shared values are Reanimated's UI-thread store; the effect publishes the committed
   // arrangement to it exactly once per change, after the commit that mounted any arriving pane.
   useLayoutEffect(() => {
@@ -230,30 +301,66 @@ export function usePaneMotionState(
     }
     scheduleOnUI(
       startPaneMotion,
-      { arrangement: arrangementValue, frameRef, frameWidth, from, moving, progress },
+      {
+        arrangement: arrangementValue,
+        dividerPressed,
+        drag,
+        frameRef,
+        frameWidth,
+        from,
+        generation: stagedGeneration,
+        landing,
+        moving,
+        progress,
+      },
       {
         animate,
         generation: generation ?? -1,
-        next: { centerLeftRadius, centerRightRadius, left, right, sidebar },
+        next: {
+          catalogPercent,
+          centerLeftRadius,
+          centerPercent,
+          centerRightRadius,
+          left,
+          right,
+          sidebar,
+        },
         onSettled: motion.settle,
       },
     );
   }, [
     arrangementValue,
+    catalogPercent,
+    centerPercent,
+    dividerPressed,
+    drag,
     centerLeftRadius,
     centerRightRadius,
     frameRef,
     frameWidth,
     from,
+    landing,
     left,
     motion,
     moving,
     progress,
     reducedMotion,
+    stagedGeneration,
     right,
     sidebar,
   ]);
-  return { arrangement: arrangementValue, frameRef, frameWidth, from, moving, progress };
+  return {
+    arrangement: arrangementValue,
+    dividerPressed,
+    drag,
+    frameRef,
+    frameWidth,
+    from,
+    generation: stagedGeneration,
+    landing,
+    moving,
+    progress,
+  };
 }
 
 /** Whether this frame's rearrangement is armed or still moving. */

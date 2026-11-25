@@ -6,10 +6,10 @@ import { inlineIconMetrics, type InlineIconRole } from "./inline-icon-metrics";
 
 /** Text-adjacent glyphs follow their label's scale; the parent owns the touch target. */
 export function InlineIcon({
-  role,
+  role = "body",
   ...props
 }: Omit<ComponentProps<typeof Ionicons>, "role" | "size" | "allowFontScaling" | "style"> & {
-  role: InlineIconRole;
+  role?: InlineIconRole;
 }) {
   const { fontScale } = useWindowDimensions();
   const metrics = inlineIconMetrics(role, fontScale);

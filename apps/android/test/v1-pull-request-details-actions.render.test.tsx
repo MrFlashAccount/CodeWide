@@ -1,12 +1,14 @@
 import { RpcResponseError } from "@codewide/sync-client";
-import { act, fireEvent, within } from "@testing-library/react-native";
+import { act, fireEvent, waitFor, within } from "@testing-library/react-native";
 import * as Clipboard from "expo-clipboard";
 import type { ReactNode } from "react";
 import { Linking, Share } from "react-native";
 
 import { ActionMenu } from "../src/ui/ActionMenu";
-import { action, overview91 } from "./fixtures/forgeWireFixtures";
+import { action, draftsSnapshot, overview91 } from "./fixtures/forgeWireFixtures";
 import {
+  PULL_REQUEST,
+  REVIEW_CHAT,
   renderScreen,
   unmountScreens,
   type Capabilities,
@@ -15,7 +17,7 @@ import {
 import { getAppDialogRequest, resetAppDialog } from "./mocks/AppDialog";
 
 // Details places the plugin's actions where they act: Checks section actions (Start CI) in the
-// Status section's Checks row, the verdict group as a split button that only opens Submit review,
+// Status section's Checks row, the verdict group as a split button,
 // and the page's links and overflowed actions in the app bar ⋮ menu.
 
 // WHY: Expo's filesystem bridge cannot initialize in Node; the editor's suggestion popup imports it.
@@ -119,10 +121,79 @@ it.each([false, true])(
       confirmation: "none",
       input: null,
     });
-    await view.findByText(/Auto-merge refused by Arcanum/u);
+    const overlay = within(await view.findByTestId("app-notice-stack"));
+    expect(overlay.getByText("Auto-merge refused by Arcanum")).toBeOnTheScreen();
+    expect(
+      within(view.getByTestId("pull-request-overview")).queryByText(/Auto-merge refused/u),
+    ).toBeNull();
+    fireEvent.press(overlay.getByText("Details"), { stopPropagation: jest.fn() });
+    expect(getAppDialogRequest()?.message).toBe("Auto-merge refused by Arcanum");
     expect(view.getByLabelText("Auto-merge")).toHaveProp("on", on);
   },
 );
+
+it("keeps the auto-merge switch and omits the acknowledged success banner", async () => {
+  const runAction = jest.fn<
+    ReturnType<Capabilities["runAction"]>,
+    Parameters<Capabilities["runAction"]>
+  >();
+  const view = await renderDetails({
+    capabilityOverrides: { runAction },
+    overview: withActions(overview91, [
+      action("auto", {
+        group: "merge",
+        kind: "autoMerge",
+        label: "Auto-merge",
+        toggle: { on: false },
+      }),
+    ]),
+  });
+  runAction.mockImplementation(async (target) => ({
+    catalog: { actions: [], headRevision: target.headRevision },
+    message: "Auto-merge enabled",
+    openUrl: null,
+    runId: "test-run",
+  }));
+  await act(async () => {
+    fireEvent(view.getByLabelText("Auto-merge"), "valueChange", true);
+  });
+  expect(runAction).toHaveBeenCalledTimes(1);
+  expect(view.getByLabelText("Auto-merge")).toBeTruthy();
+  expect(view.queryByText("Auto-merge enabled")).toBeNull();
+});
+
+it("opens the PR's agent from the conflict with its actual target branch", async () => {
+  const startScenario = jest.fn<
+    ReturnType<Capabilities["startScenario"]>,
+    Parameters<Capabilities["startScenario"]>
+  >(async () => Promise.resolve({ created: false, kind: "started", threadId: REVIEW_CHAT }));
+  const openThread = jest.fn();
+  const view = await renderDetails({
+    capabilityOverrides: { startScenario },
+    openThread,
+    overview: withActions(
+      overview91,
+      [
+        action("codewide.scenario.rebase", {
+          anchor: { kind: "conflict" },
+          group: "agent",
+          kind: "rebase",
+          label: "Rebase in agent",
+        }),
+      ],
+      { baseBranch: "release", merge: { reason: null, state: "conflicts" } },
+    ),
+  });
+  const header = within(view.getByTestId("pull-request-work-header"));
+  expect(header.getByText("Conflicts with release")).toBeTruthy();
+  fireEvent.press(header.getByRole("button", { name: "Rebase in agent" }));
+  await waitFor(() => expect(openThread).toHaveBeenCalledWith(REVIEW_CHAT));
+  expect(startScenario.mock.calls[0]).toMatchObject([
+    { pullRequest: PULL_REQUEST, headRevision: overview91.headRevision },
+    { scenario: "rebase", target: { kind: "reviewChat", workspace: { kind: "ask" } } },
+  ]);
+  expect(view.getAllByRole("button", { name: "Rebase in agent" })).toHaveLength(1);
+});
 
 describe("Checks section actions", () => {
   it("puts Start CI in the Checks row, never in the header row, and runs it from there", async () => {
@@ -255,7 +326,14 @@ describe("app bar menu", () => {
 });
 
 const VERDICTS = [
-  action("ship", { group: "verdict", isDefault: true, kind: "verdict", label: "Ship", order: 7 }),
+  action("ship", {
+    group: "verdict",
+    isDefault: true,
+    kind: "verdict",
+    label: "Ship",
+    quickSubmit: true,
+    order: 7,
+  }),
   action("block", {
     confirm: "destructive",
     group: "verdict",
@@ -308,14 +386,165 @@ describe("verdict split button", () => {
     expect(view.getByTestId("review-dock-outcome")).toBeOnTheScreen();
   });
 
-  it("opens Submit review with the lead verdict from the main segment", async () => {
-    const view = await renderDetails({ overview: withActions(overview91, VERDICTS) });
-    fireEvent.press(await view.findByTestId("pull-request-verdict-main"));
+  it.each(["Ship", "Sticky ship"])(
+    "submits the provider's primary %s directly and leaves drafts private",
+    async (label) => {
+      // Opaque id exercises the provider contract independently of Arcanum naming.
+      const lead = action("approval-17", {
+        kind: "verdict",
+        label,
+        group: "verdict",
+        isDefault: true,
+        quickSubmit: true,
+      });
+      const submitReview = jest.fn<
+        ReturnType<Capabilities["submitReview"]>,
+        Parameters<Capabilities["submitReview"]>
+      >(
+        async () =>
+          new Promise(() => {
+            /* keep the write pending across rapid taps */
+          }),
+      );
+      const view = await renderDetails({
+        capabilityOverrides: { submitReview },
+        drafts: draftsSnapshot.drafts,
+        overview: withActions(overview91, [
+          action("comment", { group: "verdict", kind: "verdict", label: "Comment" }),
+          lead,
+        ]),
+      });
+      await view.findByText(/3 drafts/u);
+      const primary = view.getByTestId("pull-request-verdict-main");
+      expect(primary).toHaveTextContent(label);
+      fireEvent.press(primary);
+      fireEvent.press(primary);
+      expect(submitReview).toHaveBeenCalledTimes(1);
+      expect(submitReview).toHaveBeenCalledWith(
+        expect.objectContaining({
+          headRevision: overview91.headRevision,
+          pullRequest: overview91.pullRequest,
+        }),
+        expect.objectContaining({
+          body: null,
+          draftIds: [],
+          forwardBothToAgent: false,
+          verdictActionId: "approval-17",
+        }),
+      );
+      expect(primary).toBeDisabled();
+      expect(view.queryByTestId("submit-review-sheet")).toBeNull();
+    },
+  );
 
-    expect(
-      within(view.getByTestId("submit-review-sheet")).getByTestId("submit-review-confirm"),
-    ).toHaveTextContent("Submit review · Ship");
+  it("uses the explicitly tapped alternative approval and displays the acknowledgement", async () => {
+    const submitReview = submitted();
+    const view = await renderDetails({
+      capabilityOverrides: { submitReview },
+      overview: withActions(overview91, [
+        ...VERDICTS,
+        action("sticky", {
+          label: "Sticky ship",
+          kind: "verdict",
+          group: "verdict",
+          quickSubmit: true,
+        }),
+      ]),
+    });
+    fireEvent.press(view.getByTestId("pull-request-verdict-menu"));
+    fireEvent.press(view.getByLabelText("Verdict: Sticky ship"));
+    expect(await view.findByTestId("review-dock-outcome")).toHaveTextContent(/Sticky ship/u);
+    expect(submitReview).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ verdictActionId: "sticky" }),
+    );
+    expect(view.queryByTestId("submit-review-sheet")).toBeNull();
   });
+
+  it("refuses an offline approval before sending anything", async () => {
+    const submitReview = submitted();
+    const { server, view } = renderScreen({
+      capabilityOverrides: { submitReview },
+      overview: withActions(overview91, VERDICTS),
+    });
+    await view.findByTestId("pull-request-verdict-main");
+    server.goOffline();
+    if (PULL_REQUEST === null) throw new Error("invalid fixture PR key");
+    await act(async () => {
+      await server.forge.overviews
+        .refresh({ connectionId: "server", pullRequest: PULL_REQUEST })
+        .catch(() => undefined);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    fireEvent.press(view.getByTestId("pull-request-verdict-main"));
+    expect(getAppDialogRequest()?.title).toBe("The companion is offline");
+    expect(submitReview).not.toHaveBeenCalled();
+    expect(view.queryByTestId("submit-review-sheet")).toBeNull();
+  });
+
+  it("reports a changed revision without retrying the approval", async () => {
+    const submitReview = jest
+      .fn<ReturnType<Capabilities["submitReview"]>, Parameters<Capabilities["submitReview"]>>()
+      .mockRejectedValue(new RpcResponseError(-32_082, "Revision changed"));
+    const view = await renderDetails({
+      capabilityOverrides: { submitReview },
+      overview: withActions(overview91, VERDICTS),
+    });
+    fireEvent.press(view.getByTestId("pull-request-verdict-main"));
+    const overlay = within(await view.findByTestId("app-notice-stack"));
+    expect(overlay.getByText("PR changed since this screen loaded")).toBeOnTheScreen();
+    expect(overlay.getByText(/Revision changed/u)).toBeOnTheScreen();
+    expect(view.queryByTestId("review-dock-outcome")).toBeNull();
+    expect(submitReview).toHaveBeenCalledTimes(1);
+    expect(view.queryByTestId("submit-review-sheet")).toBeNull();
+  });
+
+  it("keeps the last published verdict visible when a later approval fails", async () => {
+    const submitReview = jest
+      .fn<ReturnType<Capabilities["submitReview"]>, Parameters<Capabilities["submitReview"]>>()
+      .mockResolvedValueOnce({ drafts: [], reviewUrl: null })
+      .mockRejectedValueOnce(new RpcResponseError(-32_083, "Approval refused"));
+    const view = await renderDetails({
+      capabilityOverrides: { submitReview },
+      overview: withActions(overview91, VERDICTS),
+    });
+    fireEvent.press(view.getByTestId("pull-request-verdict-main"));
+    expect(await view.findByTestId("review-dock-outcome")).toHaveTextContent(/Ship/u);
+    fireEvent.press(view.getByTestId("pull-request-verdict-main"));
+    const notice = within(await view.findByTestId("app-notice-stack"));
+    expect(notice.getByText("Approval refused")).toBeOnTheScreen();
+    expect(view.getByTestId("review-dock-outcome")).toHaveTextContent(/Ship/u);
+  });
+
+  it.each([
+    {},
+    { quickSubmit: true, confirm: "destructive" },
+    { quickSubmit: true, input: { type: "text", label: "Reason" } },
+  ])(
+    "keeps the composer when a verdict needs confirmation, input, or comes from an older catalog",
+    async (overrides) => {
+      const submitReview = submitted();
+      const lead = action("provider-verdict", {
+        kind: "verdict",
+        group: "verdict",
+        label: "Review",
+        isDefault: true,
+        ...overrides,
+      });
+      const view = await renderDetails({
+        capabilityOverrides: { submitReview },
+        overview: withActions(overview91, [
+          lead,
+          action("comment", { group: "verdict", kind: "verdict", label: "Comment" }),
+        ]),
+      });
+      fireEvent.press(view.getByTestId("pull-request-verdict-main"));
+      expect(view.getByTestId("submit-review-sheet")).toBeOnTheScreen();
+      expect(submitReview).not.toHaveBeenCalled();
+    },
+  );
 
   it("shows nothing prominent when only one verdict is enabled and keeps Submit review in the menu", async () => {
     const own = VERDICTS.map((verdict) =>

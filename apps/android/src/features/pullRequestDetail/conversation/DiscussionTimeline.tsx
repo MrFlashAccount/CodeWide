@@ -39,17 +39,20 @@ export type TimelineContext = {
 export function DiscussionTimeline({
   context,
   items,
+  visibleCount,
 }: {
   readonly context: TimelineContext;
   readonly items: readonly TimelineItem[];
-}): React.JSX.Element {
-  return (
-    <>
-      {items.map((item) => (
-        <Item context={context} item={item} key={item.key} />
-      ))}
-    </>
-  );
+  readonly visibleCount: number;
+}): React.JSX.Element[] {
+  const rows = [];
+  for (const item of items) {
+    if (rows.length === visibleCount) {
+      break;
+    }
+    rows.push(<Item context={context} item={item} key={item.key} />);
+  }
+  return rows;
 }
 
 function Item({

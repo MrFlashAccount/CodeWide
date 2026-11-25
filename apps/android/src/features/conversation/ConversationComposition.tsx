@@ -1,3 +1,5 @@
+import { useQuestionReply } from "../requests/questionReplyContext";
+import { useEvent } from "../../react/useEvent";
 import { QuestionConversationProvider } from "../requests/QuestionFeature";
 import { useComposerInteractions } from "../composer/composerInteractions";
 import { ThreadGoalMenu } from "../goal/ThreadGoalMenu";
@@ -31,8 +33,6 @@ export function ConversationComposition(
     surfaceInputs: props.surface,
   });
 
-  const visibleQueuedPrompts = props.queue.queuedPrompts;
-  const inlineQueueBinding = projectInlineQueue(visibleQueuedPrompts);
   const timelineRead = useConversationTimelineRead({
     composerScope: scoped.activation.composerScope,
     conversationOwner: scoped.activation.conversationOwner,
@@ -51,6 +51,49 @@ export function ConversationComposition(
     timelineState: scoped.timelineState,
     unread: props.surface.unread,
   });
+  const insertOption = useEvent((text: string) => {
+    const editor = scoped.composerStateBinding.composerEditingBinding.composerInputRef.current;
+    editor?.focus();
+    editor?.insertText(text);
+  });
+  return (
+    <QuestionConversationProvider
+      value={{
+        activeTurnId: timelineRead.conversationPresentationBinding.currentTurnId,
+        connectionId: scoped.activation.draftConnectionId ?? "",
+        entries: questionTimelineEntries(props.read),
+        insertOption:
+          props.surface.readOnly ||
+          props.read.composerState.status === "loading" ||
+          scoped.composerStateBinding.queueEditStateBinding.queuedComposerEdit !== null ||
+          scoped.composerStateBinding.composerVoiceStateBinding.voicePhase !== "idle" ||
+          scoped.composerStateBinding.composerMenuStateBinding.goalAttachmentVisible
+            ? undefined
+            : insertOption,
+        latestHistoryPresent: props.read.historyViewport.containsLatest,
+        onRespond: props.requests.onRespondToRequest,
+        pendingRequest: props.requests.pendingRequest,
+        sendAnswer: props.requests.sendQuestionAnswer,
+        summaries: props.requests.questionSummaries,
+        threadId: scoped.activation.draftThreadId ?? "",
+      }}
+    >
+      <BoundConversation props={props} scoped={scoped} timelineRead={timelineRead} />
+    </QuestionConversationProvider>
+  );
+}
+function BoundConversation({
+  props,
+  scoped,
+  timelineRead,
+}: {
+  props: ConversationCompositionCapabilities;
+  scoped: ReturnType<typeof useConversationScopeFeatures>;
+  timelineRead: ReturnType<typeof useConversationTimelineRead>;
+}) {
+  const questionReply = useQuestionReply();
+  const visibleQueuedPrompts = props.queue.queuedPrompts;
+  const inlineQueueBinding = projectInlineQueue(visibleQueuedPrompts);
   const subagents = useThreadSubagents({
     connectionId: scoped.activation.draftConnectionId,
     database: props.agents.subagentSummaryDatabase,
@@ -155,6 +198,7 @@ export function ConversationComposition(
     draftThreadId: scoped.activation.draftThreadId,
     onSetGoal: props.goal.onSetGoal,
     openDrawing: toolsBinding.drawingFeatureBinding.openDrawing,
+    questionReply,
     queueInputs: props.queue,
     remoteThread: props.read.remoteThread,
     terminalEnabled:
@@ -222,23 +266,7 @@ export function ConversationComposition(
     workingAgentsContent,
   });
 
-  return (
-    <QuestionConversationProvider
-      value={{
-        activeTurnId: timelineRead.conversationPresentationBinding.currentTurnId,
-        connectionId: scoped.activation.draftConnectionId ?? "",
-        entries: questionTimelineEntries(props.read),
-        latestHistoryPresent: props.read.historyViewport.containsLatest,
-        onRespond: props.requests.onRespondToRequest,
-        pendingRequest: props.requests.pendingRequest,
-        sendAnswer: props.requests.sendQuestionAnswer,
-        summaries: props.requests.questionSummaries,
-        threadId: scoped.activation.draftThreadId ?? "",
-      }}
-    >
-      {frameBinding.frame}
-    </QuestionConversationProvider>
-  );
+  return frameBinding.frame;
 }
 
 function questionTimelineEntries(read: ConversationCompositionCapabilities["read"]) {

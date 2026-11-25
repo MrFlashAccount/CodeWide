@@ -22,7 +22,11 @@ Modal therefore releases input when the visible exit finishes instead of
 waiting for a spring's imperceptible tail. A React Native
 `KeyboardAvoidingView` owns keyboard overlap inside the Modal window, keeping
 the bottom-anchored tray above the IME without a feature-local keyboard model.
-Visuals, thresholds and ordinary-mode motion remain upstream-owned.
+Auto-sized pages participate in the first native layout at their intrinsic height;
+the surface, border and shadow become visible together once presentation starts.
+The backdrop and its hit target use React Native's supported absolute-fill style.
+A destination created during a push starts at the incoming edge, as in the upstream
+demo where the page components are already mounted. Motion defaults are upstream-owned.
 The Masked Tab Bar has one interaction-scheduling patch: a pointer tap starts
 the pill position and width springs inside the gesture worklet before the
 controlled value callback reaches React. Route rendering may therefore occupy
@@ -34,7 +38,10 @@ the already selected trigger. Cancellation or failure restores the controlled
 selection without activation, and movement beyond tap slop on either axis
 remains a drag that cannot emit that callback. Drag release resolves from the
 pointer-owned target rather than the lagging spring position. `onValueChange`
-keeps its upstream change-only semantics.
+keeps its upstream change-only semantics. A competing tap recognizer handles Android
+DOWN/UP pairs without a MOVE. Only the winning recognizer activates the tab.
+`MaskedTabBarMotionProvider` lets retained controls share one running indicator spring.
+The active control reconciles its measured geometry. A standalone control owns its own spring.
 
 Source files:
 

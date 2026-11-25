@@ -22,10 +22,13 @@ import {
   type PaneGeometry,
 } from "../src/routeComposition/paneGeometry";
 import {
+  createPaneMotion,
   movingPaneGeometry,
   startPaneMotion,
   type PaneMotionState,
 } from "../src/routeComposition/paneMotion";
+import { startPresetMotion } from "../src/routeComposition/paneDividerGesture";
+import { previewDivider, settledDividerPercent } from "../src/routeComposition/paneDividerGeometry";
 import { COVERED_CATALOG_OPACITY } from "../src/routeComposition/paneMotionSpec";
 import { WorkspaceCenterLayout } from "../src/routeComposition/WorkspaceCenterLayout";
 import { WorkspacePaneFrame } from "../src/routeComposition/WorkspacePaneFrame";
@@ -33,7 +36,7 @@ import { colors, radii } from "../src/theme";
 import { MessageListBoundary } from "../src/ui/MessageListBoundary";
 import { SurfaceToneProvider } from "../src/ui/surfaceTone";
 import { threadListLayout } from "../src/ui/thread-list-layout";
-import { PaneChromeControls } from "./fixtures/PaneChromeControls";
+import { PaneCapabilityControls } from "./fixtures/PaneChromeControls";
 
 let mockReducedMotion = false;
 jest.mock("../src/rendering/reduced-motion-store", () => ({
@@ -100,6 +103,10 @@ function motionState({
   // stub; a full Reanimated SharedValue and AnimatedRef need the native runtime.
   return {
     arrangement: box(to),
+    drag: box(null),
+    landing: box(null),
+    generation: box(-1),
+    dividerPressed: box(false),
     frameRef: { current: null },
     frameWidth: box(frameWidth),
     from: box(from),
@@ -107,6 +114,71 @@ function motionState({
     progress: box(progress),
   } as unknown as PaneMotionState;
 }
+
+it("captures a preset or navigation once and delegates a drag landing to the displayed transcript", () => {
+  const motion = createPaneMotion();
+  const capture = jest.fn();
+  const unsubscribe = motion.subscribeCapture(capture);
+  function applyLayout() {
+    const generation = motion.claim();
+    expect(generation).not.toBeNull();
+    motion.captureBodies();
+    // A preset press and its subsequent React commit both visit the same capture owner.
+    motion.captureBodies();
+    if (generation !== null) motion.settle(generation);
+  }
+  motion.rearrange(applyLayout);
+  expect(capture).toHaveBeenCalledTimes(1);
+  motion.resize(applyLayout);
+  expect(capture).toHaveBeenCalledTimes(1);
+  unsubscribe();
+});
+
+it("restores the exact visible width after releasing between percentage presets", () => {
+  const width = 1600;
+  const edge = 781;
+  const percent = settledDividerPercent("left+center", edge, width);
+  const rest = paneGeometry({ ...arrangement("beside", "offscreen"), catalogPercent: percent }, width);
+  expect(rest.catalogWidth).toBeCloseTo(edge);
+  expect(rest.centerWidth).toBeCloseTo(width - edge);
+});
+
+it("lays out both reading surfaces at the displayed edge through drag, reversal and landing", () => {
+  const initial = { ...arrangement("covered", "beside"), centerPercent: 40 };
+  const from = paneGeometry(initial, FRAME);
+  const state = motionState({ from, moving: true, progress: 1, to: initial });
+  for (const edge of [640, 760, 1090, 1122, 1500, 1600, 1000, 480, 320, 0, 640]) {
+    state.drag.set(previewDivider("center+right", { edge, width: FRAME }, from));
+    const clip = centerClipFrame(state).width;
+    expect(clip === "100%" ? FRAME : clip).toBe(edge);
+    expect(centerContentFrame(state).width).toBe(edge < FRAME * 0.3 ? FRAME * 0.3 : "100%");
+    expect(rightFrame(state).width).toBe(Math.max(FRAME - edge, FRAME * 0.3));
+  }
+  state.drag.set(null);
+  state.arrangement.set({ ...initial, centerPercent: 60 });
+  for (const progress of [0, 0.4, 1]) {
+    state.progress.set(progress);
+    expect(centerClipFrame(state).width).toBeCloseTo(640 + 320 * progress);
+    expect(rightFrame(state).width).toBeCloseTo(960 - 320 * progress);
+  }
+  state.moving.set(false);
+  expect(centerContentFrame(state).width).toBe("100%");
+});
+
+it("starts the catalog at its actual split and only holds its width when covered", () => {
+  const initial = { ...arrangement("beside", "offscreen"), catalogPercent: 40 };
+  const from = paneGeometry(initial, FRAME);
+  const state = motionState({ from, moving: true, progress: 0, to: initial });
+  for (const edge of [640, 655, 780, 800, 720, 480, 340, 0, 500, 640]) {
+    state.drag.set(previewDivider("left+center", { edge, width: FRAME }, from));
+    expect(catalogFrame(state).width).toBe(Math.max(edge, FRAME * 0.3));
+    // Even if the parent has already committed the next gesture sample, the trailing edge
+    // must still coincide with that parent. A copied pixel width lags for one frame.
+    expect(centerClipFrame(state).width).toBe("100%");
+    expect(centerContentFrame(state).width).toBe("100%");
+    expect(destinationFrame(state).left).toBe(edge);
+  }
+});
 
 /** The frame the UI thread measures when a motion starts. */
 function measureFrame(width: number | null): jest.SpyInstance {
@@ -264,6 +336,10 @@ describe("one progress derives every pane property", () => {
       const positions = [
         "catalogOpacity",
         "catalogVisibleWidth",
+        "catalogWidth",
+        "centerWidth",
+        "detailWidth",
+        "rightWidth",
         "centerClipWidth",
         "centerLeftRadius",
         "centerRightRadius",
@@ -272,15 +348,10 @@ describe("one progress derives every pane property", () => {
         "rightVisibleWidth",
         "rightX",
       ] as const;
-      const layoutWidths = ["catalogWidth", "centerWidth", "detailWidth", "rightWidth"] as const;
       for (const progress of [0, 0.25, 0.5, 0.75, 1]) {
         const pane = interpolatePaneGeometry(from, to, progress);
         for (const key of positions) {
           expect(pane[key]).toBeCloseTo(from[key] + (to[key] - from[key]) * progress);
-        }
-        // Content keeps one layout width for the whole motion: it is clipped, never reflowed.
-        for (const key of layoutWidths) {
-          expect(pane[key]).toBe(Math.max(from[key], to[key]));
         }
       }
     },
@@ -350,7 +421,7 @@ describe("one progress derives every pane property", () => {
         borderTopRightRadius: pane.centerRightRadius,
         width: pane.centerClipWidth,
       },
-      centerContent: { width: pane.centerWidth },
+      centerContent: { width: pane.centerWidth > pane.centerClipWidth ? pane.centerWidth : "100%" },
       destination: {
         borderBottomLeftRadius: pane.centerLeftRadius,
         borderTopLeftRadius: pane.centerLeftRadius,
@@ -390,6 +461,26 @@ describe("starting a rearrangement on the UI thread", () => {
       ),
     );
     expect(settled).not.toHaveBeenCalled();
+  });
+
+  it("animates a pressed split from its visible edge and keeps its progress when React commits", () => {
+    const finish = holdSpring();
+    measureFrame(1000);
+    const current = { ...arrangement("beside", "offscreen"), catalogPercent: 40 };
+    const state = motionState({
+      from: paneGeometry(current, 1000), moving: false, progress: 1, to: current,
+    });
+    const onSettled = jest.fn();
+    startPresetMotion(state, { pair: "left+center", percent: 30 }, { generation: 3, onSettled });
+    expect(state.landing.get()?.centerWidth).toBe(700);
+    expect(movingPaneGeometry(state).detailX).toBe(400);
+    state.progress.set(0.5);
+    expect(movingPaneGeometry(state).detailX).toBe(350);
+    startPaneMotion(state, { animate: true, generation: 3, next: { ...current, catalogPercent: 30 }, onSettled });
+    expect(movingPaneGeometry(state).detailX).toBe(350);
+    finish();
+    expect(onSettled).toHaveBeenCalledWith(3);
+    expect(state.moving.get()).toBe(false);
   });
 
   it("takes the motion's ends from the frame measured now, not an earlier width", () => {
@@ -514,7 +605,7 @@ function PaneContent({ name }: { readonly name: string }): React.JSX.Element {
   return (
     <View>
       <Text testID={`${name}-content`}>{name}</Text>
-      <PaneChromeControls name={name} />
+      <PaneCapabilityControls name={name} />
     </View>
   );
 }

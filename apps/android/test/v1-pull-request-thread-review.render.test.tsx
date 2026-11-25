@@ -5,7 +5,7 @@ import type { EnrichedMarkdownTextInputProps } from "react-native-enriched-markd
 import { conversation91 } from "./fixtures/forgeWireFixtures";
 import {
   PULL_REQUEST,
-  renderScreen,
+  renderVisibleDiscussion,
   unmountScreens,
   type Capabilities,
 } from "./fixtures/pullRequestDetailsHarness";
@@ -98,7 +98,7 @@ afterEach(async () => {
 });
 
 it("draws the code excerpt with both line numbers, marks the anchored line and folds with the thread", async () => {
-  const { view } = renderScreen({ conversation: enriched(false) });
+  const { view } = await renderVisibleDiscussion({ conversation: enriched(false) });
   const excerpt = await view.findByTestId("review-thread-rt-1-excerpt");
 
   expect(excerpt.props.accessibilityLabel).toBe(
@@ -122,17 +122,23 @@ it("draws the code excerpt with both line numbers, marks the anchored line and f
 });
 
 it("offers Resolve only with the declared capability and the forge's permission", async () => {
-  const undeclared = renderScreen({ conversation: enriched(true) });
+  const undeclared = await renderVisibleDiscussion({ conversation: enriched(true) });
   await undeclared.view.findByTestId("review-thread-rt-1-excerpt");
   expect(undeclared.view.queryByTestId("review-thread-rt-1-resolve")).toBeNull();
   await unmountScreens();
 
-  const forbidden = renderScreen({ conversation: enriched(false), extraCapabilities: [RESOLVE] });
+  const forbidden = await renderVisibleDiscussion({
+    conversation: enriched(false),
+    extraCapabilities: [RESOLVE],
+  });
   await forbidden.view.findByTestId("review-thread-rt-1-excerpt");
   expect(forbidden.view.queryByTestId("review-thread-rt-1-resolve")).toBeNull();
   await unmountScreens();
 
-  const { view } = renderScreen({ conversation: enriched(true), extraCapabilities: [RESOLVE] });
+  const { view } = await renderVisibleDiscussion({
+    conversation: enriched(true),
+    extraCapabilities: [RESOLVE],
+  });
   expect(await view.findByTestId("review-thread-rt-1-resolve")).toHaveAccessibleName(
     "Resolve conversation",
   );
@@ -153,7 +159,7 @@ it("resolves once, keeping the label while pending, then folds the thread", asyn
         };
       }),
   );
-  const { view } = renderScreen({
+  const { view } = await renderVisibleDiscussion({
     capabilityOverrides: { resolveReviewThread },
     conversation: enriched(true),
     extraCapabilities: [RESOLVE],
@@ -190,7 +196,7 @@ it("shows the forge's reason and lets the user try again when resolving fails", 
   const resolveReviewThread: Resolve = jest.fn(async () =>
     Promise.reject(new RpcResponseError(-32_083, "The forge refused to resolve")),
   );
-  const { view } = renderScreen({
+  const { view } = await renderVisibleDiscussion({
     capabilityOverrides: { resolveReviewThread },
     conversation: enriched(true),
     extraCapabilities: [RESOLVE],
@@ -210,7 +216,7 @@ it("shows the forge's reason and lets the user try again when resolving fails", 
 
 it("refuses to resolve locally while the companion is offline", async () => {
   const resolveReviewThread: Resolve = jest.fn();
-  const { server, view } = renderScreen({
+  const { server, view } = await renderVisibleDiscussion({
     capabilityOverrides: { resolveReviewThread },
     conversation: enriched(true),
     extraCapabilities: [RESOLVE],
@@ -242,7 +248,7 @@ it("refuses to resolve locally while the companion is offline", async () => {
 });
 
 it("lists a push's commits under its row with how many more it had", async () => {
-  const { view } = renderScreen({ conversation: enriched(false) });
+  const { view } = await renderVisibleDiscussion({ conversation: enriched(false) });
   const commits = within(await view.findByTestId("conversation-event-e-1-commits"));
 
   expect(commits.getByTestId(`conversation-event-e-1-commits-${"1".repeat(40)}`)).toHaveTextContent(

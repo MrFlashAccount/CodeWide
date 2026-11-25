@@ -1,6 +1,7 @@
 import { observable, type Observable } from "@legendapp/state";
 
 import type { RunningDownload, SelectedDirectory, TransferProgress } from "../native/file-transfer";
+import { downloadFilename } from "./downloadFilename";
 import { appLogger } from "../observability/logger";
 import type { DownloadHistoryStorage } from "./downloadHistoryStorage.types";
 import {
@@ -8,8 +9,10 @@ import {
   restoreDownloadEntry,
   type DownloadEntry,
   type DownloadId,
+  type DownloadLookup,
   type DownloadSource,
   type DownloadState,
+  type SavedDownload,
 } from "./downloadRecords";
 import type { GetTransferAccess } from "./private-transfer";
 import { unknownRecord } from "./unknownRecord";
@@ -26,12 +29,13 @@ export type DownloadSettlement =
       readonly id: DownloadId;
       readonly mimeType: string | null;
       readonly name: string;
-      readonly status: "completed";
+      readonly status: "completed" | "alreadySaved";
       readonly uri: string;
     }
   | { readonly error: unknown; readonly id: DownloadId; readonly status: "failed" }
   /** Paused, cancelled or removed by the user. */
   | { readonly status: "stopped" }
+  | { readonly status: "busy" }
   /** The user closed the folder picker; nothing started. */
   | { readonly status: "dismissed" };
 
@@ -50,10 +54,16 @@ export type DownloadTransferStart = {
 export type DownloadPorts = {
   readonly deleteFile: (uri: string) => void;
   readonly discardPartial: (directory: SelectedDirectory, remotePath: string) => void;
+  readonly findSaved: (
+    directory: SelectedDirectory,
+    lookup: DownloadLookup,
+    getAccess: GetTransferAccess,
+  ) => Promise<SavedDownload | null>;
   readonly isPickerCancellation: (error: unknown) => boolean;
   readonly now: () => number;
   readonly pickDirectory: () => Promise<SelectedDirectory>;
   readonly readFolder: () => Promise<string | null>;
+  readonly renameFile: (uri: string, name: string) => Promise<{ name: string; uri: string }>;
   readonly restoreDirectory: (uri: string) => SelectedDirectory | null;
   readonly start: (transfer: DownloadTransferStart) => RunningDownload;
   readonly writeFolder: (value: string) => Promise<void>;
@@ -66,6 +76,12 @@ type DownloadJob = {
   readonly request: DownloadRequest;
   stopping: "cancel" | "pause" | "remove" | null;
   transfer: RunningDownload | null;
+};
+
+type DownloadAttempt = {
+  readonly directory: SelectedDirectory;
+  readonly entry: DownloadEntry | null;
+  readonly request: DownloadRequest;
 };
 
 const PROGRESS_INTERVAL_MS = 200;
@@ -85,14 +101,20 @@ export class DownloadManager {
 
   private directory: SelectedDirectory | null = null;
   private directoryLoad: Promise<SelectedDirectory | null> | null = null;
+  private readonly historyReady: Promise<void>;
+  private readonly destinations = new Map<
+    string,
+    { readonly operation: Promise<DownloadSettlement>; readonly source: DownloadSource }
+  >();
   private readonly jobs = new Map<DownloadId, DownloadJob>();
+  private readonly renames = new Map<DownloadId, Promise<void>>();
   private readonly ports: DownloadPorts;
   private readonly storage: DownloadHistoryStorage;
 
   constructor(storage: DownloadHistoryStorage, ports: DownloadPorts) {
     this.storage = storage;
     this.ports = ports;
-    storage.ready.then(
+    this.historyReady = storage.ready.then(
       () => {
         this.hydrate();
       },
@@ -116,6 +138,103 @@ export class DownloadManager {
     if (directory === null) {
       return { status: "dismissed" };
     }
+    await this.historyReady;
+    return this.startInDirectory(directory, request, this.restartableEntry(directory, request));
+  }
+
+  private restartableEntry(
+    directory: SelectedDirectory,
+    request: DownloadRequest,
+  ): DownloadEntry | null {
+    for (const [id, job] of this.jobs) {
+      if (
+        job.directory.uri === directory.uri &&
+        job.request.getAccess === request.getAccess &&
+        sameSource(job.request.source, request.source)
+      ) {
+        return this.entry(id) ?? null;
+      }
+    }
+    return null;
+  }
+
+  private async startInDirectory(
+    directory: SelectedDirectory,
+    request: DownloadRequest,
+    entry: DownloadEntry | null,
+  ): Promise<DownloadSettlement> {
+    for (const [id, rename] of this.renames) {
+      const previous = this.entry(id);
+      if (previous !== undefined && sameSource(previous.source, request.source)) {
+        await rename.catch(() => undefined);
+      }
+    }
+    // SAF writes partials and publishes final files by filename in a flat folder.
+    const key = destinationKey(directory, request);
+    const active = this.destinations.get(key);
+    if (active !== undefined) {
+      return { status: "busy" };
+    }
+    const operation = this.checkAndRun({ directory, entry, request }).finally(() => {
+      this.destinations.delete(key);
+    });
+    this.destinations.set(key, { operation, source: request.source });
+    return operation;
+  }
+
+  private async checkAndRun(attempt: DownloadAttempt): Promise<DownloadSettlement> {
+    const { directory, entry, request } = attempt;
+    let saved: SavedDownload | null;
+    try {
+      saved = await this.ports.findSaved(directory, this.lookup(request.source), request.getAccess);
+    } catch (error) {
+      if (this.superseded(entry)) {
+        return STOPPED;
+      }
+      return this.fail((entry ?? this.createEntry(directory, request)).id, error);
+    }
+    if (this.superseded(entry)) {
+      return STOPPED;
+    }
+    if (saved !== null) {
+      return this.acceptSaved(attempt, saved);
+    }
+    const active = entry ?? this.createEntry(directory, request);
+    if (entry !== null) {
+      this.transition(entry.id, startingState(entry.state));
+    }
+    return this.run(active.id);
+  }
+
+  private lookup(source: DownloadSource): DownloadLookup {
+    const knownUris = new Set<string>();
+    for (const item of this.entries$.peek()) {
+      if (item.state.status === "completed" && sameSource(item.source, source)) {
+        knownUris.add(item.state.uri);
+      }
+    }
+    return { knownUris, source };
+  }
+
+  private superseded(entry: DownloadEntry | null): boolean {
+    return entry !== null && this.entry(entry.id)?.state.status !== entry.state.status;
+  }
+
+  private acceptSaved(attempt: DownloadAttempt, file: SavedDownload): DownloadSettlement {
+    const previous = this.entries$
+      .peek()
+      .find((entry) => entry.state.status === "completed" && entry.state.uri === file.uri);
+    if (previous !== undefined) {
+      if (attempt.entry !== null) {
+        this.remove(attempt.entry.id);
+      }
+      return this.recordCompleted(previous, file, "alreadySaved");
+    }
+    const entry = attempt.entry ?? this.createEntry(attempt.directory, attempt.request);
+    return this.recordCompleted(entry, file, "alreadySaved");
+  }
+
+  private createEntry(directory: SelectedDirectory, request: DownloadRequest): DownloadEntry {
     const startedAt = this.ports.now();
     const entry: DownloadEntry = {
       id: createDownloadId(startedAt),
@@ -127,7 +246,7 @@ export class DownloadManager {
     this.jobs.set(entry.id, { attempt: 0, directory, request, stopping: null, transfer: null });
     this.entries$.set([entry, ...this.entries$.peek()]);
     this.persist(entry);
-    return this.run(entry.id);
+    return entry;
   }
 
   /** Stops a running download and keeps its partial file for `resume`. */
@@ -153,28 +272,32 @@ export class DownloadManager {
     if (state?.status !== "paused" || !this.jobs.has(id)) {
       return STOPPED;
     }
-    this.transition(id, {
-      phase: "starting",
-      status: "running",
-      totalBytes: state.totalBytes,
-      transferredBytes: state.transferredBytes,
-    });
-    return this.run(id);
+    return this.restartJob(id);
   }
 
   /** Starts a failed or cancelled download again with the access it was started with. */
   async retry(id: DownloadId): Promise<DownloadSettlement> {
     const state = this.entry(id)?.state;
-    if ((state?.status !== "failed" && state?.status !== "cancelled") || !this.jobs.has(id)) {
+    if (state?.status !== "failed" && state?.status !== "cancelled") {
       return STOPPED;
     }
-    this.transition(id, {
-      phase: "starting",
-      status: "running",
-      totalBytes: null,
-      transferredBytes: 0,
-    });
-    return this.run(id);
+    return this.restartJob(id);
+  }
+
+  private async restartJob(id: DownloadId): Promise<DownloadSettlement> {
+    const job = this.jobs.get(id);
+    const entry = this.entry(id);
+    if (job === undefined || entry === undefined) {
+      return STOPPED;
+    }
+    // A cancellation can still own a partial until its native write settles.
+    if (job.stopping !== null) {
+      await this.destinations.get(destinationKey(job.directory, job.request))?.operation;
+      if (this.superseded(entry)) {
+        return STOPPED;
+      }
+    }
+    return this.startInDirectory(job.directory, job.request, entry);
   }
 
   /** Whether this process still holds the access needed to resume or retry `id`. */
@@ -207,9 +330,14 @@ export class DownloadManager {
     if (entry === undefined) {
       return;
     }
+    this.assertNotRenaming(id);
     this.stopForRemoval(entry);
     this.jobs.delete(id);
     this.entries$.set(this.entries$.peek().filter((candidate) => candidate.id !== id));
+    this.forgetStored(id);
+  }
+
+  private forgetStored(id: DownloadId): void {
     this.storage.delete(id).catch((error: unknown) => {
       appLogger.warnCaught({ error, event: "downloads.history_delete.failed" });
     });
@@ -221,8 +349,49 @@ export class DownloadManager {
     if (state?.status !== "completed") {
       return;
     }
+    this.assertNotRenaming(id);
     this.ports.deleteFile(state.uri);
     this.remove(id);
+  }
+
+  /** Let an existing integrity check publish its result before changing the document URI. */
+  private async waitForCurrentDownload(source: DownloadSource): Promise<void> {
+    for (const active of this.destinations.values()) {
+      if (sameSource(active.source, source)) {
+        await active.operation;
+      }
+    }
+  }
+
+  private assertNotRenaming(id: DownloadId): void {
+    if (this.renames.has(id)) {
+      throw new Error("This file is being renamed");
+    }
+  }
+
+  /** Renames a saved document on disk before publishing the provider's actual name and URI. */
+  async renameFile(id: DownloadId, input: string): Promise<void> {
+    const entry = this.entry(id);
+    if (entry?.state.status !== "completed") {
+      throw new Error("This download is unavailable");
+    }
+    const name = validatedDownloadName(input);
+    this.assertNotRenaming(id);
+    if (entry.name === name) {
+      return;
+    }
+    const state = entry.state;
+    const rename = (async () => {
+      await this.waitForCurrentDownload(entry.source);
+      const file = await this.ports.renameFile(state.uri, name);
+      const updated = { ...entry, name: file.name, state: { ...state, uri: file.uri } };
+      this.entries$.set(this.entries$.peek().map((item) => (item.id === id ? updated : item)));
+      this.persist(updated);
+    })().finally(() => {
+      this.renames.delete(id);
+    });
+    this.renames.set(id, rename);
+    await rename;
   }
 
   /** Asks for a new folder; later downloads go there. */
@@ -271,16 +440,13 @@ export class DownloadManager {
         onProgress: this.progressPublisher(id, job, attempt),
         source: entry.source,
       });
-      return this.complete(entry, await job.transfer.promise);
+      const value = await job.transfer.promise;
+      return this.stopRequested(job) ? STOPPED : this.completeTransfer(entry, value);
     } catch (error) {
       if (this.stopRequested(job)) {
         return STOPPED;
       }
-      this.transition(id, {
-        error: error instanceof Error ? error.message : "Download failed",
-        status: "failed",
-      });
-      return { error, id, status: "failed" };
+      return this.fail(id, error);
     } finally {
       if (job.attempt === attempt) {
         job.transfer = null;
@@ -310,22 +476,50 @@ export class DownloadManager {
     };
   }
 
-  private complete(
+  private fail(id: DownloadId, error: unknown): DownloadSettlement {
+    this.transition(id, {
+      error: error instanceof Error ? error.message : "Download failed",
+      status: "failed",
+    });
+    return { error, id, status: "failed" };
+  }
+
+  private completeTransfer(
     entry: DownloadEntry,
     value: Awaited<RunningDownload["promise"]>,
   ): DownloadSettlement {
     if (value.uri === undefined) {
       throw new Error("The download finished without a saved file");
     }
-    const mimeType = value.mimeType ?? null;
-    this.transition(entry.id, {
-      bytes: value.bytes,
-      completedAt: this.ports.now(),
-      mimeType,
-      status: "completed",
-      uri: value.uri,
-    });
-    return { id: entry.id, mimeType, name: entry.name, status: "completed", uri: value.uri };
+    return this.recordCompleted(
+      entry,
+      { bytes: value.bytes, mimeType: value.mimeType ?? null, uri: value.uri },
+      "completed",
+    );
+  }
+
+  private recordCompleted(
+    entry: DownloadEntry,
+    file: SavedDownload,
+    status: "completed" | "alreadySaved",
+  ): DownloadSettlement {
+    const { id, name } = entry;
+    const state = entry.state;
+    if (
+      state.status !== "completed" ||
+      state.bytes !== file.bytes ||
+      state.mimeType !== file.mimeType
+    ) {
+      this.transition(id, { ...file, completedAt: this.ports.now(), status: "completed" });
+      this.jobs.delete(id);
+      // A file deleted outside the app can be recreated under a previously recorded URI.
+      for (const other of this.entries$.peek()) {
+        if (other.id !== id && other.state.status === "completed" && other.state.uri === file.uri) {
+          this.remove(other.id);
+        }
+      }
+    }
+    return { id, mimeType: file.mimeType, name, status, uri: file.uri };
   }
 
   private async resolveDirectory(): Promise<SelectedDirectory | null> {
@@ -398,7 +592,21 @@ export class DownloadManager {
     // The concatenation is a fresh array owned here, so sorting it in place is safe.
     const merged = [...live, ...restored];
     merged.sort((left, right) => right.startedAt - left.startedAt);
-    this.entries$.set(merged);
+    // Older builds wrote a row for every save, even when SAF returned the same document.
+    const seen = new Set<string>();
+    this.entries$.set(
+      merged.filter((entry) => {
+        if (entry.state.status !== "completed") {
+          return true;
+        }
+        if (seen.has(entry.state.uri)) {
+          this.forgetStored(entry.id);
+          return false;
+        }
+        seen.add(entry.state.uri);
+        return true;
+      }),
+    );
   }
 
   private entry(id: DownloadId): DownloadEntry | undefined {
@@ -497,4 +705,32 @@ function decodeFolder(value: string | null): DownloadFolder | null {
   return typeof record?.name === "string" && typeof record.uri === "string"
     ? { name: record.name, uri: record.uri }
     : null;
+}
+
+function sameSource(a: DownloadSource, b: DownloadSource): boolean {
+  return (
+    a.path === b.path &&
+    (a.kind === "path" ? b.kind === "path" : b.kind === "scoped" && a.rootId === b.rootId)
+  );
+}
+
+function destinationKey(directory: SelectedDirectory, request: DownloadRequest): string {
+  return JSON.stringify([directory.uri, downloadFilename(request.source.path)]);
+}
+
+function startingState(previous: DownloadState): DownloadState {
+  return {
+    phase: "starting",
+    status: "running",
+    totalBytes: previous.status === "paused" ? previous.totalBytes : null,
+    transferredBytes: previous.status === "paused" ? previous.transferredBytes : 0,
+  };
+}
+
+function validatedDownloadName(input: string): string {
+  const name = input.trim();
+  if (name === "" || name === "." || name === ".." || /[/\\]/u.test(name) || /\p{Cc}/u.test(name)) {
+    throw new Error("Enter a single file name without path separators or control characters");
+  }
+  return name;
 }

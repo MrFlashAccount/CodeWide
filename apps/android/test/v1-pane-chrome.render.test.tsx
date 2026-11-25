@@ -128,18 +128,18 @@ describe("pane chrome follows the visible pane width", () => {
   it("gives up the hidden trailing width in the center and right panes mid-rearrangement", () => {
     const spring = stallSpringHalfway();
     const view = render(<Workspace />);
-    fireEvent.press(within(view.getByTestId("right")).getByLabelText("Open right fullscreen"));
+    fireEvent(view.getByLabelText("Resize panels"), "accessibilityAction", {nativeEvent:{actionName:"hide-leading"}});
     expect(spring).toHaveBeenCalled();
     // Re-read the pane context after the UI thread took the new arrangement.
     view.rerender(<Workspace />);
     // The center keeps its half-width layout and shows one quarter of the frame. The
-    // right holds a full-width layout and shows the remaining three quarters.
+    // right grows to the remaining three quarters, with its chrome at that edge.
     expect(view.getByTestId("center", { includeHiddenElements: true })).toHaveStyle({
       width: FRAME / 4,
     });
     for (const pane of ["center", "right"] as const) {
       for (const chrome of chromeInsets(view, pane)) {
-        expect(chrome).toHaveStyle({ marginRight: FRAME / 4 });
+        expect(chrome).toHaveStyle({ marginRight: pane === "center" ? FRAME / 4 : 0 });
       }
     }
   });
@@ -148,7 +148,7 @@ describe("pane chrome follows the visible pane width", () => {
     mockReducedMotion = true;
     const spring = stallSpringHalfway();
     const view = render(<Workspace />);
-    fireEvent.press(within(view.getByTestId("right")).getByLabelText("Open right fullscreen"));
+    fireEvent(view.getByLabelText("Resize panels"), "accessibilityAction", {nativeEvent:{actionName:"hide-leading"}});
     view.rerender(<Workspace />);
     expect(spring).not.toHaveBeenCalled();
     for (const chrome of chromeInsets(view, "center")) {
@@ -169,7 +169,7 @@ describe("pane motion frame probe", () => {
       setActive,
     });
     const view = render(<Workspace />);
-    fireEvent.press(within(view.getByTestId("right")).getByLabelText("Open right fullscreen"));
+    fireEvent(view.getByLabelText("Resize panels"), "accessibilityAction", {nativeEvent:{actionName:"hide-leading"}});
     return setActive;
   }
 

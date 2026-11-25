@@ -8,6 +8,7 @@ export function createTestDownloadManager(ports: Partial<DownloadPorts> = {}): D
   return new DownloadManager(createDownloadHistoryStorage(), {
     deleteFile: () => undefined,
     discardPartial: () => undefined,
+    findSaved: async () => null,
     isPickerCancellation: () => false,
     now: Date.now,
     pickDirectory: async () => {
@@ -17,6 +18,9 @@ export function createTestDownloadManager(ports: Partial<DownloadPorts> = {}): D
     readFolder: async () => {
       await Promise.resolve();
       return folder;
+    },
+    renameFile: async () => {
+      throw new Error("No rename in this test");
     },
     restoreDirectory: () => null,
     start: () => {

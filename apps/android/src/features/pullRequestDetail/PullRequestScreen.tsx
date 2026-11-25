@@ -2,6 +2,7 @@ import { useSelector } from "@legendapp/state/react";
 import { useTransition } from "react";
 import { StyleSheet, View } from "react-native";
 
+import { uploadCommentAttachment, type CommentAttachment } from "../../data/forgeCommentAttachment";
 import type { ActionDescriptor } from "../../data/forgeActionCatalog";
 import type { ReviewThreadId } from "../../data/forgeConversationContract";
 import { useMinuteClock } from "../../data/minuteClock";
@@ -91,10 +92,6 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
   const closeReview = useEvent((): void => {
     model.reviewVerdict.set(null);
   });
-  const staleReview = useEvent((kind: "outcomeUnknown" | "stale"): void => {
-    model.notice.set({ kind });
-    refresh();
-  });
   const reportLinkError = useEvent((title: string, error: unknown): void => {
     dialog.error(title, error);
   });
@@ -132,14 +129,22 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
   const getTransferAccess = useEvent(async (forceRefresh = false) =>
     props.capabilities.transferAccess(props.connectionId, forceRefresh),
   );
+  const upload = useEvent(async (file: CommentAttachment) => {
+    if (data.offline) {
+      throw new Error("Connect to the companion to attach files.");
+    }
+    return uploadCommentAttachment(props.pullRequest, file, getTransferAccess);
+  });
   const floatingActions = (review?: React.ReactNode) => (
     <FloatingActions
       agentThread={data.agentThread}
       conversation={data.conversation}
       details={props.tab === "overview"}
+      draftKey={JSON.stringify([props.connectionId, props.pullRequest])}
       isThreadUnread={props.isThreadUnread}
       onComment={data.writes.comment}
       onOpenChat={openReviewChat}
+      onUpload={data.providerCapabilities.includes("forge.commentAttachments@1") ? upload : null}
       review={review}
     />
   );
@@ -156,6 +161,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
         {props.tab === "overview" ? (
           <OverviewPane
             capabilities={props.capabilities}
+            checkTriggers={props.forge.checkTriggers}
             data={data}
             nowMs={nowMs}
             onAddressThread={addressThread}
@@ -165,7 +171,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
             onOpenReviewChat={openAgentChat}
             onPullRefresh={pullRefresh}
             onRun={run}
-            onStale={staleReview}
+            onStale={refresh}
             pullRefreshing={pullRefreshing}
             state={state}
           />
@@ -186,7 +192,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
             onRun={(action) => {
               run(action, null);
             }}
-            onStale={staleReview}
+            onStale={refresh}
             overview={overview}
             providerCapabilities={data.providerCapabilities}
             renderAppBar={appBar}

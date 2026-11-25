@@ -24,9 +24,11 @@ export type CatalogMode = "pullRequests" | "threads";
  * value. The separate invisible tabs expose the same control to screen readers.
  */
 export function CatalogModeBar({
+  active = true,
   mode,
   onSelect,
 }: {
+  readonly active?: boolean;
   readonly mode: CatalogMode;
   readonly onSelect: (mode: CatalogMode) => void;
 }): React.JSX.Element {
@@ -47,6 +49,7 @@ export function CatalogModeBar({
   return (
     <View accessibilityRole="tablist" style={styles.shell} testID="catalog-mode-bar">
       <CatalogMaskedTabs
+        active={active}
         mode={mode}
         onSelectedValueActivate={activateSelectedMode}
         onValueChange={selectMode}
@@ -58,11 +61,13 @@ export function CatalogModeBar({
 }
 
 function CatalogMaskedTabs({
+  active,
   mode,
   onSelectedValueActivate,
   onValueChange,
   pullRequestsLabel,
 }: {
+  readonly active: boolean;
   readonly mode: CatalogMode;
   readonly onSelectedValueActivate: (value: string) => void;
   readonly onValueChange: (value: string) => void;
@@ -72,6 +77,7 @@ function CatalogMaskedTabs({
   return (
     <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
       <MaskedTabBar
+        active={active}
         fontSize={typeScale.label.fontSize}
         height={catalogModeBarHeight}
         measureRevision={measureRevision}

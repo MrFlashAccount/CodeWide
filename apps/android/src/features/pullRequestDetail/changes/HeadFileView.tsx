@@ -7,7 +7,7 @@ import { colors, spacing, typeScale } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 import { CodeReviewEditor } from "../../review/editor/CodeReviewEditor";
 import type { DiffDisplay } from "./diffDisplay";
-import type { HeadFileSource } from "./headFileViews";
+import type { HeadFileSource } from "./useFileExpansion";
 
 /** Read-only whole file at the reviewed revision. A missing or binary blob has its own empty state. */
 export function HeadFileView({

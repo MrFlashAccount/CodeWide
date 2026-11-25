@@ -1,3 +1,4 @@
+import type { DownloadLookup, SavedDownload } from "../data/downloadRecords";
 import type { GetTransferAccess } from "../data/private-transfer";
 
 export type { TransferAccess } from "../data/private-transfer";
@@ -45,6 +46,14 @@ export function restoreDownloadDirectory(_uri: string): SelectedDirectory | null
 }
 export function discardPartialDownload(_directory: SelectedDirectory, _remotePath: string): void {
   throw new Error("File transfer is available in the Android build");
+}
+export async function findDownloadedFile(
+  _directory: SelectedDirectory,
+  _lookup: DownloadLookup,
+  _getAccess: GetTransferAccess,
+): Promise<SavedDownload | null> {
+  await Promise.resolve();
+  return null;
 }
 export function deleteDownloadedFile(_uri: string): void {
   throw new Error("Deleting downloaded files is available in the Android build");

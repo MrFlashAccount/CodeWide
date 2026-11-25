@@ -1,8 +1,8 @@
 import { act, fireEvent, render } from "@testing-library/react-native";
 import * as Reanimated from "react-native-reanimated";
 import { AppState, StyleSheet, View } from "react-native";
-import { Gesture, GestureDetector, State } from "react-native-gesture-handler";
-import { fireGestureHandler } from "react-native-gesture-handler/jest-utils";
+import { Gesture, State } from "react-native-gesture-handler";
+import { fireGestureHandler, getByGestureTestId } from "react-native-gesture-handler/jest-utils";
 
 import type { ReactTestInstance } from "react-test-renderer";
 
@@ -104,7 +104,15 @@ it("commits only successful tap and drag gestures", () => {
   const onSelect = jest.fn();
   const view = render(<CatalogModeBar mode="threads" onSelect={onSelect} />);
   layOutMaskedTabs(view);
-  const gesture = view.UNSAFE_getByType(GestureDetector).props.gesture;
+  const gesture = getByGestureTestId("catalog-tab-pan");
+
+  act(() => {
+    fireGestureHandler<ReturnType<typeof Gesture.Tap>>(getByGestureTestId("catalog-tab-tap"), [
+      { state: State.END, x: 225 },
+    ]);
+  });
+  expect(onSelect.mock.calls).toEqual([["pullRequests"]]);
+  onSelect.mockClear();
 
   act(() => {
     fireGestureHandler<ReturnType<typeof Gesture.Pan>>(gesture, [
@@ -272,14 +280,11 @@ it.each<CatalogMode>(["threads", "pullRequests"])(
     // Both points were outside the intended tab in the old 300-wide layout.
     const x = mode === "threads" ? 450 : 225;
     act(() => {
-      fireGestureHandler<ReturnType<typeof Gesture.Pan>>(
-        view.UNSAFE_getByType(GestureDetector).props.gesture,
-        [
-          { state: State.BEGAN, translationX: 0, translationY: 0, x },
-          { state: State.ACTIVE, translationX: 0, translationY: 0, x },
-          { state: State.END, translationX: 0, translationY: 0, x },
-        ],
-      );
+      fireGestureHandler<ReturnType<typeof Gesture.Pan>>(getByGestureTestId("catalog-tab-pan"), [
+        { state: State.BEGAN, translationX: 0, translationY: 0, x },
+        { state: State.ACTIVE, translationX: 0, translationY: 0, x },
+        { state: State.END, translationX: 0, translationY: 0, x },
+      ]);
     });
     expect(onSelect).toHaveBeenCalledWith(mode === "threads" ? "pullRequests" : "threads");
     view.unmount();

@@ -63,11 +63,15 @@ export type CheckSummary =
 
 /** One check run. */
 export type CheckItem = {
+  readonly activity: "inactive" | "queued" | "running" | null;
   readonly checkId: string;
   readonly detailsUrl: string | null;
   readonly durationSeconds: number | null;
   readonly name: string;
+  readonly onDemand: boolean | null;
+  readonly required: boolean | null;
   readonly state: "cancelled" | "failed" | "passed" | "pending" | "skipped";
+  readonly viewerUrl: string | null;
 };
 
 /** One activity item: a comment, review or timeline event. */
@@ -198,15 +202,22 @@ function checkSummary(value: unknown, path: string): CheckSummary {
 function checkItem(value: unknown, path: string): CheckItem {
   const item = record(value, path);
   return {
+    activity:
+      (item.activity ?? null) === null
+        ? null
+        : oneOf(item.activity, ["inactive", "queued", "running"], `${path}.activity`),
     checkId: nonEmptyText(item.checkId, `${path}.checkId`),
     detailsUrl: optionalText(item.detailsUrl, `${path}.detailsUrl`),
     durationSeconds: optionalCount(item.durationSeconds, `${path}.durationSeconds`),
     name: text(item.name, `${path}.name`),
+    onDemand: (item.onDemand ?? null) === null ? null : flag(item.onDemand, `${path}.onDemand`),
+    required: (item.required ?? null) === null ? null : flag(item.required, `${path}.required`),
     state: oneOf(
       item.state,
       ["passed", "failed", "pending", "skipped", "cancelled"],
       `${path}.state`,
     ),
+    viewerUrl: optionalText(item.viewerUrl ?? null, `${path}.viewerUrl`),
   };
 }
 

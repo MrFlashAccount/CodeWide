@@ -19,6 +19,7 @@ export function useProductionPullRequestScreen() {
     agentThread: productionReviewThread.current,
     // The production overview is a stub, so it offers no floating Comment button.
     conversation: { status: "unsupported" },
+    providerCapabilities: [],
     draftCount: 0,
     drafts: [],
     listRow: null,

@@ -110,8 +110,37 @@ function nearestBox(
   return best;
 }
 
-const MaskedTabBarRoot: React.FC<IMaskedTabBarRoot> &
-  React.FunctionComponent<IMaskedTabBarRoot> = ({
+function useTabPillMotion() {
+  const pillX = useSharedValue(0);
+  const pillWidth = useSharedValue(0);
+  const placedValueRef = useRef<string | null>(null);
+  const [motion] = useState(() => ({ pillX, pillWidth, placedValueRef }));
+  return motion;
+}
+
+const TabPillMotionContext = React.createContext<ReturnType<typeof useTabPillMotion> | null>(null);
+
+/** Shares the live indicator between catalog panes while each keeps its own measured targets. */
+export function MaskedTabBarMotionProvider({ children }: { readonly children: React.ReactNode }) {
+  const motion = useTabPillMotion();
+  return <TabPillMotionContext.Provider value={motion}>{children}</TabPillMotionContext.Provider>;
+}
+
+function MaskedTabBarRoot(props: IMaskedTabBarRoot): React.JSX.Element {
+  const motion = useContext(TabPillMotionContext);
+  return motion === null
+    ? <StandaloneTabBar {...props} />
+    : <MeasuredTabBar {...props} motion={motion} />;
+}
+
+function StandaloneTabBar(props: IMaskedTabBarRoot): React.JSX.Element {
+  const motion = useTabPillMotion();
+  return <MeasuredTabBar {...props} motion={motion} />;
+}
+
+function MeasuredTabBar({
+  motion,
+  active = true,
   children,
   value: valueProp,
   defaultValue,
@@ -129,7 +158,7 @@ const MaskedTabBarRoot: React.FC<IMaskedTabBarRoot> &
   draggable = true,
   measureRevision = 0,
   style,
-}: IMaskedTabBarRoot): React.JSX.Element => {
+}: IMaskedTabBarRoot & { readonly motion: ReturnType<typeof useTabPillMotion> }): React.JSX.Element {
   const isControlled = valueProp !== undefined;
   const [internalValue, setInternalValue] = useState<string>(
     defaultValue ?? "",
@@ -141,8 +170,7 @@ const MaskedTabBarRoot: React.FC<IMaskedTabBarRoot> &
   >({});
   const [listWidth, setListWidth] = useState<number>(0);
 
-  const pillX = useSharedValue<number>(0);
-  const pillWidth = useSharedValue<number>(0);
+  const { pillX, pillWidth, placedValueRef } = motion;
   const press = useSharedValue<number>(0);
   const grabbed = useSharedValue<boolean>(false);
 
@@ -192,11 +220,9 @@ const MaskedTabBarRoot: React.FC<IMaskedTabBarRoot> &
   }, [value, boxes, setValue]);
 
   const activeBox = boxMap[value];
-  // The value the pill last moved to; `null` before it is first placed.
-  const placedValueRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!activeBox) return;
+    if (!active || !activeBox) return;
     if (grabbed.value) return;
     // The pill springs only to a newly selected tab. When the selected tab
     // itself moves or resizes (a relayout, a fold), the pill follows at once.
@@ -211,7 +237,7 @@ const MaskedTabBarRoot: React.FC<IMaskedTabBarRoot> &
     cancelAnimation(pillWidth);
     pillX.value = activeBox.x;
     pillWidth.value = activeBox.width;
-  }, [activeBox, pillX, pillWidth, grabbed, value]);
+  }, [active, activeBox, pillX, pillWidth, placedValueRef, grabbed, value]);
 
   const ctx = useMemo<IMaskedTabBarContext>(
     () => ({
@@ -279,7 +305,7 @@ const MaskedTabBarRoot: React.FC<IMaskedTabBarRoot> &
       </View>
     </MaskedTabBarContext.Provider>
   );
-};
+}
 
 const MaskedTabBarList: React.FC<IMaskedTabBarList> &
   React.FunctionComponent<IMaskedTabBarList> = ({
@@ -370,8 +396,9 @@ const MaskedTabBarList: React.FC<IMaskedTabBarList> &
   );
 
   const gesture = useMemo(
-    () =>
-      Gesture.Pan()
+    () => {
+      const pan = Gesture.Pan()
+        .withTestId("catalog-tab-pan")
         .minDistance(0)
         .shouldCancelWhenOutside(false)
         .onBegin((e) => {
@@ -467,7 +494,24 @@ const MaskedTabBarList: React.FC<IMaskedTabBarList> &
             scheduleOnRN(onSelectedValueActivate, box.value);
           }
           scheduleOnRN(setValue, box.value);
-        }),
+        });
+      // Android can deliver DOWN and UP without a MOVE. Such a tap never activates Pan.
+      const tap = Gesture.Tap()
+        .withTestId("catalog-tab-tap")
+        .maxDistance(SELECTED_TAP_MAX_TRANSLATION)
+        .onEnd((event, success) => {
+          if (!success) return;
+          const box = boxAtX(boxesValue.value, event.x);
+          if (!box) return;
+          if (box.value === value && onSelectedValueActivate) {
+            scheduleOnRN(onSelectedValueActivate, value);
+          } else {
+            startPillMotionOnUI(box, pillX, pillWidth);
+            scheduleOnRN(setValue, box.value);
+          }
+        });
+      return Gesture.Race(pan, tap);
+    },
     [
       boxesValue,
       listWidthValue,

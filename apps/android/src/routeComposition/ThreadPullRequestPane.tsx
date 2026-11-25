@@ -18,7 +18,12 @@ import { PullRequestDetailPane } from "./PullRequestDetailPane";
 import { linkedThreadSelectionKey, usePullRequestNavigation } from "./pullRequestNavigation";
 import { ThreadDestinationActiveContext } from "./threadDestinationActive";
 import { WorkspaceCenterLayout } from "./WorkspaceCenterLayout";
-import { WorkspacePanesContext, type WorkspacePaneCapabilities } from "./workspacePanes";
+import {
+  useRightPaneVisible,
+  useRevealParkedRightPane,
+  WorkspacePanesContext,
+  type WorkspacePaneCapabilities,
+} from "./workspacePanes";
 
 /** The thread's own conversation declares no pane actions. */
 const CONVERSATION_CAPABILITIES: WorkspacePaneCapabilities = {};
@@ -53,6 +58,7 @@ export function ThreadPullRequestPaneLayout({
 }): React.JSX.Element {
   const active = useContext(ThreadDestinationActiveContext);
   const owner = useContext(WorkspacePanesContext)?.owner ?? null;
+  const rightVisible = useRightPaneVisible(pullRequest !== null);
   const router = useRouter();
   const { desktop } = useWorkspaceRouteResources();
   const paneRearrangement = usePaneRearrangement();
@@ -61,7 +67,12 @@ export function ThreadPullRequestPaneLayout({
   const [changes, setChanges] = useState<PaneChanges>(DETAILS);
   const changesView =
     pullRequest !== null && changes.pullRequest === pullRequest ? changes.view : null;
+  const reveal = useRevealParkedRightPane();
   const open = useEvent((next: PullRequestKey): void => {
+    reveal();
+    if (next === pullRequest) {
+      return;
+    }
     const show = (): void => {
       setChanges(DETAILS);
       router.setParams({ pullRequest: next });
@@ -96,7 +107,7 @@ export function ThreadPullRequestPaneLayout({
     });
   });
   // The frame's Back-leaves-fullscreen subscribes later, so it still runs first.
-  useAndroidBackHandler(pullRequest !== null, back);
+  useAndroidBackHandler(rightVisible, back);
   return (
     <WorkspaceCenterLayout
       active={active}
@@ -163,16 +174,18 @@ function ThreadPullRequestPaneContent({
   readonly threadId: string;
 }): React.JSX.Element {
   const { chrome } = useThreePanels();
+  const router = useRouter();
   const { desktop, list, runtime } = useWorkspaceRouteResources();
   const describeLinkedThread = useLinkedThreadDescriptions(list.loadedThreadSummaries);
   const navigation = usePullRequestNavigation();
   const openThread = useEvent((target: ThreadId): void => {
     if (target === threadId) {
+      router.setParams({ reviewPullRequest: pullRequest });
       chrome.close?.();
       return;
     }
     list.prepareThreadLink(linkedThreadSelectionKey(connectionId, target));
-    navigation.navigateToLinkedThread(connectionId, target);
+    navigation.navigateToLinkedThread(connectionId, target, pullRequest);
   });
   // The review-chat draft lives on the PR route, which owns its project choice and first send.
   const openPullRequest = useEvent((): void => {

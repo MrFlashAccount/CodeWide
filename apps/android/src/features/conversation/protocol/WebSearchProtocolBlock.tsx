@@ -2,6 +2,7 @@
 import type { RenderBlock } from "@codewide/renderers";
 import type { ReactElement } from "react";
 import { Linking, Pressable, View } from "react-native";
+import { useMarkdownLocalLinkHandler } from "../../../rendering/MarkdownLinkHandler";
 import { occurrenceKey } from "../../../rendering/listKey";
 import { useEvent } from "../../../react/useEvent";
 import { AppText as Text } from "../../../ui/Typography";
@@ -44,8 +45,9 @@ function WebSearchProtocolDetails({ block }: { block: RenderBlock }) {
 }
 
 function WebSearchResultRow({ index, result }: { index: number; result: WebSearchResult }) {
+  const openThreadLink = useMarkdownLocalLinkHandler();
   const open = useEvent(() => {
-    if (result.url !== null) {
+    if (result.url !== null && openThreadLink?.(result.url) !== true) {
       Linking.openURL(result.url).catch(() => undefined);
     }
   });

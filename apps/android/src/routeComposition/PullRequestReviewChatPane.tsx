@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import type { PullRequestKey } from "../data/forgeContract";
 import { useEvent } from "../react/useEvent";
 import { LocalProjectManagement } from "./LocalProjectManagement";
 import { CLOSED_PROJECT_MANAGEMENT, OPEN_PROJECT_MANAGEMENT } from "./localProjectManagementPage";
@@ -17,10 +18,12 @@ export function PullRequestReviewChatPane({
   chat,
   connectionId,
   draft,
+  pullRequest,
 }: {
   readonly chat: Exclude<PullRequestChatState, { readonly status: "closed" }>;
   readonly connectionId: string;
   readonly draft: ReviewChatDraftCommands;
+  readonly pullRequest: PullRequestKey;
 }): React.JSX.Element {
   const [projects, setProjects] = useState(CLOSED_PROJECT_MANAGEMENT);
   const manageProjects = useEvent((): void => {
@@ -39,6 +42,7 @@ export function PullRequestReviewChatPane({
         <PullRequestConversationPane
           connectionId={connectionId}
           onManageProjects={manageProjects}
+          pullRequest={pullRequest}
           threadId={chat.threadId}
         />
       )}

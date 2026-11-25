@@ -7,8 +7,7 @@ import { forgeQueryRemoteValue } from "../../../data/forgeQueryResource";
 import { remoteValue, type RemoteValue } from "../../../data/forgeRemoteValue";
 import type { ForgeResources } from "../../../data/forgeResources";
 import { useEvent } from "../../../react/useEvent";
-import type { DirectImageSources } from "../../../rendering/directImageSources";
-import { conversationImageSources, type ConversationImageOwner } from "./conversationImages";
+import type { ConversationImageOwner } from "./conversationImages";
 
 /** Plugin capability that adds the conversation read and forge media. */
 const CONVERSATION_CAPABILITY = "forge.conversation@1";
@@ -33,8 +32,8 @@ export type PullRequestConversation =
   | {
       /** `forge.comments@1` is declared, so comments and replies can be published. */
       readonly commentsEnabled: boolean;
-      /** Images and avatars the plugin made directly loadable on the phone. */
-      readonly images: DirectImageSources;
+      /** Access used to resolve direct images when the discussion body mounts. */
+      readonly imageOwner: ConversationImageOwner;
       readonly loadMore: (() => void) | null;
       readonly page: ConversationPage;
       /** `forge.conversation.resolve@1` is declared, so conversations can be resolved. */
@@ -83,7 +82,7 @@ export function usePullRequestConversation({
   }
   return conversationView(forgeQueryRemoteValue(query), {
     commentsEnabled: capabilities.includes(COMMENTS_CAPABILITY),
-    images: {
+    imageOwner: {
       cacheScope: params.connectionId,
       current: currentPage,
       refresh: refreshImages,
@@ -99,7 +98,7 @@ function conversationView(
   live: RemoteValue<ConversationPage>,
   intents: {
     readonly commentsEnabled: boolean;
-    readonly images: ConversationImageOwner;
+    readonly imageOwner: ConversationImageOwner;
     readonly loadMore: () => void;
     readonly resolveEnabled: boolean;
     readonly retry: () => void;
@@ -109,7 +108,7 @@ function conversationView(
   if (page !== null) {
     return {
       commentsEnabled: intents.commentsEnabled,
-      images: conversationImageSources(page, intents.images),
+      imageOwner: intents.imageOwner,
       loadMore: page.nextCursor === null ? null : intents.loadMore,
       page,
       resolveEnabled: intents.resolveEnabled,

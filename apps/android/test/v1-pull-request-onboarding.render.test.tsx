@@ -18,10 +18,10 @@ import {
 import { parsePullRequestListPage } from "../src/data/forgePullRequestContract";
 import { createForgeResources } from "../src/data/forgeResources";
 import { PullRequestsCatalog } from "../src/features/pullRequests/PullRequestsFeature";
+import { ProviderConnectTray } from "../src/features/pullRequests/onboarding/ProviderConnectTray";
 import { OnboardingScreen } from "../src/features/pullRequests/onboarding/OnboardingScreen";
 import {
   defaultPullRequestFilter,
-  forgeAccountsSheetOpen,
   pullRequestListModel,
 } from "../src/features/pullRequests/pullRequestListModel";
 import type { PullRequestsWorkspaceCapabilities } from "../src/features/pullRequests/workspaceCapabilities";
@@ -62,7 +62,6 @@ const CONNECTED_MULTIPLE_PROVIDERS = requiredSnapshot({
 });
 
 afterEach(() => {
-  forgeAccountsSheetOpen.set(false);
   pullRequestListModel.set(defaultPullRequestFilter());
 });
 
@@ -101,12 +100,14 @@ function renderWelcome(
         insets: { bottom: 0, left: 0, right: 0, top: 0 },
       }}
     >
-      <OnboardingScreen
+      <ProviderConnectTray
         capabilities={workspaceCapabilities}
         connectionId="server"
-        onTrayOpenChange={onTrayOpenChange}
+        onOpenChange={onTrayOpenChange}
         snapshot={snapshot}
-      />
+      >
+        <OnboardingScreen />
+      </ProviderConnectTray>
     </SafeAreaProvider>,
   );
 }
@@ -136,13 +137,13 @@ it("keeps provider choices behind one welcome action", () => {
   const firstHeader = within(view.getByTestId("provider-tray-header-left-step-1"));
   expect(firstHeader.getByText("Connect a provider")).toBeOnTheScreen();
   expect(firstHeader.getByText("1 of 4")).toBeOnTheScreen();
-  expect(firstHeader.queryByRole("button", { name: "Close" })).toBeNull();
+  expect(view.queryByRole("button", { name: "Close" })).toBeNull();
   expect(
     StyleSheet.flatten(view.getByTestId("provider-tray-header-copy-step-1").props.style),
   ).toMatchObject({ alignItems: "baseline", flexDirection: "row" });
 });
 
-it("opens provider management from a connected review inbox", async () => {
+it("keeps a connected review inbox separate from account management", async () => {
   const forge = forgeResources();
   const filter = defaultPullRequestFilter();
   const page = parsePullRequestListPage(reviewRequestedPage);
@@ -164,6 +165,7 @@ it("opens provider management from a connected review inbox", async () => {
         connectionId="server"
         forge={forge}
         onOpenPullRequest={() => undefined}
+        onOpenSettings={jest.fn()}
       />
     </SafeAreaProvider>,
   );
@@ -171,17 +173,7 @@ it("opens provider management from a connected review inbox", async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
 
-  fireEvent.press(view.getByRole("button", { name: "Accounts" }));
-
-  expect(view.getByTestId("forge-accounts-sheet")).toBeOnTheScreen();
-  expect(view.getByText("Pull request accounts")).toBeOnTheScreen();
-  expect(view.getByTestId("forge-provider-group-github")).toBeOnTheScreen();
-  expect(view.getByTestId("forge-provider-group-arcanum")).toBeOnTheScreen();
-
-  act(() => {
-    forgeAccountsSheetOpen.set(false);
-  });
-  expect(view.queryByTestId("forge-accounts-sheet")).toBeNull();
+  expect(view.queryByRole("button", { name: "Accounts" })).toBeNull();
   view.unmount();
 });
 
@@ -202,13 +194,12 @@ it("uses the tray navigation stack and resets it after dismissal", () => {
   expect(secondHeader.getByRole("button", { name: "Back" })).toBeOnTheScreen();
   expect(secondHeader.getByText("Connect GitHub")).toBeOnTheScreen();
   expect(secondHeader.getByText("2 of 4")).toBeOnTheScreen();
-  expect(secondHeader.queryByRole("button", { name: "Close" })).toBeNull();
+  expect(view.queryByRole("button", { name: "Close" })).toBeNull();
   fireEvent.press(secondHeader.getByRole("button", { name: "Back" }));
   expect(view.getByText("Choose where CodeWide should look for pull requests.")).toBeOnTheScreen();
 
   fireEvent.press(view.getByRole("button", { name: "GitHub" }));
-  const closeButtons = view.getAllByRole("button", { name: "Close" });
-  fireEvent.press(closeButtons[closeButtons.length - 1]);
+  fireEvent.press(view.getByRole("button", { name: "Dismiss tray" }));
   fireEvent.press(view.getByRole("button", { name: "Connect a provider" }));
 
   expect(view.getByText("Choose where CodeWide should look for pull requests.")).toBeOnTheScreen();
@@ -360,6 +351,7 @@ it("recovers the host-login code when the mutation reply is lost but accounts re
         connectionId={connectionId}
         forge={forge}
         onOpenPullRequest={() => undefined}
+        onOpenSettings={jest.fn()}
       />
     </SafeAreaProvider>,
   );
@@ -398,6 +390,7 @@ it("keeps the terminal success visible after the authoritative account snapshot 
         connectionId="server"
         forge={forge}
         onOpenPullRequest={() => undefined}
+        onOpenSettings={jest.fn()}
       />
     </SafeAreaProvider>,
   );

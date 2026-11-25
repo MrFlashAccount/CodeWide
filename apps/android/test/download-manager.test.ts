@@ -40,11 +40,17 @@ const saved: TransferResult = {
 
 function harness(overrides: Partial<DownloadPorts> = {}) {
   const transfers: FakeTransfer[] = [];
+  const files = new Map<string, { bytes: number; mimeType: string | null; uri: string }>();
+  const fileKey = (directory: SelectedDirectory, path: string) =>
+    JSON.stringify([directory.uri, path.split("/").at(-1)]);
   let storedFolder: string | null = null;
   let clock = 1_000;
   const ports: DownloadPorts = {
     deleteFile: vi.fn(),
     discardPartial: vi.fn(),
+    findSaved: vi.fn(
+      async (directory, { source }) => files.get(fileKey(directory, source.path)) ?? null,
+    ),
     isPickerCancellation: (error) => error instanceof Error && error.message === "picker cancelled",
     now: () => {
       clock += 1_000;
@@ -52,8 +58,11 @@ function harness(overrides: Partial<DownloadPorts> = {}) {
     },
     pickDirectory: vi.fn(async () => folder),
     readFolder: async () => storedFolder,
+    renameFile: async () => {
+      throw new Error("No rename in this test");
+    },
     restoreDirectory: vi.fn((uri: string) => (uri === folder.uri ? folder : null)),
-    start: vi.fn(({ onProgress }: DownloadTransferStart) => {
+    start: vi.fn(({ directory, onProgress, source }: DownloadTransferStart) => {
       let settle: { reject: (error: Error) => void; resolve: (value: TransferResult) => void };
       const promise = new Promise<TransferResult>((resolve, reject) => {
         settle = { reject, resolve };
@@ -67,6 +76,13 @@ function harness(overrides: Partial<DownloadPorts> = {}) {
           settle.reject(error);
         },
         finish: (result) => {
+          if (result.uri !== undefined) {
+            files.set(fileKey(directory, source.path), {
+              bytes: result.bytes,
+              mimeType: result.mimeType ?? null,
+              uri: result.uri,
+            });
+          }
           settle.resolve(result);
         },
         pause: vi.fn(stop),
@@ -85,6 +101,7 @@ function harness(overrides: Partial<DownloadPorts> = {}) {
   };
   const storage = createDownloadHistoryStorage();
   return {
+    files,
     manager: new DownloadManager(storage, ports),
     ports,
     reopen: () => new DownloadManager(storage, ports),
@@ -126,12 +143,122 @@ describe("download manager", () => {
     expect(only(manager).state).toMatchObject({ bytes: 2048, status: "completed", uri: saved.uri });
     expect(manager.folder$.get()).toEqual({ name: "Downloads", uri: folder.uri });
 
-    const second = manager.start(video);
+    await expect(manager.start(video)).resolves.toMatchObject({
+      id: only(manager).id,
+      status: "alreadySaved",
+      uri: saved.uri,
+    });
+    expect(ports.start).toHaveBeenCalledTimes(1);
+    expect(ports.pickDirectory).toHaveBeenCalledTimes(1);
+    expect(manager.entries$.get()).toHaveLength(1);
+  });
+
+  it("persists the provider's renamed identity and uses its new URI for deletion", async () => {
+    const renamed = { name: "Quarterly report.mp4", uri: "content://downloads/new-document-id" };
+    const renameFile = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Name already exists"))
+      .mockResolvedValue(renamed);
+    const { manager, transfer, reopen, ports } = harness({ renameFile });
+    const run = manager.start(video);
+    await settled();
+    transfer(0).finish(saved);
+    await run;
+    const { id } = only(manager);
+    await expect(manager.renameFile(id, "../bad")).rejects.toThrow();
+    expect(renameFile).not.toHaveBeenCalled();
+    await expect(manager.renameFile(id, renamed.name)).rejects.toThrow("Name already exists");
+    expect(only(manager).name).toBe(video.name);
+    await manager.renameFile(id, renamed.name);
+    const restored = reopen();
+    await settled();
+    expect(only(restored)).toMatchObject({ id, name: renamed.name, state: { uri: renamed.uri } });
+    restored.deleteFile(id);
+    expect(ports.deleteFile).toHaveBeenCalledWith(renamed.uri);
+  });
+
+  it("does not race a rename against a repeat download's in-flight verification", async () => {
+    const { manager, ports, transfer } = harness();
+    const run = manager.start(video);
+    await settled();
+    transfer(0).finish(saved);
+    await run;
+    const { id } = only(manager);
+    const verified = {
+      bytes: saved.bytes,
+      mimeType: "video/mp4",
+      uri: "content://downloads/repro.mp4",
+    };
+    const verification = Promise.withResolvers<typeof verified>();
+    const renamed = { name: "new.mp4", uri: "content://downloads/new.mp4" };
+    vi.spyOn(ports, "findSaved")
+      .mockReturnValueOnce(verification.promise)
+      .mockResolvedValue({ ...verified, uri: renamed.uri });
+    const rename = vi.spyOn(ports, "renameFile").mockResolvedValue(renamed);
+    const check = manager.start(video);
+    await settled();
+    const edit = manager.renameFile(id, renamed.name);
+    const again = manager.start(video);
+    await settled();
+    expect(rename).not.toHaveBeenCalled();
+    verification.resolve(verified);
+    await check;
+    await edit;
+    await expect(again).resolves.toMatchObject({
+      status: "alreadySaved",
+      name: renamed.name,
+      uri: renamed.uri,
+    });
+    expect(only(manager)).toMatchObject({ id, name: renamed.name });
+  });
+
+  it("admits one writer for a destination and recognizes the saved file immediately after restart", async () => {
+    const { manager, ports, transfer, reopen, files } = harness();
+    const first = manager.start(video);
+    const again = manager.start(video);
+    await expect(again).resolves.toEqual({ status: "busy" });
+    expect(ports.start).toHaveBeenCalledTimes(1);
+    transfer(0).finish(saved);
+    await first;
+    const id = only(manager).id;
+    const restarted = reopen();
+    await expect(restarted.start(video)).resolves.toMatchObject({ status: "alreadySaved", id });
+    expect(ports.start).toHaveBeenCalledTimes(1);
+    files.clear();
+    const redownload = restarted.start(video);
     await settled();
     transfer(1).finish(saved);
-    await second;
-    expect(ports.pickDirectory).toHaveBeenCalledTimes(1);
-    expect(manager.entries$.get()).toHaveLength(2);
+    await expect(redownload).resolves.toMatchObject({ status: "completed" });
+    expect(only(restarted).state).toMatchObject({ uri: saved.uri });
+  });
+
+  it("collapses old rows for the same saved URI while preserving distinct copies and their files", async () => {
+    const { storage, reopen, ports } = harness();
+    for (const [index, uri] of [saved.uri, "content://another/repro.mp4", saved.uri].entries()) {
+      const id = createDownloadId(index);
+      await storage.put({
+        id,
+        startedAt: index,
+        entry: {
+          id,
+          name: video.name,
+          source: video.source,
+          startedAt: index,
+          state: {
+            status: "completed",
+            bytes: 2048,
+            completedAt: index,
+            mimeType: "video/mp4",
+            uri,
+          },
+        },
+      });
+    }
+    const restarted = reopen();
+    await settled();
+    expect(restarted.entries$.peek().map((entry) => entry.startedAt)).toEqual([2, 1]);
+    expect(storage.rows()).toHaveLength(2);
+    expect(ports.deleteFile).not.toHaveBeenCalled();
   });
 
   it("starts nothing when the folder picker is dismissed", async () => {
@@ -159,6 +286,7 @@ describe("download manager", () => {
     expect(only(manager).state).toMatchObject({ status: "paused", transferredBytes: 512 });
 
     const resumed = manager.resume(id);
+    await settled();
     expect(only(manager).state).toMatchObject({ status: "running", transferredBytes: 512 });
     transfer(1).finish(saved);
     await expect(resumed).resolves.toMatchObject({ status: "completed" });
@@ -180,6 +308,7 @@ describe("download manager", () => {
     expect(only(manager).state).toEqual({ status: "cancelled" });
 
     const retried = manager.retry(running);
+    await settled();
     transfer(1).progress(100, 2048);
     manager.pause(running);
     await retried;
@@ -199,6 +328,7 @@ describe("download manager", () => {
     expect(manager.canRestart(entry.id)).toBe(true);
 
     const retried = manager.retry(entry.id);
+    await settled();
     transfer(1).finish(saved);
     await expect(retried).resolves.toMatchObject({ status: "completed" });
   });
@@ -206,9 +336,13 @@ describe("download manager", () => {
   it("removes an entry without touching the saved file, and deletes it on request", async () => {
     const { manager, ports, transfer } = harness();
     for (const index of [0, 1]) {
-      const run = manager.start(video);
+      const path = `/srv/${index}.mp4`;
+      const run = manager.start({ ...video, source: { kind: "path", path } });
       await settled();
-      transfer(index).finish(saved);
+      transfer(index).finish({
+        ...saved,
+        uri: index === 0 ? saved.uri : "content://downloads/1.mp4",
+      });
       await run;
     }
     const [newest, oldest] = manager.entries$.get();
@@ -228,7 +362,11 @@ describe("download manager", () => {
     await settled();
     transfer(0).finish(saved);
     await finished;
-    void manager.start({ ...video, name: "second.mp4" });
+    void manager.start({
+      ...video,
+      name: "second.mp4",
+      source: { kind: "path", path: "/srv/second.mp4" },
+    });
     await settled();
     transfer(1).progress(300, 2048);
     const [unfinished] = manager.entries$.get();

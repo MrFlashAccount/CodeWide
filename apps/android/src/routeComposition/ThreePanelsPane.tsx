@@ -1,13 +1,16 @@
 import { useContext, type ReactNode } from "react";
-import { PaneBodyModeContext, PaneBodyPlacementContext } from "../ui/paneBodyTransition";
+import {
+  PaneBodyModeContext,
+  PaneBodyPlacementContext,
+  type PaneReadingWidth,
+} from "../ui/paneBodyTransition";
 import { PaneMotionContext, type PaneMotionState } from "./paneMotion";
-import { interpolatePaneGeometry, paneGeometry, snapshotBodyMargin } from "./paneGeometry";
 import { useDerivedValue } from "react-native-reanimated";
 
 import { SurfaceToneProvider } from "../ui/surfaceTone";
 import { ThreePanelsContext, type ThreePanelsContent } from "../ui/threePanels";
 import { currentChromeInset } from "./paneFrames";
-import type { PaneBox } from "./paneGeometry";
+import { paneLayoutWidth, type PaneBox } from "./paneGeometry";
 import {
   useWorkspacePaneChrome,
   WorkspacePanesContext,
@@ -75,16 +78,21 @@ function SnapshotPlacement({
   readonly geometry: PaneMotionState;
 }): React.JSX.Element {
   const { subscribeCapture } = useContext(PaneMotionContext);
-  const finalMargin = useDerivedValue(() => {
-    if (!geometry.moving.get()) {
-      return 0;
+  const resizing = useDerivedValue(
+    () => geometry.dividerPressed.get() || geometry.moving.get() || geometry.landing.get() !== null,
+  );
+  const readingWidth = useDerivedValue<PaneReadingWidth>(() => {
+    const target = geometry.landing.get();
+    if (target !== null) {
+      return { kind: "landing", width: paneLayoutWidth(target, box) };
     }
-    const from = geometry.from.get();
-    const to = paneGeometry(geometry.arrangement.get(), geometry.frameWidth.get());
-    return snapshotBodyMargin(interpolatePaneGeometry(from, to, geometry.progress.get()), to, box);
+    const drag = geometry.drag.get();
+    return drag !== null && geometry.dividerPressed.get()
+      ? { kind: "drag", width: paneLayoutWidth(drag, box) }
+      : { kind: "rest" };
   });
   return (
-    <PaneBodyPlacementContext.Provider value={{ finalMargin, subscribeCapture }}>
+    <PaneBodyPlacementContext.Provider value={{ readingWidth, resizing, subscribeCapture }}>
       {children}
     </PaneBodyPlacementContext.Provider>
   );

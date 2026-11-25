@@ -74,7 +74,7 @@ it("uses current compact layout and navigation inputs when a wide suggestion req
   expect(initialPrepare).not.toHaveBeenCalled();
   expect(initialNavigate).not.toHaveBeenCalled();
   expect(currentPrepare).toHaveBeenCalledWith("server:compact-thread");
-  expect(mockNavigateToLinkedThread).toHaveBeenCalledWith("server", resolvedThreadId);
+  expect(mockNavigateToLinkedThread).toHaveBeenCalledWith("server", resolvedThreadId, pullRequest);
   expect(hook.result.current.chat).toEqual({ status: "closed" });
 });
 

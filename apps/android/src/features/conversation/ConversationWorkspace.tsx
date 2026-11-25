@@ -167,6 +167,7 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
         : {
             connectionId: scope.activeConnectionId,
             kind: "thread",
+            reviewPullRequest: props.destination.reviewPullRequest,
             threadId: scope.activeRemoteThreadId,
           },
     queueCommands,

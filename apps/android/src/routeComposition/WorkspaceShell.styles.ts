@@ -6,6 +6,7 @@ import { v1MobileRouteMotion } from "../ui/v1MobileRouteMotion";
 export const v1WorkspaceShellStyles = StyleSheet.create({
   // The pane frame owns the destination's box, position and leading radius.
   destination: {
+    backgroundColor: colors.conversationSurface,
     overflow: "hidden",
   },
   flex: {

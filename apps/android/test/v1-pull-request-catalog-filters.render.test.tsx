@@ -7,7 +7,6 @@ import { parsePullRequestListPage } from "../src/data/forgePullRequestContract";
 import { createForgeResources } from "../src/data/forgeResources";
 import { PullRequestFilterSheet } from "../src/features/pullRequests/list/PullRequestFilterSheet";
 import { PullRequestsCatalog } from "../src/features/pullRequests/PullRequestsFeature";
-import { PullRequestsHeader } from "../src/features/pullRequests/PullRequestsHeader";
 import {
   closePullRequestSearch,
   defaultPullRequestFilter,
@@ -43,7 +42,9 @@ const capabilities: PullRequestsWorkspaceCapabilities = {
 };
 
 function renderCatalog() {
+  const openSettings = jest.fn();
   const searches: unknown[] = [];
+  const accountSnapshot = { accounts: [connectedAccount], flows: [], providers: [githubProvider] };
   let announceSearch = (): void => undefined;
   const searched = new Promise<void>((resolve) => {
     announceSearch = resolve;
@@ -53,14 +54,16 @@ function renderCatalog() {
     method: string,
     params: unknown,
   ): Promise<Result> => {
-    if (method !== SEARCH) {
+    if (method === SEARCH) {
+      searches.push(params);
+      announceSearch();
+    } else if (method !== "companion/forge/accounts/read") {
       throw new Error(`Unexpected ${method}`);
     }
-    searches.push(params);
-    announceSearch();
+    const reply = method === SEARCH ? involvedPage : accountSnapshot;
     // WHY: the fake transport returns a wire fixture; the app's own parser validates it.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    return involvedPage as Result;
+    return reply as Result;
   };
   // WHY: the fake session is only a handle passed back to rpcAfterAttach.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
@@ -72,11 +75,7 @@ function renderCatalog() {
     rpcAfterAttach,
   });
   const page = parsePullRequestListPage(involvedPage);
-  const accounts = parseForgeAccounts({
-    accounts: [connectedAccount],
-    flows: [],
-    providers: [githubProvider],
-  });
+  const accounts = parseForgeAccounts(accountSnapshot);
   if (page === null || accounts === null) {
     throw new Error("The pull-request fixture is invalid");
   }
@@ -91,10 +90,11 @@ function renderCatalog() {
         connectionId="server"
         forge={forge}
         onOpenPullRequest={() => undefined}
+        onOpenSettings={openSettings}
       />
     </SafeAreaProvider>,
   );
-  return { forge, searched, searches, view };
+  return { forge, openSettings, searched, searches, view };
 }
 
 async function nextTimerTurn(): Promise<void> {
@@ -208,11 +208,20 @@ it("offers the linked account's login as a one-tap person", () => {
   ]);
 });
 
-it("opens accounts from a header action that names them", () => {
-  const onManageProviders = jest.fn();
-  const view = render(<PullRequestsHeader onManageProviders={onManageProviders} />);
+it("opens PR settings or adds an account directly from the catalog menu", async () => {
+  const { openSettings, view } = renderCatalog();
+  const menu = view.getByRole("button", { name: "Pull request actions" });
+  fireEvent.press(menu);
+  expect(view.getAllByLabelText(/^Pull request actions: /u)).toHaveLength(2);
+  fireEvent.press(view.getByLabelText("Pull request actions: Settings"));
+  expect(openSettings).toHaveBeenCalledTimes(1);
 
-  fireEvent.press(view.getByRole("button", { name: "Accounts" }));
-
-  expect(onManageProviders).toHaveBeenCalledTimes(1);
+  fireEvent.press(menu);
+  await act(async () => fireEvent.press(view.getByLabelText("Pull request actions: Add account")));
+  expect(view.getByText("1 of 4")).toBeOnTheScreen();
+  fireEvent.press(view.getByRole("button", { name: "GitHub" }));
+  expect(view.getByText("Connect GitHub")).toBeOnTheScreen();
+  fireEvent.press(view.getByRole("button", { name: "Back" }));
+  expect(view.getByRole("button", { name: "GitHub" })).toBeEnabled();
+  expect(openSettings).toHaveBeenCalledTimes(1);
 });

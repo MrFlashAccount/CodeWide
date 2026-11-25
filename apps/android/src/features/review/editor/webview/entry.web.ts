@@ -10,6 +10,11 @@ import {
   type OnLineClickProps,
 } from "@pierre/diffs";
 import { createFileNavigation, editorElement as requiredElement } from "./fileNavigation.web";
+import {
+  captureDiffViewport,
+  isDiffContextSwitch,
+  restoreDiffViewport,
+} from "./diffViewportAnchor.web";
 import { readRecordedPatch, renderRawPatch } from "./recordedPatch.web";
 import { lineReference, patchLineText, sourceLineText } from "./lineText.web";
 import { materializeBeforeSource as reconstructBeforeSource } from "./materializeRecordedDiff.web";
@@ -115,9 +120,7 @@ function receiveHostMessage(data: string): void {
   latestHostSequence = parsed.sequence;
   switch (parsed.command) {
     case "document":
-      latestRequestId = parsed.payload.requestId;
-      currentDocument = parsed.payload.document;
-      renderCurrentDocument();
+      showDocument(parsed.payload.document, parsed.payload.requestId);
       break;
     case "settings":
       currentMode = parsed.payload.mode;
@@ -144,6 +147,21 @@ function receiveHostMessage(data: string): void {
       revealedReference = parsed.payload;
       revealPendingLine(activeFileRenderer ?? activeDiffRenderer);
       break;
+  }
+}
+
+function showDocument(document: CodeReviewDocument | null, requestId: number): void {
+  const anchor =
+    currentMode !== "source" &&
+    pendingReveal === null &&
+    isDiffContextSwitch(currentDocument, document)
+      ? captureDiffViewport(patchHost.hidden === false ? patchHost : diffHost, previewHost)
+      : null;
+  latestRequestId = requestId;
+  currentDocument = document;
+  renderCurrentDocument();
+  if (anchor !== null) {
+    restoreDiffViewport(patchHost.hidden === false ? patchHost : diffHost, previewHost, anchor);
   }
 }
 

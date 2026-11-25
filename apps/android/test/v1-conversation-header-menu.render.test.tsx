@@ -78,6 +78,7 @@ function menuActions(view: ReturnType<typeof render>) {
 const THREAD_ITEMS = [
   "Copy session ID",
   "Rename",
+  "Attach pull request",
   "Pin thread",
   "Fork thread",
   "Compact context",
@@ -110,6 +111,7 @@ it("shows a read-only thread's menu with reading actions enabled and changes dis
   expect(actions.find((action) => action.label === "Copy session ID")?.disabled).not.toBe(true);
   for (const label of [
     "Rename",
+    "Attach pull request",
     "Pin thread",
     "Compact context",
     "Archive thread",
@@ -125,7 +127,7 @@ it("shows a read-only thread's menu with reading actions enabled and changes dis
   expect(view.getByLabelText("Thread menu: Rename")).toBeDisabled();
 });
 
-it("presents a right-pane header: the pane's fullscreen and close instead of back", () => {
+it("presents a right-pane header: the pane's close action instead of back", () => {
   const onBack = jest.fn();
   const close = jest.fn();
   const toggleFullscreen = jest.fn();
@@ -146,8 +148,7 @@ it("presents a right-pane header: the pane's fullscreen and close instead of bac
 
   expect(view.queryByLabelText("Back to threads")).toBeNull();
   expect(view.getByTestId("conversation-title")).toHaveTextContent("Review the parser");
-  fireEvent.press(view.getByLabelText("Open review chat fullscreen"));
-  expect(toggleFullscreen).toHaveBeenCalledTimes(1);
+  expect(view.queryByLabelText("Open review chat fullscreen")).toBeNull();
   fireEvent.press(view.getByLabelText("Close review chat"));
   expect(close).toHaveBeenCalledTimes(1);
   expect(onBack).not.toHaveBeenCalled();

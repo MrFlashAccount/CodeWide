@@ -1,17 +1,28 @@
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 
-import { ThreadListHeaderAction } from "../../presentation/navigation/ThreadListHeader";
+import { useEvent } from "../../react/useEvent";
 import { colors, iconSize, layoutSize, spacing } from "../../theme";
 import { CatalogTitle } from "../../ui/CatalogTitle";
+import { OverflowMenu } from "../../ui/OverflowMenu";
+import { threadListLayout } from "../../ui/thread-list-layout";
 
-/** Quiet catalog header of `/pulls`; route actions live in their owning surfaces. */
+/** Pull requests catalog title, refresh status and account actions. */
 export function PullRequestsHeader({
-  onManageProviders,
+  onAddAccount,
+  onOpenSettings,
   refreshing = false,
 }: {
-  readonly onManageProviders?: () => void;
+  readonly onAddAccount: (() => void) | null;
+  readonly onOpenSettings: () => void;
   readonly refreshing?: boolean;
 }): React.JSX.Element {
+  const select = useEvent((id: string): void => {
+    if (id === "add-account") {
+      onAddAccount?.();
+    } else if (id === "settings") {
+      onOpenSettings();
+    }
+  });
   return (
     <View
       accessibilityState={{ busy: refreshing }}
@@ -28,13 +39,20 @@ export function PullRequestsHeader({
           />
         ) : null}
       </View>
-      {onManageProviders === undefined ? null : (
-        <ThreadListHeaderAction
-          accessibilityLabel="Accounts"
-          name="people-circle-outline"
-          onPress={onManageProviders}
-        />
-      )}
+      <OverflowMenu
+        accessibilityLabel="Pull request actions"
+        actions={[
+          {
+            disabled: onAddAccount === null,
+            icon: "person-add-outline",
+            id: "add-account",
+            label: "Add account",
+          },
+          { icon: "settings-outline", id: "settings", label: "Settings" },
+        ]}
+        align="end"
+        onSelect={select}
+      />
     </View>
   );
 }
@@ -44,7 +62,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     height: layoutSize.header,
-    paddingHorizontal: spacing.md,
+    paddingEnd: threadListLayout.edgeInset,
+    paddingStart: spacing.md,
   },
   title: {
     flexShrink: 1,

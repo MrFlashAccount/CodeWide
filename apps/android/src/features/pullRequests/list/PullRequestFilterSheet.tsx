@@ -10,7 +10,8 @@ import { useEvent } from "../../../react/useEvent";
 import { colors, iconSize } from "../../../theme";
 import { ForgeIcon } from "../../../ui/ForgeIcon";
 import { AppText as Text } from "../../../ui/Typography";
-import { Tray, useTray, type ITrayPalette } from "../../../vendor/reacticx/tray";
+import { appTrayPalette, appTrayStyles } from "../../../ui/appTrayAppearance";
+import { Tray, useTray } from "../../../vendor/reacticx/tray";
 import {
   activePullRequestFilterCount,
   applyPullRequestFilters,
@@ -28,14 +29,6 @@ import { PullRequestTermField, type PullRequestTermSuggestion } from "./PullRequ
 
 const FILTERS_VIEW = "pull-request-filters";
 const FILTER_DETAIL_VIEW = "pull-request-filter-detail";
-const FILTER_TRAY_PALETTE: Partial<ITrayPalette> = {
-  backdrop: colors.scrim,
-  border: colors.surfaceContainer,
-  handle: colors.textDim,
-  mutedText: colors.textMuted,
-  surface: colors.surfaceContainer,
-  text: colors.text,
-};
 /** Metadata fields have no account-derived values to offer. */
 const NO_SUGGESTIONS: readonly PullRequestTermSuggestion[] = [];
 const REVIEW_OPTIONS = [
@@ -139,7 +132,7 @@ export function PullRequestFilterSheet({
       onOpenChange={handleOpenChange}
       onViewChange={handleViewChange}
       open={open}
-      palette={FILTER_TRAY_PALETTE}
+      palette={appTrayPalette}
       theme="dark"
     >
       <FilterTraySurface
@@ -173,7 +166,7 @@ function FilterTraySurface({
   } | null;
 }): React.JSX.Element {
   return (
-    <Tray.Content style={[styles.sheet, { marginBottom: -bottomInsetCompensation }]}>
+    <Tray.Content style={[appTrayStyles.surface, { marginBottom: -bottomInsetCompensation }]}>
       <Tray.View id={FILTERS_VIEW} style={[styles.fill, { height: trayHeight }]}>
         {visibleState === null ? null : <FilterFacetIndex draft={visibleState.draft} />}
       </Tray.View>

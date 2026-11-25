@@ -73,13 +73,14 @@ export function ConnectionSettings({
   onUpdate,
   onUpdateAccountProfile,
   relayUpdates,
+  renderPullRequests,
   visible,
   voiceAssistantModelCatalog,
 }: {
   accountRateLimits: AccountRateLimitsRow[];
   agentProviders?: Pick<AgentProvidersResource, "refresh" | "state$">;
   connections: StoredConnection[];
-  entryPage?: "overview" | "voiceAssistant";
+  entryPage?: "overview" | "voiceAssistant" | "pullRequests";
   entryRequest?: string;
   hostUpdates: Readonly<Record<string, HostUpdateView>>;
   onActivateAccountProfile?: (
@@ -122,6 +123,7 @@ export function ConnectionSettings({
     update: { enabled?: boolean; priority?: number },
   ) => Promise<AccountPoolSnapshot>;
   relayUpdates: Readonly<Record<string, HostUpdateView>>;
+  renderPullRequests?: Parameters<typeof SettingsSheet>[0]["renderPullRequests"];
   visible: boolean;
   voiceAssistantModelCatalog: VoiceAssistantModelCatalog;
 }) {
@@ -139,6 +141,7 @@ export function ConnectionSettings({
   return (
     <SettingsSheet
       entryPage={entryPage}
+      {...(renderPullRequests === undefined ? {} : { renderPullRequests })}
       {...(entryRequest === undefined ? {} : { entryRequest })}
       advanced={
         <>

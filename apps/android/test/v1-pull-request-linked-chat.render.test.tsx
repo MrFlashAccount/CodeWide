@@ -232,15 +232,15 @@ it("covers the catalog while the review chat is beside the PR and restores it on
   expect(view.queryByTestId("canonical-conversation", { includeHiddenElements: true })).toBeNull();
 });
 
-it("shows only the right pane's declared actions: fullscreen and close, never widen", async () => {
+it("keeps close in the header and resize on the shared divider", async () => {
   const view = renderInWideFrame();
   await openLinkedThreadBeside(view);
 
   const chat = within(view.getByTestId("pull-request-chat-pane"));
-  expect(chat.getByLabelText("Open review chat fullscreen")).toBeVisible();
+  expect(chat.queryByLabelText("Open review chat fullscreen")).toBeNull();
   expect(chat.getByLabelText("Close review chat")).toBeVisible();
   expect(view.queryByText(/Widen|Narrow/u)).toBeNull();
-  expect(view.getByLabelText("Open pull request fullscreen")).toBeVisible();
+  expect(view.getByLabelText("Resize panels")).toBeVisible();
 });
 
 it("shows the chat alone in fullscreen within the route tree and keeps every pane mounted", async () => {
@@ -250,9 +250,9 @@ it("shows the chat alone in fullscreen within the route tree and keeps every pan
   const conversation = view.getByTestId("canonical-conversation");
   const pullRequest = view.getByTestId("pull-request-primary-pane");
 
-  fireEvent.press(view.getByLabelText("Open review chat fullscreen"));
+  fireEvent(view.getByLabelText("Resize panels"), "accessibilityAction", { nativeEvent: { actionName: "hide-leading" } });
   await waitFor(() => {
-    expect(view.getByLabelText("Exit review chat fullscreen")).toBeVisible();
+    expect(view.getByLabelText("Resize panels")).toHaveAccessibilityValue({text:"Fullscreen"});
   });
   expect(view.queryByTestId("catalog")).toBeNull();
   expect(view.getByTestId("catalog", { includeHiddenElements: true })).not.toBeVisible();
@@ -265,7 +265,7 @@ it("shows the chat alone in fullscreen within the route tree and keeps every pan
     within(view.getByTestId("pull-request-workspace")).getByTestId("canonical-conversation"),
   ).toBe(conversation);
 
-  fireEvent.press(view.getByLabelText("Exit review chat fullscreen"));
+  fireEvent(view.getByLabelText("Resize panels"), "accessibilityAction", { nativeEvent: { actionName: "show-split" } });
   await waitFor(() => {
     expect(view.getByTestId("pull-request-primary-pane")).toBeVisible();
   });
@@ -273,9 +273,9 @@ it("shows the chat alone in fullscreen within the route tree and keeps every pan
   expect(view.getByTestId("catalog", { includeHiddenElements: true })).not.toBeVisible();
   expect(view.getByTestId("canonical-conversation")).toBe(conversation);
 
-  fireEvent.press(view.getByLabelText("Open review chat fullscreen"));
+  fireEvent(view.getByLabelText("Resize panels"), "accessibilityAction", { nativeEvent: { actionName: "hide-leading" } });
   await waitFor(() => {
-    expect(view.getByLabelText("Exit review chat fullscreen")).toBeVisible();
+    expect(view.getByLabelText("Resize panels")).toHaveAccessibilityValue({text:"Fullscreen"});
   });
   expect(view.queryByTestId("pull-request-primary-pane")).toBeNull();
   act(() => {
@@ -292,9 +292,9 @@ it("shows the chat alone in fullscreen within the route tree and keeps every pan
 it("returns to the PR when the fullscreen chat closes", async () => {
   const view = renderInWideFrame();
   await openLinkedThreadBeside(view);
-  fireEvent.press(view.getByLabelText("Open review chat fullscreen"));
+  fireEvent(view.getByLabelText("Resize panels"), "accessibilityAction", { nativeEvent: { actionName: "hide-leading" } });
   await waitFor(() => {
-    expect(view.getByLabelText("Exit review chat fullscreen")).toBeVisible();
+    expect(view.getByLabelText("Resize panels")).toHaveAccessibilityValue({text:"Fullscreen"});
   });
   expect(view.queryByTestId("pull-request-primary-pane")).toBeNull();
 
@@ -306,14 +306,14 @@ it("returns to the PR when the fullscreen chat closes", async () => {
   expect(view.getByTestId("catalog")).toBeVisible();
 });
 
-it("shows the PR alone in fullscreen while the chat stays mounted", async () => {
+it("restores either neighbour of a fullscreen PR without remounting its review chat", async () => {
   const view = renderInWideFrame();
   await openLinkedThreadBeside(view);
   const conversation = view.getByTestId("canonical-conversation");
 
-  fireEvent.press(view.getByLabelText("Open pull request fullscreen"));
+  fireEvent(view.getByLabelText("Resize panels"), "accessibilityAction", { nativeEvent: { actionName: "hide-trailing" } });
   await waitFor(() => {
-    expect(view.getByLabelText("Exit pull request fullscreen")).toBeVisible();
+    expect(view.getByLabelText("Resize center and right panels")).toHaveAccessibilityValue({text:"Fullscreen"});
   });
   expect(view.queryByTestId("catalog")).toBeNull();
   expect(view.queryByTestId("canonical-conversation")).toBeNull();
@@ -321,7 +321,18 @@ it("shows the PR alone in fullscreen while the chat stays mounted", async () => 
     conversation,
   );
 
-  fireEvent.press(view.getByLabelText("Exit pull request fullscreen"));
+  const choose = (handle: string, split: string): void => {
+    fireEvent(view.getByLabelText(handle), "accessibilityAction", { nativeEvent: { actionName: "activate" } });
+    fireEvent.press(view.getByLabelText(`Set panel split to ${split}`));
+  };
+  choose("Resize catalog and center panels", "40/60");
+  expect(view.getByTestId("catalog")).toBeVisible();
+  expect(view.queryByTestId("canonical-conversation")).toBeNull();
+  expect(view.getByTestId("canonical-conversation", { includeHiddenElements: true })).toBe(conversation);
+
+  fireEvent(view.getByLabelText("Resize panels"), "accessibilityAction", { nativeEvent: { actionName: "hide-leading" } });
+  choose("Resize center and right panels", "70/30");
+  expect(view.queryByTestId("catalog")).toBeNull();
   await waitFor(() => {
     expect(view.getByTestId("canonical-conversation")).toBeVisible();
   });
@@ -379,7 +390,7 @@ it("opens a chat the overview names directly: prepares, then navigates on a phon
   fireEvent.press(view.getByTestId("open-existing-review-chat"));
 
   expect(order).toEqual(["prepare", "replace"]);
-  expect(mockReplaceWithLinkedThread).toHaveBeenCalledWith("server", "existing-thread");
+  expect(mockReplaceWithLinkedThread).toHaveBeenCalledWith("server", "existing-thread", "fpr1.github-91");
   expect(mockEnsureReviewChat).not.toHaveBeenCalled();
   expect(view.queryByTestId("pull-request-chat-draft")).toBeNull();
 });
@@ -407,7 +418,7 @@ it("navigates to a live linked chat the suggestion request finds, in order", asy
     await pending.promise;
   });
   await waitFor(() => {
-    expect(mockReplaceWithLinkedThread).toHaveBeenCalledWith("server", "linked-thread");
+    expect(mockReplaceWithLinkedThread).toHaveBeenCalledWith("server", "linked-thread", "fpr1.github-91");
   });
 
   expect(mockEnsureReviewChat).toHaveBeenCalledWith(
@@ -491,7 +502,7 @@ it("accepts only the latest concurrent review-chat attempt", async () => {
     await second.promise;
   });
   await waitFor(() => {
-    expect(mockReplaceWithLinkedThread).toHaveBeenCalledWith("server", "latest-thread");
+    expect(mockReplaceWithLinkedThread).toHaveBeenCalledWith("server", "latest-thread", "fpr1.github-91");
   });
   await act(async () => {
     first.resolve({ created: false, kind: "ready", threadId: "stale-thread" });
@@ -501,7 +512,7 @@ it("accepts only the latest concurrent review-chat attempt", async () => {
   expect(mockPrepareThreadLink).toHaveBeenCalledTimes(1);
   expect(mockPrepareThreadLink).toHaveBeenCalledWith("server:latest-thread");
   expect(mockReplaceWithLinkedThread).toHaveBeenCalledTimes(1);
-  expect(mockReplaceWithLinkedThread).toHaveBeenCalledWith("server", "latest-thread");
+  expect(mockReplaceWithLinkedThread).toHaveBeenCalledWith("server", "latest-thread", "fpr1.github-91");
 });
 
 it("invalidates pending review chat work when the PR identity changes", async () => {

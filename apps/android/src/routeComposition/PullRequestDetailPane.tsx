@@ -1,4 +1,6 @@
-import { Suspense, useLayoutEffect, useRef } from "react";
+import { Suspense, useContext, useLayoutEffect, useRef } from "react";
+import { OpenForgeLinkContext } from "../services/threads/openForgeLink";
+import { MarkdownWebLinkContext } from "../rendering/markdownWebLink";
 import { attachReviewFile } from "./attachReviewFile";
 import { useAppDialog } from "../ui/AppDialog";
 
@@ -35,6 +37,10 @@ export type PullRequestDetailPaneProps = {
  * can appear beside it.
  */
 export function PullRequestDetailPane(props: PullRequestDetailPaneProps): React.JSX.Element {
+  const openForgeLink = useContext(OpenForgeLinkContext);
+  const openMarkdownLink = useEvent(
+    (href: string): boolean => openForgeLink?.(href, props.connectionId) === true,
+  );
   const { chrome } = useThreePanels();
   const leaveFullscreen = (): void => {
     if (chrome.fullscreen) {
@@ -107,27 +113,29 @@ export function PullRequestDetailPane(props: PullRequestDetailPaneProps): React.
           ...(workspaceRuntime.native ? { startRemote } : {}),
         };
   return (
-    <Suspense fallback={<PullRequestScreenSkeleton />}>
-      <PullRequestScreen
-        capabilities={workspaceFeatures.pullRequestDetail}
-        connectionId={props.connectionId}
-        describeThread={props.describeThread}
-        forge={forgeResources}
-        initialChangesView={props.initialChangesView}
-        isThreadUnread={props.isThreadUnread}
-        navigation={{
-          ...props.navigation,
-          attachFile,
-          openReviewChat,
-          openThread,
-        }}
-        pullRequest={props.pullRequest}
-        review={reviewResources}
-        reviewCapabilities={workspaceFeatures.reviewTarget}
-        tab={props.tab}
-        tablet={props.desktop}
-        voiceRuntime={voiceRuntime}
-      />
-    </Suspense>
+    <MarkdownWebLinkContext.Provider value={openMarkdownLink}>
+      <Suspense fallback={<PullRequestScreenSkeleton />}>
+        <PullRequestScreen
+          capabilities={workspaceFeatures.pullRequestDetail}
+          connectionId={props.connectionId}
+          describeThread={props.describeThread}
+          forge={forgeResources}
+          initialChangesView={props.initialChangesView}
+          isThreadUnread={props.isThreadUnread}
+          navigation={{
+            ...props.navigation,
+            attachFile,
+            openReviewChat,
+            openThread,
+          }}
+          pullRequest={props.pullRequest}
+          review={reviewResources}
+          reviewCapabilities={workspaceFeatures.reviewTarget}
+          tab={props.tab}
+          tablet={props.desktop}
+          voiceRuntime={voiceRuntime}
+        />
+      </Suspense>
+    </MarkdownWebLinkContext.Provider>
   );
 }

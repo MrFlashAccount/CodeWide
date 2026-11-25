@@ -77,6 +77,6 @@ export function useLoadedListRow(
       onStoreChange();
     }),
   );
-  const snapshot = useEvent(() => loadedListRow(lists, connectionId, pullRequest));
+  const snapshot = () => loadedListRow(lists, connectionId, pullRequest);
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }

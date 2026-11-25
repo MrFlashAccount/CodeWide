@@ -6,6 +6,7 @@ import { styles } from "./ComposerSubmitAction.styles";
 
 type Props = Pick<
   ComposerFeatureProps,
+  | "questionReplyActive"
   | "editingQueuedMessage"
   | "sendDisabled"
   | "resumeAction"
@@ -33,6 +34,7 @@ export function ComposerSubmitAction({
   editingQueuedMessage,
   goalAttachmentVisible,
   handleDeliveryAction,
+  questionReplyActive,
   queuedComposerEditBusy,
   resumeAction,
   sendDisabled,
@@ -71,7 +73,8 @@ export function ComposerSubmitAction({
               ? "Pause goal and stop response"
               : stopAction === "response"
                 ? "Stop response"
-                : (resumeAction ?? "Send message")
+                : (resumeAction ??
+                  (questionReplyActive === true ? "Ответить на вопрос" : "Send message"))
       }
       disabled={sendDisabled}
       disabledStyle={styles.disabled}
@@ -91,12 +94,16 @@ export function ComposerSubmitAction({
       onSteer={steerComposer}
       pressedStyle={stoppingResponse ? undefined : styles.sendButtonPressed}
       steerEnabled={
-        !goalAttachmentVisible && !sendDisabled && threadLifecycleActive && currentTurnId !== null
+        questionReplyActive !== true &&
+        !goalAttachmentVisible &&
+        !sendDisabled &&
+        threadLifecycleActive &&
+        currentTurnId !== null
       }
       style={[styles.sendButton, stoppingResponse && styles.stopButton]}
     />
   );
-  if (goalAttachmentVisible || resumeAction !== null) {
+  if (questionReplyActive === true || goalAttachmentVisible || resumeAction !== null) {
     return action;
   }
   return (

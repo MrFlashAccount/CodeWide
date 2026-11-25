@@ -10,13 +10,15 @@ import { createRoot } from "react-dom/client";
 import { StyleSheet, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { AppNoticeProvider } from "../../src/ui/AppNotice";
 import { parsePullRequestKeyParam } from "../../src/data/forgeContract";
 import { PullRequestScreen } from "../../src/features/pullRequestDetail/PullRequestScreen";
 import { createPullRequestDetailWorkspaceAdapter } from "../../src/features/pullRequestDetail/workspaceAdapter";
 import { CatalogModeBar } from "../../src/features/pullRequests/CatalogModeBar";
 import { PullRequestsCatalog } from "../../src/features/pullRequests/PullRequestsFeature";
 import { ReviewInboxIllustration } from "../../src/features/pullRequests/onboarding/ReviewInboxIllustration";
-import { openForgeAccounts } from "../../src/features/pullRequests/pullRequestListModel";
+import type { ForgeAccountSelection } from "../../src/features/pullRequests/forgeAccountSettingsPage";
+import { ConnectionForgeAccounts } from "../../src/features/pullRequests/accounts/ConnectionForgeAccounts";
 import { createPullRequestsWorkspaceAdapter } from "../../src/features/pullRequests/workspaceAdapter";
 import {
   catalogModeBarBottomInset,
@@ -56,9 +58,7 @@ const threads: Readonly<Record<string, { readonly status: string; readonly title
   "thread-review-91": { status: "Idle", title: "Review #91" },
 };
 
-if (scenario === "accounts") {
-  openForgeAccounts();
-}
+
 /** The bottom bar uses the same count-free labels as the app. */
 function ModeBar(): React.JSX.Element {
   return (
@@ -69,6 +69,23 @@ function ModeBar(): React.JSX.Element {
 }
 
 function Catalog(): React.JSX.Element {
+  const [showAccounts, setShowAccounts] = useState(scenario === "accounts");
+  const [selection, setSelection] = useState<ForgeAccountSelection | "connect" | null>(null);
+  const accounts = forge.accounts.data({ connectionId: "server" });
+  if (showAccounts && accounts !== null) {
+    return (
+      <ConnectionForgeAccounts
+        capabilities={pullRequests}
+        connectionId="server"
+        page={selection === null
+          ? { kind: "list", open: setSelection, add: () => setSelection("connect") }
+          : selection === "connect" ? { kind: "connect", connectionId: "server", back: () => setSelection(null) }
+          : { kind: "account", selection, back: () => setSelection(null) }}
+        serverName="Workstation"
+        snapshot={accounts}
+      />
+    );
+  }
   return (
     <View style={previewStyles.catalog}>
       <PullRequestsCatalog
@@ -76,6 +93,7 @@ function Catalog(): React.JSX.Element {
         connectionId="server"
         forge={forge}
         onOpenPullRequest={() => undefined}
+        onOpenSettings={() => setShowAccounts(true)}
       />
       <ModeBar />
     </View>
@@ -230,17 +248,19 @@ if (root !== null) {
           insets: { bottom: 0, left: 0, right: 0, top: 0 },
         }}
       >
-        <AppDialogProvider>
-          <View
-            style={{
-              backgroundColor: colors.background,
-              height: window.innerHeight,
-              width: "100%",
-            }}
-          >
-            <Preview />
-          </View>
-        </AppDialogProvider>
+        <AppNoticeProvider>
+          <AppDialogProvider>
+            <View
+              style={{
+                backgroundColor: colors.background,
+                height: window.innerHeight,
+                width: "100%",
+              }}
+            >
+              <Preview />
+            </View>
+          </AppDialogProvider>
+        </AppNoticeProvider>
       </SafeAreaProvider>,
     );
   });

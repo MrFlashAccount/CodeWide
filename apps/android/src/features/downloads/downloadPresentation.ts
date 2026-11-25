@@ -5,12 +5,6 @@ import type { ComposeIconName } from "../../presentation/icons/composeIconNames"
 import { formatByteSize } from "../../ui/number-format";
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "m4v", "mov", "webm", "mkv", "avi"]);
-const DAY_MS = 86_400_000;
-
-export type DownloadSection = {
-  readonly entries: readonly DownloadEntry[];
-  readonly title: string;
-};
 
 /** The status line under a download's name. */
 export function downloadDescription(entry: DownloadEntry): string {
@@ -59,43 +53,8 @@ export function downloadIcon(name: string): ComposeIconName {
     : "document-outline";
 }
 
-/** Groups newest-first entries by the calendar day they started, as Chrome's list does. */
-export function downloadSections(
-  entries: readonly DownloadEntry[],
-  now: number,
-): readonly DownloadSection[] {
-  const sections: { entries: DownloadEntry[]; title: string }[] = [];
-  const today = startOfDay(now);
-  for (const entry of entries) {
-    const title = dayTitle(startOfDay(entry.startedAt), today);
-    const last = sections.at(-1);
-    if (last?.title === title) {
-      last.entries.push(entry);
-    } else {
-      sections.push({ entries: [entry], title });
-    }
-  }
-  return sections;
-}
-
 function byteProgress(transferred: number, total: number | null): string {
   return total === null
     ? formatByteSize(transferred)
     : `${formatByteSize(transferred)} of ${formatByteSize(total)}`;
-}
-
-function startOfDay(timestamp: number): number {
-  const date = new Date(timestamp);
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
-}
-
-function dayTitle(day: number, today: number): string {
-  if (day === today) {
-    return "Today";
-  }
-  if (day === today - DAY_MS) {
-    return "Yesterday";
-  }
-  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long" }).format(day);
 }

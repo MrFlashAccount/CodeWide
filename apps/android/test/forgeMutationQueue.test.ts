@@ -87,9 +87,14 @@ describe("durable Forge mutation queue", () => {
     client.unmount();
   });
 
-  it.each(["current", "before file drafts"])(
+  it.each([
+    ["current", null],
+    ["before file drafts", "forge-query-cache-7ea41d187db7"],
+    ["before classified checks", "forge-query-cache-62c395d04b03"],
+    ["before quick verdict submission", "forge-query-cache-49531d97bcc1"],
+  ])(
     "restores a paused mutation from %s and replays its exact envelope",
-    async (version) => {
+    async (_version, buster) => {
       const memory = createMemoryQueryPersister();
       const firstClient = new QueryClient();
       firstClient.mount();
@@ -108,10 +113,10 @@ describe("durable Forge mutation queue", () => {
         expect(memory.read()).not.toBeNull();
       });
       firstPersistence.stop();
-      if (version === "before file drafts") {
+      if (buster !== null) {
         const snapshot = await memory.persister.restoreClient();
         if (snapshot === undefined) throw new Error("Missing persisted mutation");
-        memory.overwrite(JSON.stringify({ ...snapshot, buster: "forge-query-cache-7ea41d187db7" }));
+        memory.overwrite(JSON.stringify({ ...snapshot, buster }));
       }
 
       const restartedClient = new QueryClient();

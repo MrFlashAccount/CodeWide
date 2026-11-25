@@ -11,6 +11,7 @@ const READ_ONLY_REASON = "Read-only thread";
 
 type ThreadMenuActionId =
   | "archive"
+  | "attach-pull-request"
   | "compact"
   | "copy-session-id"
   | "delete"
@@ -25,6 +26,7 @@ type ThreadMenuActionId =
  */
 const THREAD_MENU_EFFECTS: Readonly<Record<ThreadMenuActionId, "mutates" | "reads">> = {
   archive: "mutates",
+  "attach-pull-request": "mutates",
   compact: "mutates",
   "copy-session-id": "reads",
   delete: "mutates",
@@ -35,27 +37,36 @@ const THREAD_MENU_EFFECTS: Readonly<Record<ThreadMenuActionId, "mutates" | "read
 
 type ThreadMenuAction = ActionMenuItem & { readonly id: ThreadMenuActionId };
 
-export function useThreadHeaderActions({
-  archived,
-  forkOffer,
-  forkPicker,
-  onArchive,
-  onCompact,
-  onDelete,
-  onFork,
-  onRenameRequest,
-  onTogglePin,
-  onUnarchive,
-  openElsewhere = false,
-  pinned,
-  readOnly,
-  threadId,
-}: ThreadHeaderProps) {
+export function useThreadHeaderActions(
+  {
+    archived,
+    forkOffer,
+    forkPicker,
+    onArchive,
+    onCompact,
+    onDelete,
+    onFork,
+    onRenameRequest,
+    onTogglePin,
+    onUnarchive,
+    openElsewhere = false,
+    pinned,
+    readOnly,
+    threadId,
+  }: ThreadHeaderProps,
+  openPullRequestPicker: (() => void) | null,
+): { readonly actions: readonly ActionMenuItem[]; readonly handleAction: (id: string) => void } {
   const dialog = useAppDialog();
   const showNotice = useAppNotice().show;
   const threadActions: ThreadMenuAction[] = [
     { icon: "copy-outline", id: "copy-session-id", label: "Copy session ID" },
     { icon: "pencil-outline", id: "rename", label: "Rename" },
+    {
+      disabled: openPullRequestPicker === null,
+      icon: "attach-outline",
+      id: "attach-pull-request",
+      label: "Attach pull request",
+    },
     {
       disabled: onTogglePin === undefined,
       icon: "pin-outline",
@@ -98,48 +109,56 @@ export function useThreadHeaderActions({
       );
     });
   });
-  const handleAction = useEvent((id: string) => {
-    // A disabled action never runs, whichever menu raised it.
-    if (actions.find((item) => item.id === id)?.disabled === true) {
-      return;
-    }
-    if (id === "copy-session-id") {
-      void copySessionId(threadId, showNotice).catch((error: unknown) => {
+  const handlers: Record<ThreadMenuActionId, () => void> = {
+    archive: () => {
+      run(archived ? onUnarchive : onArchive, archived ? "Unarchive" : "Archive");
+    },
+    "attach-pull-request": () => {
+      openPullRequestPicker?.();
+    },
+    compact: () => {
+      run(onCompact, "Compact");
+    },
+    "copy-session-id": () => {
+      copySessionId(threadId, showNotice).catch((error: unknown) => {
         dialog.alert(
           "Copy failed",
           error instanceof Error ? error.message : "Could not copy session ID",
         );
       });
-    } else if (id === "rename") {
-      onRenameRequest();
-    } else if (id === "pin") {
-      run(onTogglePin, pinned ? "Unpin" : "Pin");
-    } else if (
-      id === "fork" &&
-      onFork !== undefined &&
-      forkPicker !== undefined &&
-      forkOffer !== undefined
-    ) {
-      forkPicker.openFork({ kind: "all" }, forkOffer);
-    } else if (id === "compact") {
-      run(onCompact, "Compact");
-    } else if (id === "archive") {
-      run(archived ? onUnarchive : onArchive, archived ? "Unarchive" : "Archive");
-    } else if (id === "delete" && onDelete !== undefined) {
-      dialog.alert(
-        "Delete thread?",
-        "This permanently deletes the thread on the selected server.",
-        [
-          { style: "cancel", text: "Cancel" },
-          {
-            onPress: () => {
-              run(onDelete, "Delete");
+    },
+    delete: () => {
+      if (onDelete !== undefined) {
+        dialog.alert(
+          "Delete thread?",
+          "This permanently deletes the thread on the selected server.",
+          [
+            { style: "cancel", text: "Cancel" },
+            {
+              onPress: () => {
+                run(onDelete, "Delete");
+              },
+              style: "destructive",
+              text: "Delete",
             },
-            style: "destructive",
-            text: "Delete",
-          },
-        ],
-      );
+          ],
+        );
+      }
+    },
+    fork: () => {
+      if (forkOffer !== undefined) {
+        forkPicker?.openFork({ kind: "all" }, forkOffer);
+      }
+    },
+    pin: () => {
+      run(onTogglePin, pinned ? "Unpin" : "Pin");
+    },
+    rename: onRenameRequest,
+  };
+  const handleAction = useEvent((id: string) => {
+    const action = actions.find((item) => item.id === id);
+    if (action !== undefined && action.disabled !== true) {
+      handlers[action.id]();
     }
   });
 
@@ -147,7 +166,7 @@ export function useThreadHeaderActions({
 }
 
 /** A read-only thread disables the mutating actions. */
-function readOnlyItem(item: ThreadMenuAction, readOnly: boolean): ActionMenuItem {
+function readOnlyItem(item: ThreadMenuAction, readOnly: boolean): ThreadMenuAction {
   return readOnly && THREAD_MENU_EFFECTS[item.id] === "mutates"
     ? { ...item, description: READ_ONLY_REASON, disabled: true }
     : item;

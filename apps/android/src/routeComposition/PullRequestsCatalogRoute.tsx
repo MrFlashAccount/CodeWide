@@ -29,6 +29,9 @@ export function PullRequestsCatalogRoute(): React.JSX.Element {
   const openPairing = useEvent((): void => {
     router.push("/settings/servers/new");
   });
+  const openSettings = useEvent((): void => {
+    router.push({ params: { section: "pull-requests" }, pathname: "/settings" });
+  });
   const openPullRequest = useEvent((row: PullRequestRow): void => {
     if (connectionId !== null) {
       navigation.openPullRequest(connectionId, row.pullRequest);
@@ -39,6 +42,7 @@ export function PullRequestsCatalogRoute(): React.JSX.Element {
       <PullRequestsCatalogContent
         connectionId={connectionId}
         onOpenPullRequest={openPullRequest}
+        onOpenSettings={openSettings}
         onPair={openPairing}
       />
     </View>
@@ -75,17 +79,19 @@ function PullRequestsPreview({
 function PullRequestsCatalogContent({
   connectionId,
   onOpenPullRequest,
+  onOpenSettings,
   onPair,
 }: {
   readonly connectionId: string | null;
   readonly onOpenPullRequest: (row: PullRequestRow) => void;
+  readonly onOpenSettings: () => void;
   readonly onPair: () => void;
 }): React.JSX.Element {
   return (
     <View style={styles.content} testID="pull-requests-catalog">
       {connectionId === null ? (
         <>
-          <PullRequestsHeader />
+          <PullRequestsHeader onAddAccount={null} onOpenSettings={onOpenSettings} />
           <NoServerWelcome onConnect={onPair} />
         </>
       ) : (
@@ -93,7 +99,9 @@ function PullRequestsCatalogContent({
           capabilities={workspaceFeatures.pullRequests}
           connectionId={connectionId}
           forge={forgeResources}
+          key={connectionId}
           onOpenPullRequest={onOpenPullRequest}
+          onOpenSettings={onOpenSettings}
         />
       )}
     </View>

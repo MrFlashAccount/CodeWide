@@ -1,6 +1,9 @@
+import type { ForgeCheckTriggers } from "../../data/forgeCheckTriggers";
+import { ManualTriggerAccessContext } from "./overview/ManualTriggersContext";
 import type { ActionDescriptor } from "../../data/forgeActionCatalog";
 import type { ReviewThreadId } from "../../data/forgeConversationContract";
 import type { ThreadId } from "../../data/reviewContract";
+import { useEvent } from "../../react/useEvent";
 import { ScenarioViewsContext } from "./actions/ScenarioViewsContext";
 import { useSubmitReview } from "./changes/useSubmitReview";
 import { OverviewTab } from "./overview/OverviewTab";
@@ -15,6 +18,7 @@ import type { PullRequestDetailWorkspaceCapabilities } from "./workspaceCapabili
  */
 export function OverviewPane({
   capabilities,
+  checkTriggers,
   data,
   nowMs,
   onAddressThread,
@@ -29,6 +33,7 @@ export function OverviewPane({
   state,
 }: {
   readonly capabilities: PullRequestDetailWorkspaceCapabilities;
+  readonly checkTriggers: ForgeCheckTriggers;
   readonly data: PullRequestScreenData;
   readonly nowMs: number;
   readonly onAddressThread: (threadId: ReviewThreadId) => void;
@@ -41,14 +46,14 @@ export function OverviewPane({
   /** Pull-to-refresh: re-reads everything Details shows. */
   readonly onPullRefresh: () => void;
   readonly onRun: (action: ActionDescriptor, input: boolean | string | null) => void;
-  /** The head moved, or a Submit's outcome is unknown: show it and refresh. */
-  readonly onStale: (kind: "outcomeUnknown" | "stale") => void;
+  /** The head moved, or a Submit's outcome is unknown: refresh the PR. */
+  readonly onStale: () => void;
   /** A pull refresh is running; the indicator stays until its reads settle. */
   readonly pullRefreshing: boolean;
   readonly state: PullRequestScreenState;
 }): React.JSX.Element {
   const { overview } = data;
-  const { result, submit } = useSubmitReview({
+  const { pending, result, submit, submitVerdict } = useSubmitReview({
     capabilities,
     drafts: data.drafts,
     onStale,
@@ -58,46 +63,67 @@ export function OverviewPane({
       pullRequest: overview.pullRequest,
     },
   });
+  const selectVerdict = useEvent((actionId: string) => {
+    const verdict = data.slots.verdicts.find((action) => action.actionId === actionId);
+    if (pending || verdict?.availability.state !== "enabled") {
+      return;
+    }
+    if (verdict.quickSubmit && !data.offline) {
+      // The submit owner reports transport and provider failures.
+      submitVerdict(verdict).catch(() => undefined);
+    } else {
+      onOpenReview(actionId);
+    }
+  });
   return (
-    <ScenarioViewsContext.Provider value={data.scenarioViews}>
-      <OverviewTab
-        activity={data.activity.items}
-        addressing={state.addressingThreads}
-        conversation={data.conversation}
-        draftCount={data.draftCount}
-        host={overview.account.host}
-        listRow={data.listRow}
-        notice={
-          state.notice ??
-          (data.scenarioFailure === null ? null : { kind: "agentFailed", ...data.scenarioFailure })
-        }
-        nowMs={nowMs}
-        onActionRowWidth={data.setRowWidth}
-        onAddressThread={onAddressThread}
-        onLoadMoreActivity={data.loadMoreActivity}
-        onOpenChanges={onOpenChanges}
-        onOpenReviewChat={onOpenReviewChat}
-        onPullRefresh={onPullRefresh}
-        onRun={onRun}
-        overview={overview}
-        pending={state.pending}
-        pendingToggles={state.pendingToggles}
-        pullRefreshing={pullRefreshing}
-        review={{
-          bothTargetTitle: data.agentThread?.title ?? null,
-          choice: data.verdictChoice,
-          drafts: data.drafts,
-          host: overview.account.host,
-          onClose: onCloseReview,
-          onOpen: onOpenReview,
-          openVerdictId: state.reviewVerdict,
-          result,
-          submit,
-          verdicts: data.slots.verdicts,
-        }}
-        slots={data.slots}
-        writes={data.writes}
-      />
-    </ScenarioViewsContext.Provider>
+    <ManualTriggerAccessContext.Provider
+      value={
+        data.providerCapabilities.includes("forge.checkTriggers@1")
+          ? {
+              resource: checkTriggers,
+              target: { ...data.params, headRevision: overview.headRevision },
+            }
+          : null
+      }
+    >
+      <ScenarioViewsContext.Provider value={data.scenarioViews}>
+        <OverviewTab
+          activity={data.activity.items}
+          addressing={state.addressingThreads}
+          conversation={data.conversation}
+          draftCount={data.draftCount}
+          host={overview.account.host}
+          listRow={data.listRow}
+          nowMs={nowMs}
+          onActionRowWidth={data.setRowWidth}
+          onAddressThread={onAddressThread}
+          onLoadMoreActivity={data.loadMoreActivity}
+          onOpenChanges={onOpenChanges}
+          onOpenReviewChat={onOpenReviewChat}
+          onPullRefresh={onPullRefresh}
+          onRun={onRun}
+          overview={overview}
+          pending={state.pending}
+          pendingToggles={state.pendingToggles}
+          pullRefreshing={pullRefreshing}
+          review={{
+            bothTargetTitle: data.agentThread?.title ?? null,
+            choice: data.verdictChoice,
+            drafts: data.drafts,
+            host: overview.account.host,
+            onClose: onCloseReview,
+            onOpen: onOpenReview,
+            onSelect: selectVerdict,
+            openVerdictId: state.reviewVerdict,
+            pending,
+            result,
+            submit,
+            verdicts: data.slots.verdicts,
+          }}
+          slots={data.slots}
+          writes={data.writes}
+        />
+      </ScenarioViewsContext.Provider>
+    </ManualTriggerAccessContext.Provider>
   );
 }

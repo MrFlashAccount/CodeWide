@@ -1,3 +1,4 @@
+import { MIN_PANE_SHARE } from "../ui/paneSplitSizes";
 import { useContext, useLayoutEffect, useState, type ReactElement } from "react";
 import { StyleSheet, View } from "react-native";
 import Reanimated, { useAnimatedStyle } from "react-native-reanimated";
@@ -6,6 +7,9 @@ import { useConstant } from "../react/useConstant";
 import { colors } from "../theme";
 import type { ThreePanelsContent } from "../ui/threePanels";
 import { threadListLayout } from "../ui/thread-list-layout";
+import { WorkspaceSafeContent } from "./WorkspaceSafeContent";
+import { useCoveredPaneFocus } from "./useCoveredPaneFocus";
+import { PaneDividerShade } from "./PaneDividerShade";
 import { DestinationViewport } from "./DestinationViewport";
 import { centerClipFrame, centerContentFrame, rightFrame } from "./paneFrames";
 import { usePaneMotionArmed, type PaneMotionState } from "./paneMotion";
@@ -77,9 +81,9 @@ function useRightPanePresence(active: boolean, rightMounted: boolean): void {
     if (owner === null || !active || !rightMounted) {
       return undefined;
     }
-    owner.right$.set(key);
+    owner.right$.set({ key, split: "center+right" });
     return () => {
-      if (owner.right$.peek() === key) {
+      if (owner.right$.peek()?.key === key) {
         owner.right$.set(null);
       }
     };
@@ -115,7 +119,11 @@ function FramedCenterLayout({
         covered={placement === "cover"}
         declaration={center}
         geometry={geometry}
-        neighbour={right?.shows ?? null}
+        neighbour={
+          placement === "stashed" && visibility.kind !== "fullscreen"
+            ? null
+            : (right?.shows ?? null)
+        }
       />
       {shown === null ? null : (
         <FramedRightPane
@@ -129,6 +137,8 @@ function FramedCenterLayout({
     </DestinationViewport>
   );
 }
+
+const COVERING_LAYER = 2;
 
 /**
  * The center surface clips its content while the frame's pane motion moves its edge; at rest both
@@ -145,18 +155,32 @@ function FramedCenterPane({
   readonly geometry: PaneMotionState;
   readonly neighbour: ThreePanelsContent | null;
 }): React.JSX.Element {
+  const paneRef = useCoveredPaneFocus(covered);
   const clip = useAnimatedStyle(() => centerClipFrame(geometry));
   const content = useAnimatedStyle(() => centerContentFrame(geometry));
+  const overlap = useAnimatedStyle(() => {
+    const drag = geometry.drag.get();
+    return {
+      zIndex:
+        drag !== null &&
+        drag.rightVisibleWidth < geometry.frameWidth.get() * MIN_PANE_SHARE &&
+        drag.catalogOpacity === 0
+          ? COVERING_LAYER
+          : 0,
+    };
+  });
   return (
     <Reanimated.View
       accessibilityElementsHidden={covered}
       // The covering right pane already takes touches; only assistive technology must skip it.
       importantForAccessibility={covered ? "no-hide-descendants" : "auto"}
-      style={[styles.pane, styles.center, clip]}
+      ref={paneRef}
+      style={[styles.pane, styles.center, clip, overlap]}
       testID={declaration.testID}
     >
       <Reanimated.View style={[styles.pane, content]}>
         <CenterPaneContent declaration={declaration} neighbour={neighbour} />
+        <PaneDividerShade geometry={geometry} pane="center" />
       </Reanimated.View>
     </Reanimated.View>
   );
@@ -178,7 +202,7 @@ function CenterPaneContent({
       neighbour={neighbour}
       pane="center"
     >
-      {declaration.content}
+      <WorkspaceSafeContent>{declaration.content}</WorkspaceSafeContent>
     </ThreePanelsPane>
   );
 }
@@ -217,11 +241,13 @@ function FramedRightPane({
   // The right pane lives inside the destination, so its frame is destination-relative.
   const frame = useAnimatedStyle(() => rightFrame(geometry));
   const hidden = placement === "stashed";
+  const paneRef = useCoveredPaneFocus(hidden);
   return (
     <Reanimated.View
       accessibilityElementsHidden={hidden}
       importantForAccessibility={hidden ? "no-hide-descendants" : "auto"}
       pointerEvents={hidden ? "none" : "auto"}
+      ref={paneRef}
       style={[
         styles.pane,
         styles.right,
@@ -232,6 +258,7 @@ function FramedRightPane({
       testID={declaration.testID}
     >
       <RightPaneContent declaration={declaration} neighbour={neighbour} />
+      <PaneDividerShade geometry={geometry} pane="right" />
     </Reanimated.View>
   );
 }
@@ -252,7 +279,7 @@ function RightPaneContent({
       neighbour={neighbour}
       pane="right"
     >
-      {declaration.content}
+      <WorkspaceSafeContent>{declaration.content}</WorkspaceSafeContent>
     </ThreePanelsPane>
   );
 }

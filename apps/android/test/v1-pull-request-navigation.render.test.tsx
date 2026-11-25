@@ -37,11 +37,12 @@ it("navigates to the canonical linked-thread destination through the parent tabs
     hook.result.current.navigateToLinkedThread(
       "server",
       threadId("linked-thread", "test.threadId"),
+      fixturePullRequest(),
     );
   });
 
   expect(mockNavigate).toHaveBeenCalledWith({
-    params: { connectionId: "server", threadId: "linked-thread" },
+    params: { connectionId: "server", threadId: "linked-thread", reviewPullRequest: fixturePullRequest() },
     pathname: "/threads/[connectionId]/[threadId]",
   });
 });

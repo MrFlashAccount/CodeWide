@@ -49,6 +49,7 @@ export default function V1ThreadRoute(): React.JSX.Element {
     connectionId?: string | string[];
     globalSearchSessionId?: string | string[];
     pullRequest?: string | string[];
+    reviewPullRequest?: string | string[];
     searchWindowId?: string | string[];
     threadId?: string | string[];
   }>();
@@ -92,6 +93,7 @@ export default function V1ThreadRoute(): React.JSX.Element {
       />
     );
   }
+  const reviewPullRequest = parsePullRequestKeyParam(raw.reviewPullRequest);
   const closeSearchHistory = (): void => {
     if (searchRoute.sessionId !== null) {
       searchRouteSessions.closeWindow(searchRoute.sessionId);
@@ -102,6 +104,7 @@ export default function V1ThreadRoute(): React.JSX.Element {
       ...destination,
       params: {
         ...destination.params,
+        ...(reviewPullRequest === null ? {} : { reviewPullRequest }),
         ...(globalSearchSessionId.status === "valid"
           ? { globalSearchSessionId: globalSearchSessionId.value.value }
           : {}),
@@ -129,6 +132,7 @@ export default function V1ThreadRoute(): React.JSX.Element {
           destination={{
             connectionId,
             kind: "thread",
+            ...(reviewPullRequest === null ? {} : { reviewPullRequest }),
             searchWindow: searchRoute.window,
             threadId,
           }}

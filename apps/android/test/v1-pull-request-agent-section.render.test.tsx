@@ -1,3 +1,4 @@
+import { AppNoticeProvider } from "../src/ui/AppNotice";
 import { useSelector } from "@legendapp/state/react";
 import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react-native";
 
@@ -105,16 +106,18 @@ function renderSection(
   const model = createPullRequestScreenModel();
   const onOpenThread = jest.fn<undefined, [ThreadId]>();
   const onOpenChat = jest.fn<undefined, [ThreadId | null]>();
-  const hook = renderHook(() =>
-    usePullRequestActions({
-      capabilities,
-      model,
-      onDeferScenario: async () => Promise.reject(new Error("a live review chat needs no draft")),
-      onOpenThread,
-      onRefresh: () => undefined,
-      scenarioViews: views,
-      target: { connectionId: "server", headRevision: HEAD, host: "github.com", pullRequest },
-    }),
+  const hook = renderHook(
+    () =>
+      usePullRequestActions({
+        capabilities,
+        model,
+        onDeferScenario: async () => Promise.reject(new Error("a live review chat needs no draft")),
+        onOpenThread,
+        onRefresh: () => undefined,
+        scenarioViews: views,
+        target: { connectionId: "server", headRevision: HEAD, host: "github.com", pullRequest },
+      }),
+    { wrapper: AppNoticeProvider },
   );
   function Section({ nowMs }: { readonly nowMs: number }): React.JSX.Element {
     const pending = useSelector(() => model.pending.get());

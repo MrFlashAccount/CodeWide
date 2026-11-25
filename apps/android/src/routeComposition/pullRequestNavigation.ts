@@ -15,7 +15,11 @@ import { threadSelectionKey } from "../services/threads/threadRouteParams";
  * reconstructs, resets or mirrors either subtree.
  */
 export function usePullRequestNavigation(): {
-  readonly navigateToLinkedThread: (connectionId: string, threadId: ThreadId) => void;
+  readonly navigateToLinkedThread: (
+    connectionId: string,
+    threadId: ThreadId,
+    pullRequest: PullRequestKey,
+  ) => void;
   readonly openPullRequest: (
     connectionId: string,
     pullRequest: PullRequestKey,
@@ -41,12 +45,14 @@ export function usePullRequestNavigation(): {
       }
     },
   );
-  const navigateToLinkedThread = useEvent((connectionId: string, threadId: ThreadId): void => {
-    router.navigate({
-      params: { connectionId, threadId },
-      pathname: "/threads/[connectionId]/[threadId]",
-    });
-  });
+  const navigateToLinkedThread = useEvent(
+    (connectionId: string, threadId: ThreadId, pullRequest: PullRequestKey): void => {
+      router.navigate({
+        params: { connectionId, reviewPullRequest: pullRequest, threadId },
+        pathname: "/threads/[connectionId]/[threadId]",
+      });
+    },
+  );
   return { navigateToLinkedThread, openPullRequest };
 }
 

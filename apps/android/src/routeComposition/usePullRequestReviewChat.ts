@@ -13,6 +13,7 @@ import type { PullRequestDetailWorkspaceCapabilities } from "../features/pullReq
 import { useConstant } from "../react/useConstant";
 import { useEvent } from "../react/useEvent";
 import { useAppDialog } from "../ui/AppDialog";
+import { useRevealParkedRightPane } from "./workspacePanes";
 import { usePaneRearrangement } from "./paneMotion";
 import { linkedThreadSelectionKey, usePullRequestNavigation } from "./pullRequestNavigation";
 import {
@@ -58,6 +59,7 @@ export function usePullRequestReviewChat({
   connectionId,
   desktop,
   ensureReviewChat,
+  initialProjects = [],
   prepareThreadLink,
   pullRequest,
   routeActive,
@@ -67,6 +69,7 @@ export function usePullRequestReviewChat({
   readonly connectionId: string;
   readonly desktop: boolean;
   readonly ensureReviewChat: PullRequestDetailWorkspaceCapabilities["ensureReviewChat"];
+  readonly initialProjects?: readonly ReviewChatWorkspaceCandidate[];
   readonly prepareThreadLink: (selectionKey: string) => void;
   readonly pullRequest: PullRequestKey;
   readonly routeActive: boolean;
@@ -91,7 +94,13 @@ export function usePullRequestReviewChat({
   const draftId = useConstant(() => reviewChatDraftId(pullRequest));
   const [chat, setChat] = useState<PullRequestChatState>(() =>
     composeReview
-      ? { draft: { cwd: null, id: draftId, scenario: null, suggestions: [] }, status: "draft" }
+      ? {
+          draft: withSuggestions(
+            { cwd: null, id: draftId, scenario: null, suggestions: null },
+            initialProjects,
+          ),
+          status: "draft",
+        }
       : { status: "closed" },
   );
   const activeAttempt = useRef<number | null>(null);
@@ -118,9 +127,10 @@ export function usePullRequestReviewChat({
   });
   const navigateToLinkedThread = useEvent((threadId: ThreadId): void => {
     prepareThreadLink(linkedThreadSelectionKey(connectionId, threadId));
-    navigation.navigateToLinkedThread(connectionId, threadId);
+    navigation.navigateToLinkedThread(connectionId, threadId, pullRequest);
   });
-  const openThread = useEvent((threadId: ThreadId): void => {
+  const reveal = useRevealParkedRightPane();
+  const presentThread = useEvent((threadId: ThreadId): void => {
     activeAttempt.current = null;
     // The chat now exists: a scenario still waiting in the draft is discarded.
     settleScenario(null);
@@ -137,6 +147,10 @@ export function usePullRequestReviewChat({
       setChat({ status: "closed" });
       dialog.error("Could not open the review chat", error);
     }
+  });
+  const openThread = useEvent((threadId: ThreadId): void => {
+    reveal();
+    presentThread(threadId);
   });
   const presentDraft = useEvent((draft: ReviewChatDraft): void => {
     if (chat.status === "draft") {
@@ -161,7 +175,7 @@ export function usePullRequestReviewChat({
       }
       if (suggestions?.kind === "ready" && routeActive) {
         // A live linked chat exists after all: present it instead of the draft.
-        openThread(suggestions.threadId);
+        presentThread(suggestions.threadId);
         return;
       }
       activeAttempt.current = null;
@@ -183,8 +197,9 @@ export function usePullRequestReviewChat({
     if (!routeActive) {
       return;
     }
+    reveal();
     if (reviewThread !== null) {
-      openThread(reviewThread);
+      presentThread(reviewThread);
       return;
     }
     if (chat.status === "draft") {
@@ -199,6 +214,7 @@ export function usePullRequestReviewChat({
       if (!routeActive) {
         return;
       }
+      reveal();
       activeAttempt.current = null;
       const base =
         chat.status === "draft"
@@ -214,6 +230,7 @@ export function usePullRequestReviewChat({
           resolve(null);
           return;
         }
+        reveal();
         // A newer scenario replaces the one still waiting; its suggestions replace any request.
         settleScenario(null);
         activeAttempt.current = null;
@@ -268,7 +285,7 @@ export function usePullRequestReviewChat({
   });
   const settleSend = useEvent((attempt: number, threadId: ThreadId): void => {
     if (activeAttempt.current === attempt && routeActive) {
-      openThread(threadId);
+      presentThread(threadId);
     }
   });
   const send = useEvent<DraftSubmission>(async (text, _mode, options) => {
@@ -286,7 +303,7 @@ export function usePullRequestReviewChat({
       opening.threadId,
       text,
       { type: "start" },
-      options,
+      { ...options, reviewPullRequest: pullRequest },
     );
     settleSend(attempt, opening.threadId);
     return commandId;

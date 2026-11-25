@@ -3,31 +3,18 @@ import { useRef } from "react";
 import { Pressable, StyleSheet, type Text as NativeText } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
-import {
-  colors,
-  controlHitSlop,
-  controlSize,
-  iconSize,
-  radii,
-  spacing,
-  typeScale,
-} from "../../../theme";
+import { colors, controlSize, iconSize, radii, spacing, typeScale } from "../../../theme";
 import { TextShimmer } from "../../../ui/TextShimmer";
 import { AppText as Text } from "../../../ui/Typography";
-import { scenarioActionHint } from "./scenarioRuns";
-import { useScenarioView } from "./ScenarioViewsContext";
+import { useEvent } from "../../../react/useEvent";
+import { scenarioActionHint } from "../actions/scenarioRuns";
+import { useScenarioView } from "../actions/ScenarioViewsContext";
 
 const DISABLED_OPACITY = 0.5;
 const PRESSED_OPACITY = 0.72;
 
-/**
- * An agent scenario action shown as a robot icon, such as a failed check's Fix in agent.
- * Idle, the icon alone carries the action and `accessibilityLabel` names it. While the
- * tap is pending or its run is queued or running, the live label (`Fixing CI…`) shows
- * beside the icon and shimmers, so progress stays visible without a spinner; a finished
- * run keeps its `CI fix done · 5m ago` label. The tap behaves as in `CatalogActionButton`.
- */
-export function AgentIconActionButton({
+/** Opens the full check run in the PR’s review chat, keeping the action label stable while pending. */
+export function AddressChecksButton({
   accessibilityLabel,
   action,
   onPress,
@@ -42,7 +29,10 @@ export function AgentIconActionButton({
   const scenario = useScenarioView(action.actionId);
   const busy = pending || scenario.kind === "active";
   const disabled = action.availability.state === "disabled" || pending;
-  const labelled = busy || scenario.kind === "done";
+
+  const press = useEvent(() => {
+    onPress(action);
+  });
   return (
     <Pressable
       accessibilityHint={scenarioActionHint(action, scenario)}
@@ -50,24 +40,21 @@ export function AgentIconActionButton({
       accessibilityRole="button"
       accessibilityState={{ busy, disabled }}
       disabled={disabled}
-      hitSlop={controlHitSlop.compact}
-      onPress={() => {
-        onPress(action);
-      }}
+      onPress={press}
       style={({ pressed }) => [
         styles.base,
         action.availability.state === "disabled" && styles.disabled,
         pressed && styles.pressed,
       ]}
-      testID={`catalog-action-${action.actionId}`}
+      testID="pull-request-checks-address"
     >
-      <Ionicons color={colors.text} name="sparkles-outline" size={iconSize.action} />
-      {labelled ? (
-        <Text numberOfLines={1} ref={text} style={styles.label}>
-          {action.label}
-        </Text>
-      ) : null}
-      <TextShimmer shimmering={busy && labelled} target={text} />
+      <Ionicons color={colors.onPrimary} name="sparkles-outline" size={iconSize.action} />
+
+      <Text numberOfLines={1} ref={text} style={styles.label}>
+        {accessibilityLabel}
+      </Text>
+
+      <TextShimmer shimmering={busy} target={text} />
     </Pressable>
   );
 }
@@ -75,13 +62,13 @@ export function AgentIconActionButton({
 const styles = StyleSheet.create({
   base: {
     alignItems: "center",
-    backgroundColor: colors.menuHighlight,
-    borderRadius: radii.medium,
+    backgroundColor: colors.primary,
+    borderRadius: radii.pill,
     columnGap: spacing.xs,
     flexDirection: "row",
     flexShrink: 0,
     justifyContent: "center",
-    minHeight: controlSize.compact,
+    minHeight: controlSize.touch,
     minWidth: controlSize.compact,
     paddingHorizontal: spacing.xs,
   },
@@ -89,8 +76,8 @@ const styles = StyleSheet.create({
     opacity: DISABLED_OPACITY,
   },
   label: {
-    ...typeScale.label,
-    color: colors.text,
+    ...typeScale.body,
+    color: colors.onPrimary,
   },
   pressed: {
     opacity: PRESSED_OPACITY,

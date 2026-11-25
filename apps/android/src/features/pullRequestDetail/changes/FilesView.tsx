@@ -1,21 +1,18 @@
 import type { DiffDisplay } from "./diffDisplay";
-import { useDeferredValue } from "react";
 import { StyleSheet, View } from "react-native";
 
 import type { PullRequestFile, PullRequestFilesPage } from "../../../data/forgeMutationContract";
 import type { DraftComment } from "../../../data/reviewDraftContract";
 import type { DraftPut } from "../../../data/reviewDraftPuts";
 import type { LineCommentTarget } from "../../review/comments/LineCommentComposer";
-import { useConstant } from "../../../react/useConstant";
 import { colors, spacing, typeScale } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 import type { CodeReviewLineReference } from "../../review/comments/reviewComment";
 import { canEditDraft } from "./changesPresentation";
 import type { FilesFailure } from "./filesFailure";
 import { FileDrafts } from "./FileDrafts";
-import { createHeadFileViews, type HeadFileSource, type HeadFileViews } from "./headFileViews";
+import type { FileExpansion } from "./useFileExpansion";
 import { PullRequestDiff } from "./PullRequestDiff";
-import { useHeadFileContent } from "./useHeadFileContent";
 
 /** Everything the files view needs. */
 type FilesViewProps = {
@@ -25,9 +22,8 @@ type FilesViewProps = {
   readonly display: DiffDisplay;
   readonly draftPuts: readonly DraftPut[];
   readonly drafts: readonly DraftComment[];
+  readonly expansion: FileExpansion;
   readonly filesOpen: boolean;
-  /** Where the selected file's whole head content is read from. */
-  readonly headFiles: HeadFileSource;
   readonly host: string;
   readonly onDeleteDraft: (draft: DraftComment) => void;
   readonly onDiscardPut: (put: DraftPut) => void;
@@ -49,11 +45,15 @@ type FilesViewProps = {
  */
 export function FilesView(props: FilesViewProps): React.JSX.Element {
   const { selected } = props;
-  const views = useConstant(createHeadFileViews);
   return (
     <View style={styles.fill}>
       {props.filesOpen ? <TreeHeader {...props} /> : null}
-      {selected === null ? null : <SelectedFileDiff {...props} selected={selected} views={views} />}
+      {(props.expansion.state === "unavailable" || props.expansion.state === "failed") && (
+        <Text accessibilityLiveRegion="polite" style={styles.notice}>
+          {props.expansion.reason}
+        </Text>
+      )}
+      {selected === null ? null : <SelectedFileDiff {...props} selected={selected} />}
       {selected === null ? null : (
         <FileDrafts
           drafts={props.drafts.filter((draft) => draft.anchor.path === selected.path)}
@@ -70,29 +70,16 @@ export function FilesView(props: FilesViewProps): React.JSX.Element {
   );
 }
 
-/**
- * The selected file's diff, decided once per file view. The selection is
- * deferred: while the next file's whole content is read (at most
- * `WHOLE_FILE_WAIT_MS`), its render suspends and the previous file stays on
- * screen; the first render of the view shows the editor's loading state.
- */
 function SelectedFileDiff(
-  props: FilesViewProps & { readonly selected: PullRequestFile; readonly views: HeadFileViews },
+  props: FilesViewProps & { readonly selected: PullRequestFile },
 ): React.JSX.Element {
-  const shown = useDeferredValue<PullRequestFile | null>(props.selected, null);
-  const content = useHeadFileContent({
-    file: shown,
-    files: props.page.files,
-    source: props.headFiles,
-    views: props.views,
-  });
   return (
     <PullRequestDiff
       composerLine={props.composerLine}
-      content={content}
       display={props.display}
       draftPuts={props.draftPuts}
       drafts={props.drafts}
+      expandedDocument={props.expansion.state === "expanded" ? props.expansion.document : undefined}
       onCommentPress={(id) => {
         const draft = props.drafts.find((d) => d.id === id);
         if (draft !== undefined && canEditDraft(draft)) {
@@ -101,7 +88,7 @@ function SelectedFileDiff(
       }}
       onLinePress={props.onLinePress}
       reveal={props.composerLine}
-      selected={shown ?? props.selected}
+      selected={props.selected}
       tree={{
         besideDiff: props.besideDiff,
         complete: props.page.nextCursor === null && props.page.truncated === null,
@@ -152,6 +139,11 @@ const styles = StyleSheet.create({
   more: {
     ...typeScale.label,
     color: colors.primary,
+  },
+  notice: {
+    ...typeScale.label,
+    color: colors.textMuted,
+    paddingHorizontal: spacing.md,
   },
   summary: {
     ...typeScale.label,

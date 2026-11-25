@@ -13,6 +13,7 @@ import { QueryClient } from "@tanstack/react-query";
 import type { Persister } from "@tanstack/react-query-persist-client";
 import type { RpcClient } from "@codewide/sync-client";
 
+import { createForgeCheckTriggers, type ForgeCheckTriggers } from "./forgeCheckTriggers";
 import { ForgeContractViolation } from "./forgeErrors";
 import { parseForgeAccounts, type ForgeAccountsSnapshot } from "./forgeContract";
 import { parseConversationPage, type ConversationPage } from "./forgeConversationContract";
@@ -64,6 +65,7 @@ type FileContentParams = FilesParams & { readonly path: string };
 export type ForgeResources = {
   readonly accounts: ForgeQueryResource<{ readonly connectionId: string }, ForgeAccountsSnapshot>;
   readonly activity: ForgeQueryResource<OverviewParams, ActivityPage>;
+  readonly checkTriggers: ForgeCheckTriggers;
   /** The PR conversation of a plugin declaring `forge.conversation@1`. */
   readonly conversation: ForgeQueryResource<OverviewParams, ConversationPage>;
   /** One whole head file of a plugin declaring `forge.fileContent@1`; read once per head. */
@@ -289,6 +291,11 @@ export function createForgeResources(authority: ForgeReadAuthority): ForgeResour
         .invalidate({ connectionId, pullRequest: invalidation.pullRequest })
         .catch(() => undefined);
     } else if (invalidation.scope === "pullRequest") {
+      queryClient
+        .invalidateQueries({
+          queryKey: ["forge", "checkTriggers", connectionId, invalidation.pullRequest],
+        })
+        .catch(() => undefined);
       scenarios
         .invalidate({ connectionId, pullRequest: invalidation.pullRequest })
         .catch(() => undefined);
@@ -317,6 +324,11 @@ export function createForgeResources(authority: ForgeReadAuthority): ForgeResour
   return {
     accounts,
     activity,
+    checkTriggers: createForgeCheckTriggers({
+      call,
+      client: queryClient,
+      report: authority.reportDroppedAction,
+    }),
     conversation,
     fileContent,
     files,

@@ -9,7 +9,7 @@ import type { PullRequestChangesProps } from "./changesContract";
 import type { FilesFailure } from "./filesFailure";
 import { useFilePages } from "./useFilePages";
 import type { PullRequestTarget } from "../workspaceCapabilities";
-import type { HeadFileSource } from "./headFileViews";
+import type { HeadFileSource } from "./useFileExpansion";
 
 /** Plugin capability that serves whole head files. */
 const FILE_CONTENT_CAPABILITY = "forge.fileContent@1";

@@ -1,15 +1,20 @@
 import { Ionicons } from "@expo/vector-icons";
 import { startTransition, Suspense, useState, type ReactNode } from "react";
-import { Platform, Pressable, StyleSheet, View } from "react-native";
+import { Platform, StyleSheet, View } from "react-native";
 
 import { readAgentNotificationSettings } from "../../native/agentNotificationSettings";
 import { useEvent } from "../../react/useEvent";
-import { colors, iconSize, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
+import { colors, iconSize, spacing, typeScale, typeWeight } from "../../theme";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight, listRowPosition } from "../../ui/AppListRow.types";
-import { AppSheet, AppSheetScrollView } from "../../ui/AppSheet";
+import { AppSheet } from "../../ui/AppSheet";
+import { SheetNavigationPage } from "../../ui/SheetNavigationPage";
 import { SheetPageTransition } from "../../ui/sheetNavigation";
 import { AppText as Text } from "../../ui/Typography";
+import type {
+  ForgeAccountSelection,
+  ForgeAccountSettingsPage,
+} from "../pullRequests/forgeAccountSettingsPage";
 import { NotificationSettings } from "./NotificationSettings";
 
 /** Display content stays with its owner; this sheet owns only settings navigation. */
@@ -30,10 +35,11 @@ interface SettingsSheetProps {
   readonly advanced: ReactNode;
   readonly chats: ReactNode;
   readonly downloads: ReactNode;
-  readonly entryPage?: "overview" | "voiceAssistant";
+  readonly entryPage?: "overview" | "voiceAssistant" | "pullRequests";
   readonly entryRequest?: string;
   readonly onAddServer: () => void;
   readonly onClose: () => void;
+  readonly renderPullRequests?: (page: ForgeAccountSettingsPage) => ReactNode;
   readonly security: ReactNode;
   readonly servers: readonly SettingsServer[];
   readonly version: ReactNode;
@@ -51,6 +57,9 @@ type SettingsPage =
       readonly initial: ReturnType<typeof readAgentNotificationSettings>;
       readonly kind: "notifications";
     }
+  | { readonly kind: "pullRequests" }
+  | { readonly connectionId: string; readonly kind: "forgeConnect" }
+  | { readonly kind: "forgeAccount"; readonly selection: ForgeAccountSelection }
   | { readonly kind: "advanced" }
   | { readonly kind: "security" }
   | { readonly kind: "voiceAssistant" }
@@ -71,8 +80,10 @@ export function SettingsSheet(props: SettingsSheetProps): React.JSX.Element {
 
 const pageTitles = {
   advanced: "Advanced",
+  forgeConnect: "Connect a provider",
   notifications: "Notifications",
   overview: "Settings",
+  pullRequests: "Pull requests",
   security: "Security",
   voiceAssistant: "Voice Assistant",
 } as const;
@@ -94,7 +105,11 @@ function SettingsSheetNavigation(props: SettingsSheetProps) {
   const overview =
     page.kind === "overview" || (page.kind === "server" && selectedServer === undefined);
   const title =
-    page.kind === "server" ? (selectedServer?.title ?? "Settings") : pageTitles[page.kind];
+    page.kind === "forgeAccount"
+      ? `@${page.selection.login}`
+      : page.kind === "server"
+        ? (selectedServer?.title ?? "Settings")
+        : pageTitles[page.kind];
   const openNotifications = useEvent(() => {
     const initial = readAgentNotificationSettings();
     startTransition(() => {
@@ -102,7 +117,33 @@ function SettingsSheetNavigation(props: SettingsSheetProps) {
     });
   });
   const back = useEvent(() => {
-    setNavigation({ direction: "back", page: { kind: "overview" } });
+    setNavigation({
+      direction: "back",
+      page: {
+        kind:
+          page.kind === "forgeAccount" || page.kind === "forgeConnect"
+            ? "pullRequests"
+            : "overview",
+      },
+    });
+  });
+  const openPullRequests = useEvent(() => {
+    setNavigation({ direction: "forward", page: { kind: "pullRequests" } });
+  });
+  const addForgeAccount = useEvent((connectionId: string) => {
+    setNavigation({ direction: "forward", page: { connectionId, kind: "forgeConnect" } });
+  });
+  const openForgeAccount = useEvent((selection: ForgeAccountSelection) => {
+    setNavigation({ direction: "forward", page: { kind: "forgeAccount", selection } });
+  });
+  const removedAccount = useEvent((selection: ForgeAccountSelection) => {
+    if (
+      page.kind === "forgeAccount" &&
+      page.selection.account === selection.account &&
+      page.selection.connectionId === selection.connectionId
+    ) {
+      back();
+    }
   });
   const openAdvanced = useEvent(() => {
     setNavigation({ direction: "forward", page: { kind: "advanced" } });
@@ -151,154 +192,185 @@ function SettingsSheetNavigation(props: SettingsSheetProps) {
                 : page.kind
         }
       >
-        <View style={styles.header}>
-          {!overview && (
-            <Pressable
-              accessibilityLabel="Back to settings"
-              accessibilityRole="button"
-              onPress={back}
-              style={styles.back}
-            >
-              <Ionicons color={colors.text} name="arrow-back" size={iconSize.action} />
-            </Pressable>
-          )}
-          <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>
-            {title}
-          </Text>
-          {page.kind === "server" ? selectedServer?.headerAction : null}
-        </View>
-        <AppSheetScrollView
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          style={styles.scroll}
-        >
-          {overview ? (
-            <>
-              <SettingsSection title="Servers">
-                {props.servers.length === 0 && <Text style={styles.notice}>No saved servers</Text>}
-                {props.servers.map((server, index) => (
+        {page.kind === "forgeConnect" ? (
+          props.renderPullRequests?.({
+            back,
+            connectionId: page.connectionId,
+            kind: "connect",
+          })
+        ) : (
+          <SheetNavigationPage
+            action={page.kind === "server" ? selectedServer?.headerAction : null}
+            {...(overview
+              ? {}
+              : {
+                  back: {
+                    label:
+                      page.kind === "forgeAccount" ? "Back to pull requests" : "Back to settings",
+                    onPress: back,
+                  },
+                })}
+            title={title}
+          >
+            {overview ? (
+              <>
+                <SettingsSection title="Servers">
+                  {props.servers.length === 0 && (
+                    <Text style={styles.notice}>No saved servers</Text>
+                  )}
+                  {props.servers.map((server, index) => (
+                    <AppListRow
+                      accessibilityHint="Open connection and agent accounts"
+                      accessibilityLabel={`Settings for ${server.title}`}
+                      description={server.description}
+                      descriptionLeading={server.statusIcon}
+                      fixedHeight={listRowHeight.double}
+                      key={server.id}
+                      leading={server.leading}
+                      onPress={() => {
+                        openServer(server.id);
+                      }}
+                      position={listRowPosition(index, props.servers.length + 1)}
+                      title={server.title}
+                      trailingIcon={{
+                        color: colors.textMuted,
+                        name: "chevron-forward",
+                        size: iconSize.inline,
+                      }}
+                    />
+                  ))}
                   <AppListRow
-                    accessibilityHint="Open connection and agent accounts"
-                    accessibilityLabel={`Settings for ${server.title}`}
-                    description={server.description}
-                    descriptionLeading={server.statusIcon}
+                    fixedHeight={listRowHeight.single}
+                    leadingIcon={{ color: colors.textMuted, name: "add", size: iconSize.action }}
+                    onPress={props.onAddServer}
+                    position={props.servers.length === 0 ? "only" : "last"}
+                    title="Add server"
+                  />
+                </SettingsSection>
+                <SettingsSection title="Chats">{props.chats}</SettingsSection>
+                <SettingsSection title="Downloads">{props.downloads}</SettingsSection>
+                {props.renderPullRequests === undefined ? null : (
+                  <AppListRow
+                    description="Connected accounts"
                     fixedHeight={listRowHeight.double}
-                    key={server.id}
-                    leading={server.leading}
-                    onPress={() => {
-                      openServer(server.id);
-                    }}
-                    position={listRowPosition(index, props.servers.length + 1)}
-                    title={server.title}
+                    leadingIcon={{ color: colors.textMuted, name: "git-branch-outline" }}
+                    onPress={openPullRequests}
+                    position="only"
+                    title="Pull requests"
                     trailingIcon={{
                       color: colors.textMuted,
                       name: "chevron-forward",
                       size: iconSize.inline,
                     }}
                   />
-                ))}
-                <AppListRow
-                  fixedHeight={listRowHeight.single}
-                  leadingIcon={{ color: colors.textMuted, name: "add", size: iconSize.action }}
-                  onPress={props.onAddServer}
-                  position={props.servers.length === 0 ? "only" : "last"}
-                  title="Add server"
-                />
-              </SettingsSection>
-              <SettingsSection title="Chats">{props.chats}</SettingsSection>
-              <SettingsSection title="Downloads">{props.downloads}</SettingsSection>
-              <View testID="settings-navigation-list">
-                {props.security === null ? null : (
+                )}
+                <View testID="settings-navigation-list">
+                  {props.security === null ? null : (
+                    <AppListRow
+                      description="Biometric Lock"
+                      fixedHeight={listRowHeight.double}
+                      leadingIcon={{
+                        color: colors.textMuted,
+                        name: "shield-checkmark-outline",
+                        size: iconSize.action,
+                      }}
+                      onPress={openSecurity}
+                      position="first"
+                      title="Security"
+                      trailingIcon={{
+                        color: colors.textMuted,
+                        name: "chevron-forward",
+                        size: iconSize.inline,
+                      }}
+                    />
+                  )}
+                  {Platform.OS === "android" && (
+                    <AppListRow
+                      description="Agent activity and sounds"
+                      fixedHeight={listRowHeight.double}
+                      leading={
+                        <Ionicons
+                          color={colors.textMuted}
+                          name="notifications-outline"
+                          size={iconSize.action}
+                        />
+                      }
+                      onPress={openNotifications}
+                      position={props.security === null ? "first" : "middle"}
+                      title="Notifications"
+                      trailingIcon={{
+                        color: colors.textMuted,
+                        name: "chevron-forward",
+                        size: iconSize.inline,
+                      }}
+                    />
+                  )}
                   <AppListRow
-                    description="Biometric Lock"
+                    description={props.voiceAssistant.description}
                     fixedHeight={listRowHeight.double}
                     leadingIcon={{
                       color: colors.textMuted,
-                      name: "shield-checkmark-outline",
+                      name: "volume-medium-outline",
                       size: iconSize.action,
                     }}
-                    onPress={openSecurity}
-                    position="first"
-                    title="Security"
-                    trailingIcon={{
-                      color: colors.textMuted,
-                      name: "chevron-forward",
-                      size: iconSize.inline,
-                    }}
-                  />
-                )}
-                {Platform.OS === "android" && (
-                  <AppListRow
-                    description="Agent activity and sounds"
-                    fixedHeight={listRowHeight.double}
-                    leading={
-                      <Ionicons
-                        color={colors.textMuted}
-                        name="notifications-outline"
-                        size={iconSize.action}
-                      />
+                    onPress={openVoiceAssistant}
+                    position={
+                      props.security === null && Platform.OS !== "android" ? "first" : "middle"
                     }
-                    onPress={openNotifications}
-                    position={props.security === null ? "first" : "middle"}
-                    title="Notifications"
+                    title="Voice Assistant"
                     trailingIcon={{
                       color: colors.textMuted,
                       name: "chevron-forward",
                       size: iconSize.inline,
                     }}
                   />
-                )}
-                <AppListRow
-                  description={props.voiceAssistant.description}
-                  fixedHeight={listRowHeight.double}
-                  leadingIcon={{
-                    color: colors.textMuted,
-                    name: "volume-medium-outline",
-                    size: iconSize.action,
-                  }}
-                  onPress={openVoiceAssistant}
-                  position={
-                    props.security === null && Platform.OS !== "android" ? "first" : "middle"
-                  }
-                  title="Voice Assistant"
-                  trailingIcon={{
-                    color: colors.textMuted,
-                    name: "chevron-forward",
-                    size: iconSize.inline,
-                  }}
-                />
-                <AppListRow
-                  description="Performance diagnostics"
-                  fixedHeight={listRowHeight.double}
-                  leadingIcon={{
-                    color: colors.textMuted,
-                    name: "options-outline",
-                    size: iconSize.action,
-                  }}
-                  onPress={openAdvanced}
-                  position="last"
-                  title="Advanced"
-                  trailingIcon={{
-                    color: colors.textMuted,
-                    name: "chevron-forward",
-                    size: iconSize.inline,
-                  }}
-                />
-              </View>
-              {props.version}
-            </>
-          ) : page.kind === "notifications" ? (
-            <NotificationSettings initial={page.initial} onRetry={openNotifications} />
-          ) : page.kind === "advanced" ? (
-            props.advanced
-          ) : page.kind === "security" ? (
-            props.security
-          ) : page.kind === "voiceAssistant" ? (
-            props.voiceAssistant.content
-          ) : (
-            selectedServer?.content
-          )}
-        </AppSheetScrollView>
+                  <AppListRow
+                    description="Performance diagnostics"
+                    fixedHeight={listRowHeight.double}
+                    leadingIcon={{
+                      color: colors.textMuted,
+                      name: "options-outline",
+                      size: iconSize.action,
+                    }}
+                    onPress={openAdvanced}
+                    position="last"
+                    title="Advanced"
+                    trailingIcon={{
+                      color: colors.textMuted,
+                      name: "chevron-forward",
+                      size: iconSize.inline,
+                    }}
+                  />
+                </View>
+                {props.version}
+              </>
+            ) : page.kind === "notifications" ? (
+              <NotificationSettings initial={page.initial} onRetry={openNotifications} />
+            ) : page.kind === "forgeAccount" ? (
+              props.renderPullRequests?.({
+                back: () => {
+                  removedAccount(page.selection);
+                },
+                kind: "account",
+                selection: page.selection,
+              })
+            ) : page.kind === "pullRequests" ? (
+              props.renderPullRequests?.({
+                add: addForgeAccount,
+                kind: "list",
+                open: openForgeAccount,
+              })
+            ) : page.kind === "advanced" ? (
+              props.advanced
+            ) : page.kind === "security" ? (
+              props.security
+            ) : page.kind === "voiceAssistant" ? (
+              props.voiceAssistant.content
+            ) : (
+              selectedServer?.content
+            )}
+          </SheetNavigationPage>
+        )}
       </SheetPageTransition>
     </AppSheet>
   );
@@ -323,31 +395,10 @@ export function SettingsSection({
 }
 
 const styles = StyleSheet.create({
-  back: {
-    alignItems: "center",
-    height: touchTarget,
-    justifyContent: "center",
-    width: touchTarget,
-  },
-  content: {
-    gap: spacing.md,
-    paddingBottom: spacing.sm,
-  },
-  header: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.compact,
-    marginBottom: spacing.xs,
-    minHeight: touchTarget,
-  },
   notice: {
     color: colors.textMuted,
     ...typeScale.body,
     paddingVertical: spacing.sm,
-  },
-  scroll: {
-    flex: 1,
-    minHeight: 0,
   },
   section: { gap: spacing.xs },
   sectionTitle: {
@@ -355,11 +406,5 @@ const styles = StyleSheet.create({
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
     textTransform: "uppercase",
-  },
-  title: {
-    color: colors.text,
-    flex: 1,
-    minWidth: 0,
-    ...typeScale.heading,
   },
 });

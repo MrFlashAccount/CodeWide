@@ -75,6 +75,62 @@ describe("Android-transformed pane geometry", () => {
       ["../ui/sidebarDimensions", sidebarDimensions],
     ]),
   );
+  const sizes = compileAndroidModule(
+    new URL("../src/ui/paneSplitSizes.ts", import.meta.url),
+    new Map(),
+  );
+  const divider = compileAndroidModule(
+    new URL("../src/routeComposition/paneDividerGeometry.ts", import.meta.url),
+    new Map([["../ui/paneSplitSizes", sizes]]),
+  );
+  it.each(["RN", "UI"] as const)(
+    "covers the stationary pane, dims it, and restores it under the same finger on %s",
+    (runtime) => {
+      const fn = (name: string) => (runtime === "UI" ? transferToUi(divider[name]) : divider[name]);
+      const width = 1000;
+      for (const pair of ["left+center", "center+right"] as const) {
+        const position = (raw: number, locked: string) =>
+          invoke(fn("dividerPosition"), [pair, width, { raw, locked }]);
+        expect(position(295, "none")).toEqual({ edge: 300, locked: "none" });
+        expect(position(140, "none")).toEqual({ edge: 0, locked: "leading" });
+        expect(position(158, "leading")).toEqual({ edge: 0, locked: "leading" });
+        expect(position(320, "leading")).toEqual({ edge: 320, locked: "none" });
+        for (const edge of [280, 230, 180, 0]) {
+          const frame = invoke(fn("previewDivider"), [pair, { width, edge }, FROM]);
+          expect(frame).toMatchObject(
+            pair === "left+center"
+              ? { catalogWidth: 300, detailX: edge }
+              : { centerWidth: 300, rightX: edge },
+          );
+        }
+      }
+      for (const edge of [710, 750, 800, 1000]) {
+        expect(invoke(fn("previewDivider"), ["center+right", { width, edge }, TO])).toMatchObject({
+          centerClipWidth: edge,
+          rightX: 700,
+          rightWidth: 300,
+        });
+      }
+      expect(
+        invoke(fn("dividerPosition"), ["left+center", width, { raw: 999, locked: "none" }]),
+      ).toEqual({ edge: 500, locked: "none" });
+      expect(
+        invoke(fn("dividerPosition"), ["center+right", width, { raw: 900, locked: "none" }]),
+      ).toEqual({ edge: 1000, locked: "trailing" });
+      expect(
+        invoke(fn("dividerPosition"), ["center+right", width, { raw: 690, locked: "trailing" }]),
+      ).toEqual({ edge: 690, locked: "none" });
+      const shade = (visible: number) => Number(invoke(fn("paneScrimProgress"), [visible, width]));
+      expect(shade(400)).toBe(0);
+      expect(shade(300)).toBe(0);
+      expect(shade(280)).toBeGreaterThan(0);
+      // The cue must already be prominent halfway through the drag before fullscreen snaps.
+      expect(shade(225)).toBeGreaterThan(0.5);
+      expect(shade(225)).toBeGreaterThan(shade(280));
+      expect(shade(150)).toBe(1);
+      expect(shade(0)).toBe(1);
+    },
+  );
   const lefts = ["alone", "beside", "covered", "under"] as const;
   const rights = ["beside", "cover", "offscreen"] as const;
 
@@ -129,36 +185,15 @@ describe("Android-transformed pane geometry", () => {
       centerClipWidth: 750,
       centerLeftRadius: 6,
       centerRightRadius: 6,
-      centerWidth: 900,
+      centerWidth: 750,
       detailVisibleWidth: 1050,
-      detailWidth: 1200,
+      detailWidth: 1050,
       detailX: 150,
       rightVisibleWidth: 300,
-      rightWidth: 600,
+      rightWidth: 525,
       rightX: 900,
     });
   });
-
-  it.each(["RN", "UI"] as const)(
-    "keeps a snapshot body's target width through a reversal on %s",
-    (runtime) => {
-      const worklet = (fn: unknown) => (runtime === "UI" ? transferToUi(fn) : fn);
-      const interpolate = worklet(geometry.interpolatePaneGeometry);
-      const inset = worklet(geometry.paneChromeInset);
-      const margin = worklet(geometry.snapshotBodyMargin);
-      const interrupted = invoke(interpolate, [FROM, TO, 0.6]);
-      const midwayBack = invoke(interpolate, [interrupted, FROM, 0.5]);
-      for (const [box, heldWidth, expected] of [
-        ["catalog", 300, 300],
-        ["center", 900, 900],
-        ["destination", 1200, 900],
-        ["right", 600, 450],
-      ] as const) {
-        const viewport = heldWidth - Number(invoke(inset, [midwayBack, box]));
-        expect(viewport - Number(invoke(margin, [midwayBack, FROM, box]))).toBeCloseTo(expected);
-      }
-    },
-  );
 
   it.each(["RN", "UI"] as const)("derives the pane chrome inset on %s", (runtime) => {
     const interpolate =
@@ -168,11 +203,11 @@ describe("Android-transformed pane geometry", () => {
     const inset =
       runtime === "UI" ? transferToUi(geometry.paneChromeInset) : geometry.paneChromeInset;
     const halfway = invoke(interpolate, [FROM, TO, 0.5]);
-    // Content holds the larger layout width; chrome gives up what lies past the visible edge.
+    // Only panes partially exposed by their neighbour have a trailing inset.
     expect(invoke(inset, [halfway, "catalog"])).toBe(150);
-    expect(invoke(inset, [halfway, "center"])).toBe(150);
-    expect(invoke(inset, [halfway, "destination"])).toBe(150);
-    expect(invoke(inset, [halfway, "right"])).toBe(300);
+    expect(invoke(inset, [halfway, "center"])).toBe(0);
+    expect(invoke(inset, [halfway, "destination"])).toBe(0);
+    expect(invoke(inset, [halfway, "right"])).toBe(225);
     for (const box of ["center", "destination", "right"]) {
       expect(invoke(inset, [TO, box])).toBe(0);
     }

@@ -17,6 +17,7 @@ type MenuAnchor = {
 /** Keeps Compose out of idle rows; only the opened popup owns a native host. */
 export function RowActionMenu({
   actions,
+  buttonSize,
   children,
   onSelect,
   rowKey,
@@ -33,6 +34,10 @@ export function RowActionMenu({
   const open = useEvent(() => {
     const root = rootRef.current;
     const request = ++requestRef.current;
+    if (buttonSize !== undefined) {
+      setAnchor({ height: buttonSize, rowKey, width: buttonSize });
+      return;
+    }
     root?.measureInWindow((...bounds) => {
       const [, , width, height] = bounds;
       if (width > 0 && height > 0 && rootRef.current === root) {
@@ -60,16 +65,27 @@ export function RowActionMenu({
   });
 
   return (
-    <View collapsable={false} ref={rootRef} style={styles.root}>
+    <View
+      collapsable={false}
+      ref={rootRef}
+      style={buttonSize === undefined ? styles.root : { height: buttonSize, width: buttonSize }}
+    >
       {children(open)}
       {visibleAnchor !== null && (
         <CodeWideMenu
           actions={actions}
           expanded
-          menuWidth={Math.min(ROW_MENU_WIDTH, visibleAnchor.width)}
+          menuWidth={
+            buttonSize === undefined
+              ? Math.min(ROW_MENU_WIDTH, visibleAnchor.width)
+              : ROW_MENU_WIDTH
+          }
           onDismiss={dismiss}
           onSelect={select}
           style={styles.anchor}
+          {...(buttonSize === undefined
+            ? {}
+            : { triggerSize: { height: buttonSize, width: buttonSize } })}
         >
           <View
             pointerEvents="none"

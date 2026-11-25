@@ -132,6 +132,7 @@ interface ITrayTrigger {
 }
 
 interface ITrayContent {
+  readonly backBehavior?: "dismiss" | "previousView";
   children: ReactNode;
   readonly style?: StyleProp<ViewStyle>;
 }

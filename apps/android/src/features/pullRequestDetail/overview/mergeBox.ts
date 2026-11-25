@@ -99,7 +99,7 @@ const MERGE_STATES: Readonly<
 
 function mergeRow(overview: PullRequestOverview): MergeBoxRow {
   const reason = overview.merge.reason;
-  if (overview.state === "draft") {
+  if (overview.state === "draft" && overview.merge.state !== "conflicts") {
     return {
       detail: "Mark it ready for review before merging.",
       title: "This pull request is still a draft",
@@ -136,7 +136,7 @@ const CHECK_OUTCOMES: Readonly<Record<CheckItem["state"], string>> = {
 };
 
 /** `Successful in 4m 12s`, `Failed after 9.0 s`, or the bare outcome when no duration is known. */
-export function checkOutcome(check: CheckItem): string {
+export function checkOutcome(check: Pick<CheckItem, "state" | "durationSeconds">): string {
   const outcome = CHECK_OUTCOMES[check.state];
   if (check.durationSeconds === null || check.state === "pending" || check.state === "skipped") {
     return outcome;

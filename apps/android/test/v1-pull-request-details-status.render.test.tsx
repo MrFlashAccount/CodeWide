@@ -5,7 +5,7 @@ import type { EnrichedMarkdownTextInputProps } from "react-native-enriched-markd
 import { overview91 } from "./fixtures/forgeWireFixtures";
 import {
   renderScreen,
-  type,
+  renderVisibleDiscussion,
   unmountScreens,
   type Capabilities,
 } from "./fixtures/pullRequestDetailsHarness";
@@ -150,7 +150,7 @@ it("publishes one comment from the composer sheet and closes it once acknowledge
   expect(view.queryByTestId("pull-request-comment-sheet")).toBeNull();
   fireEvent.press(await view.findByTestId("pull-request-comment-button"));
   const composer = within(view.getByTestId("pull-request-comment-sheet"));
-  type(composer, "Ship it");
+  fireEvent.changeText(composer.getByLabelText("Comment text"), "Ship it");
   fireEvent.press(composer.getByTestId("pull-request-new-comment-send"));
   fireEvent.press(composer.getByTestId("pull-request-new-comment-send"));
 
@@ -167,7 +167,7 @@ it("publishes one comment from the composer sheet and closes it once acknowledge
 });
 
 it("folds a long comment behind Read more until the reader unfolds it", async () => {
-  const { view } = renderScreen({});
+  const { view } = await renderVisibleDiscussion({});
   const body = await view.findByTestId("conversation-comment-c-1-body");
   expect(view.queryByTestId("conversation-comment-c-1-read-more")).toBeNull();
 
@@ -227,4 +227,29 @@ it("re-reads the overview and conversation once per pull and ends the indicator 
   expect(readsOf("companion/pullRequest/read")).toBe(overviewReads + 1);
   expect(readsOf("companion/pullRequest/conversation/read")).toBe(conversationReads + 1);
   expect(view.getByTestId("pull-request-discussion-heading-count")).toHaveTextContent("6");
+});
+
+it("formats a selection, previews it and sends the same Markdown from Edit", async () => {
+  const createComment = jest.fn<
+    ReturnType<Capabilities["createComment"]>,
+    Parameters<Capabilities["createComment"]>
+  >();
+  createComment.mockRejectedValue(new Error("Fixture rejection"));
+  const { view } = renderScreen({ capabilityOverrides: { createComment } });
+  fireEvent.press(await view.findByTestId("pull-request-comment-button"));
+  const sheet = within(view.getByTestId("pull-request-comment-sheet"));
+  const input = sheet.getByLabelText("Comment text");
+  fireEvent.changeText(input, "A screenshot");
+  fireEvent(input, "selectionChange", { nativeEvent: { selection: { start: 2, end: 12 } } });
+  fireEvent.press(sheet.getByLabelText("Bold"));
+  expect(input.props.value).toBe("A **screenshot**");
+  fireEvent.press(sheet.getByRole("tab", { name: "Preview" }));
+  expect(sheet.queryByLabelText("Comment text")).toBeNull();
+  fireEvent.press(sheet.getByRole("tab", { name: "Edit" }));
+  expect(sheet.getByLabelText("Comment text").props.value).toBe("A **screenshot**");
+  await act(async () => {
+    fireEvent.press(sheet.getByLabelText("Send comment"));
+  });
+  expect(createComment.mock.calls[0]?.[1].body).toBe("A **screenshot**");
+  expect(sheet.getByLabelText("Comment text").props.value).toBe("A **screenshot**");
 });

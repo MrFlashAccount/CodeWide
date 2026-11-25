@@ -10,7 +10,6 @@ import {
   typeTracking,
   typeWeight,
 } from "../../../theme";
-import { APP_SHEET_MAX_WIDTH } from "../../../ui/appSheetGeometry";
 
 /** A connect button keeps a readable width on tablets instead of spanning the card. */
 const PRIMARY_BUTTON_MAX_WIDTH = 360;
@@ -144,32 +143,10 @@ export const onboardingStyles = StyleSheet.create({
     minWidth: 0,
   },
   providerList: {
-    gap: spacing.md,
-    paddingBottom: spacing.md,
     paddingHorizontal: REACTICX_TRAY_HORIZONTAL_INSET,
   },
   providerPanel: {
     gap: spacing.sm,
-  },
-  providerRow: {
-    alignItems: "center",
-    borderBottomColor: colors.borderSoft,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    columnGap: spacing.sm,
-    flexDirection: "row",
-    minHeight: layoutSize.row,
-    paddingVertical: spacing.sm,
-  },
-  providerRowIcon: {
-    alignItems: "center",
-    height: controlSize.touch,
-    justifyContent: "center",
-    width: controlSize.touch,
-  },
-  providerRowTrailing: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.xxs,
   },
   providerTitle: {
     ...typeScale.title,
@@ -186,6 +163,11 @@ export const onboardingStyles = StyleSheet.create({
   step: {
     ...typeScale.body,
     color: colors.text,
+  },
+  stepContent: {
+    gap: spacing.md,
+    paddingBottom: spacing.lg,
+    paddingTop: spacing.xs,
   },
   successActions: {
     alignItems: "flex-start",
@@ -273,11 +255,6 @@ export const onboardingStyles = StyleSheet.create({
     ...typeScale.label,
     color: colors.textMuted,
     flexShrink: 0,
-  },
-  traySurface: {
-    alignSelf: "center",
-    maxWidth: APP_SHEET_MAX_WIDTH,
-    width: "100%",
   },
   trayTrust: {
     alignItems: "center",

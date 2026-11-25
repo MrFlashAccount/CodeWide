@@ -7,6 +7,8 @@ import {
   useRouter,
 } from "expo-router";
 
+import type { ReactElement } from "react";
+import { WorkspaceSafeContent } from "../../../../../../../src/routeComposition/WorkspaceSafeContent";
 import { RouteUnavailable } from "../../../../../../../src/components/navigation/RouteUnavailable";
 import { ConversationRouteNavigationContext } from "../../../../../../../src/features/conversation/conversationRouteNavigation";
 import {
@@ -97,7 +99,7 @@ function ValidV1ThreadLayout({
   const navigation = useThreadRouteNavigation(router, params, globalSearchSessionId);
   return (
     <ConversationRouteNavigationContext.Provider value={navigation}>
-      <Stack screenOptions={v1RouteScreenOptions}>
+      <Stack screenLayout={renderThreadScreen} screenOptions={v1RouteScreenOptions}>
         <Stack.Screen name="agents/index" options={v1FullscreenScreenOptions} />
         <Stack.Screen name="agents/[agentThreadId]" options={v1FullscreenScreenOptions} />
         <Stack.Screen name="attachments/index" options={v1SheetScreenOptions} />
@@ -117,5 +119,16 @@ function ValidV1ThreadLayout({
         <Stack.Screen name="terminal" options={v1FullscreenScreenOptions} />
       </Stack>
     </ConversationRouteNavigationContext.Provider>
+  );
+}
+
+function renderThreadScreen(props: {
+  readonly children: ReactElement;
+  readonly route: { readonly name: string };
+}): ReactElement {
+  return props.route.name === "index" ? (
+    props.children
+  ) : (
+    <WorkspaceSafeContent>{props.children}</WorkspaceSafeContent>
   );
 }

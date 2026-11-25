@@ -4,11 +4,11 @@ import { Suspense } from "react";
 import { Text } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { AppNoticeProvider } from "../src/ui/AppNotice";
 import { parsePullRequestKeyParam } from "../src/data/forgeContract";
 import { createForgeResources } from "../src/data/forgeResources";
 import { createReviewResources } from "../src/data/reviewResources";
 import { PullRequestScreen } from "../src/features/pullRequestDetail/PullRequestScreen";
-import { WHOLE_FILE_WAIT_MS } from "../src/features/pullRequestDetail/changes/headFileViews";
 import type { PullRequestDetailWorkspaceCapabilities } from "../src/features/pullRequestDetail/workspaceCapabilities";
 import type { CodeReviewDocument } from "../src/features/review/editor/editorBridge";
 import type { ReviewTargetCapabilities } from "../src/features/review/reviewTargetCapabilities";
@@ -60,19 +60,16 @@ function filesPage(paths: readonly string[]) {
   };
 }
 
-/**
- * A companion whose whole-file answers the test releases per path when it
- * chooses, or answers at once with the head file when `answerAtOnce` is set.
- */
+/** A companion whose file reads resolve independently for each requested path. */
 function companion({
-  answerAtOnce = false,
   declared,
   paths = [PATH],
+  readContent,
   readFiles,
 }: {
-  readonly answerAtOnce?: boolean;
   readonly declared: boolean;
   readonly paths?: readonly string[];
+  readonly readContent?: (path: string) => Promise<unknown>;
   readonly readFiles?: (cursor: unknown) => Promise<unknown>;
 }) {
   const reads: { readonly method: string; readonly params: unknown }[] = [];
@@ -118,9 +115,7 @@ function companion({
     reads.push({ method, params });
     const answer =
       method === FILE_CONTENT
-        ? answerAtOnce
-          ? { content: HEAD_FILE, state: "text" }
-          : await contentOf(pathOf(params)).promise
+        ? await (readContent?.(pathOf(params)) ?? contentOf(pathOf(params)).promise)
         : method === "companion/pullRequest/files/read" && readFiles !== undefined
           ? await readFiles(
               typeof params === "object" && params !== null && "cursor" in params
@@ -208,32 +203,34 @@ function renderChanges(server: ReturnType<typeof companion>) {
         insets: { bottom: 0, left: 0, right: 0, top: 0 },
       }}
     >
-      <Suspense fallback={<Text>Loading pull request</Text>}>
-        <PullRequestScreen
-          capabilities={capabilities()}
-          connectionId="server"
-          describeThread={() => null}
-          forge={server.forge}
-          initialChangesView="files"
-          isThreadUnread={() => false}
-          navigation={{
-            back: () => undefined,
-            closeChanges: () => undefined,
-            deferReviewChatScenario: async () => Promise.resolve(null),
-            openChanges: () => undefined,
-            openReviewChat: () => undefined,
-            openThread: () => undefined,
-          }}
-          pullRequest={PULL_REQUEST}
-          review={server.review}
-          // WHY: no draft is written here; the review target is never called.
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-          reviewCapabilities={{} as ReviewTargetCapabilities}
-          tab="changes"
-          tablet={false}
-          voiceRuntime={null}
-        />
-      </Suspense>
+      <AppNoticeProvider>
+        <Suspense fallback={<Text>Loading pull request</Text>}>
+          <PullRequestScreen
+            capabilities={capabilities()}
+            connectionId="server"
+            describeThread={() => null}
+            forge={server.forge}
+            initialChangesView="files"
+            isThreadUnread={() => false}
+            navigation={{
+              back: () => undefined,
+              closeChanges: () => undefined,
+              deferReviewChatScenario: async () => Promise.resolve(null),
+              openChanges: () => undefined,
+              openReviewChat: () => undefined,
+              openThread: () => undefined,
+            }}
+            pullRequest={PULL_REQUEST}
+            review={server.review}
+            // WHY: no draft is written here; the review target is never called.
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+            reviewCapabilities={{} as ReviewTargetCapabilities}
+            tab="changes"
+            tablet={false}
+            voiceRuntime={null}
+          />
+        </Suspense>
+      </AppNoticeProvider>
     </SafeAreaProvider>,
   );
   mounted.push({ clear: () => server.forge.queryClient.clear(), unmount: view.unmount });
@@ -322,149 +319,97 @@ function contentReads(server: ReturnType<typeof companion>): readonly string[] {
     .map((read) => pathOf(read.params));
 }
 
-it("gives the editor the whole file once it is read, never the patch first", async () => {
+it("shows the recorded patch immediately; Expand and Collapse keep the diff on the same file", async () => {
   const server = companion({ declared: true });
   const view = renderChanges(server);
   await view.findByTestId("pull-request-diff");
   await editorReady();
-  await waitFor(() => {
-    expect(contentReads(server)).toEqual([PATH]);
-  });
+  await waitFor(() => expect(lastDocument()).toMatchObject({ path: PATH, source: "" }));
+  const patch = lastDocument();
+  expect(contentReads(server)).toEqual([]);
+
+  fireEvent.press(await view.findByRole("button", { name: "Expand file" }));
+  await waitFor(() => expect(contentReads(server)).toEqual([PATH]));
   expect(server.reads.find((read) => read.method === FILE_CONTENT)?.params).toEqual({
     headRevision: overview91.headRevision,
     path: PATH,
     pullRequest: overview91.pullRequest,
   });
-  expect(postedDocuments()).toEqual([]);
-
-  await act(async () => {
-    server.release(PATH, { content: HEAD_FILE, state: "text" });
-    await Promise.resolve();
-  });
-
-  await waitFor(() => {
-    expect(lastDocument()).toMatchObject({ fullFileDiff: true, path: PATH, source: HEAD_FILE });
-  });
+  expect(lastDocument()).toEqual(patch);
+  await act(async () => server.release(PATH, { content: HEAD_FILE, state: "text" }));
+  await waitFor(() =>
+    expect(lastDocument()).toMatchObject({ fullFileDiff: true, path: PATH, source: HEAD_FILE }),
+  );
   expect(lastDocument()?.patches).toEqual([{ diff: PATCH, kind: "update" }]);
-  expect(revisionsOf(PATH)).toHaveLength(1);
+  fireEvent.press(view.getByRole("button", { name: "Collapse file" }));
+  await waitFor(() => expect(lastDocument()).toEqual(patch));
 });
 
-it("gives the editor the patch once when the whole file is too large", async () => {
+it.each([
+  [{ bytes: 5_000_000, state: "tooLarge" }, "File is too large to display"],
+  [{ content: "different source", state: "text" }, "File content does not match this patch."],
+])("keeps the patch and explains why expansion is unavailable", async (answer, reason) => {
   const server = companion({ declared: true });
   const view = renderChanges(server);
   await view.findByTestId("pull-request-diff");
   await editorReady();
-  await waitFor(() => {
-    expect(contentReads(server)).toEqual([PATH]);
-  });
-  await act(async () => {
-    server.release(PATH, { bytes: 5_000_000, state: "tooLarge" });
-    await Promise.resolve();
-  });
-  await waitFor(() => {
-    expect(lastDocument()).toMatchObject({ path: PATH, source: "" });
-  });
-  expect(lastDocument()?.fullFileDiff).toBeUndefined();
-  expect(revisionsOf(PATH)).toHaveLength(1);
+  fireEvent.press(await view.findByRole("button", { name: "Expand file" }));
+  await act(async () => server.release(PATH, answer));
+  expect(await view.findByText(reason)).toBeTruthy();
+  expect(
+    view.getByRole("button", { disabled: true, expanded: false, name: "Full file unavailable" }),
+  ).toBeTruthy();
+  expect(lastDocument()).toMatchObject({ path: PATH, source: "" });
 });
 
-it("settles on the patch when the whole file outlasts the wait, and keeps it when it arrives", async () => {
-  jest.useFakeTimers();
-  try {
-    const other = "src/lib.rs";
-    const server = companion({ declared: true, paths: [PATH, other] });
-    const view = renderChanges(server);
-    await view.findByTestId("pull-request-diff");
-    await editorReady();
-    await waitFor(() => {
-      expect(contentReads(server)).toEqual([PATH, other]);
-    });
-    await act(async () => {
-      jest.advanceTimersByTime(WHOLE_FILE_WAIT_MS - 1);
-      await Promise.resolve();
-    });
-    expect(postedDocuments()).toEqual([]);
-
-    await act(async () => {
-      jest.advanceTimersByTime(1);
-      await Promise.resolve();
-    });
-    await waitFor(() => {
-      expect(lastDocument()).toMatchObject({ path: PATH, source: "" });
-    });
-    const patchRevision = lastDocument()?.revision;
-
-    await act(async () => {
-      server.release(PATH, { content: HEAD_FILE, state: "text" });
-      server.release(other, { content: HEAD_FILE, state: "text" });
-      await Promise.resolve();
-    });
-    await waitFor(() => {
-      expect(
-        server.forge.queryClient.getQueryData([
-          "forge",
-          "fileContent",
-          "server",
-          overview91.pullRequest,
-          overview91.headRevision,
-          PATH,
-        ]),
-      ).toEqual({ content: HEAD_FILE, state: "text" });
-    });
-    // The same view re-renders (the file tree toggles) but keeps its patch.
-    fireEvent.press(view.getByTestId("changes-view-files"));
-    await act(async () => {
-      jest.advanceTimersByTime(WHOLE_FILE_WAIT_MS);
-      await Promise.resolve();
-    });
-    expect(revisionsOf(PATH)).toEqual([patchRevision]);
-
-    // A later visit of the file finds the answer and shows the whole file at once.
-    await selectInTree(other);
-    await waitFor(() => {
-      expect(lastDocument()).toMatchObject({ fullFileDiff: true, path: other });
-    });
-    await selectInTree(PATH);
-    await waitFor(() => {
-      expect(lastDocument()).toMatchObject({ fullFileDiff: true, path: PATH });
-    });
-    expect(revisionsOf(PATH)).toHaveLength(2);
-    expect(revisionsOf(other)).toHaveLength(1);
-  } finally {
-    jest.useRealTimers();
-  }
-});
-
-it("reads ahead the first files and the selected file's neighbours", async () => {
-  const paths = ["src/a.rs", "src/b.rs", "src/c.rs", "src/d.rs", "src/e.rs"];
-  const server = companion({ answerAtOnce: true, declared: true, paths });
+it("keeps the patch on a transport failure and retries the same file on request", async () => {
+  const readContent = jest
+    .fn()
+    .mockRejectedValueOnce(new RpcResponseError(-32087, "Rate limited"))
+    .mockResolvedValueOnce({ content: HEAD_FILE, state: "text" });
+  const server = companion({ declared: true, readContent });
   const view = renderChanges(server);
   await view.findByTestId("pull-request-diff");
   await editorReady();
-  await waitFor(() => {
-    expect(new Set(contentReads(server))).toEqual(new Set(paths.slice(0, 3)));
-  });
-  await waitFor(() => {
-    expect(lastDocument()).toMatchObject({ fullFileDiff: true, path: "src/a.rs" });
-  });
+  fireEvent.press(await view.findByRole("button", { name: "Expand file" }));
+  const retry = await view.findByRole("button", { expanded: false, name: "Retry expanding file" });
+  expect(lastDocument()).toMatchObject({ path: PATH, source: "" });
+  fireEvent.press(retry);
+  await waitFor(() =>
+    expect(lastDocument()).toMatchObject({ fullFileDiff: true, source: HEAD_FILE }),
+  );
+  expect(contentReads(server)).toEqual([PATH, PATH]);
+});
 
-  await selectInTree("src/b.rs");
-  await waitFor(() => {
-    expect(lastDocument()).toMatchObject({ fullFileDiff: true, path: "src/b.rs" });
-  });
-  await selectInTree("src/c.rs");
-  await waitFor(() => {
-    expect(contentReads(server)).toContain("src/d.rs");
-  });
-  await waitFor(() => {
-    expect(lastDocument()).toMatchObject({ fullFileDiff: true, path: "src/c.rs" });
-  });
-  expect(contentReads(server)).not.toContain("src/e.rs");
-  // Every file was read once, and each view gave the editor one document.
-  expect(contentReads(server)).toHaveLength(new Set(contentReads(server)).size);
-  for (const path of paths.slice(0, 3)) {
-    expect(revisionsOf(path)).toHaveLength(1);
-  }
+it("remembers expansion per file and never reads neighbours or applies a late answer to another file", async () => {
+  const other = "src/lib.rs";
+  const server = companion({ declared: true, paths: [PATH, other, "src/unused.rs"] });
+  const view = renderChanges(server);
+  await view.findByTestId("pull-request-diff");
+  await editorReady();
+  fireEvent.press(await view.findByRole("button", { name: "Expand file" }));
+  await selectInTree(other);
+  await waitFor(() => expect(lastDocument()).toMatchObject({ path: other, source: "" }));
+  expect(view.getByRole("button", { name: "Expand file" })).toBeTruthy();
+  await act(async () => server.release(PATH, { content: HEAD_FILE, state: "text" }));
+  expect(lastDocument()).toMatchObject({ path: other, source: "" });
+  await selectInTree(PATH);
+  await waitFor(() =>
+    expect(lastDocument()).toMatchObject({ fullFileDiff: true, path: PATH, source: HEAD_FILE }),
+  );
+  expect(contentReads(server)).toEqual([PATH]);
+});
+
+it("keeps a collapsed patch when a pending expansion finishes", async () => {
+  const server = companion({ declared: true });
+  const view = renderChanges(server);
+  await view.findByTestId("pull-request-diff");
+  await editorReady();
+  fireEvent.press(await view.findByRole("button", { name: "Expand file" }));
+  fireEvent.press(await view.findByRole("button", { name: "Cancel expanding file" }));
+  await act(async () => server.release(PATH, { content: HEAD_FILE, state: "text" }));
+  expect(lastDocument()).toMatchObject({ path: PATH, source: "" });
+  expect(revisionsOf(PATH)).toHaveLength(1);
 });
 
 it("never asks for the whole file when the plugin does not declare it", async () => {
@@ -479,6 +424,7 @@ it("never asks for the whole file when the plugin does not declare it", async ()
     expect(server.reads.some((read) => read.method === "companion/forge/accounts/read")).toBe(true);
   });
   expect(contentReads(server)).toEqual([]);
+  expect(view.queryByRole("button", { name: "Expand file" })).toBeNull();
   expect(lastDocument()).toMatchObject({ source: "" });
   expect(revisionsOf(PATH)).toHaveLength(1);
 });

@@ -1,134 +1,173 @@
-import { fireEvent, render, screen, within } from "@testing-library/react-native";
-import type { ReactNode } from "react";
+import { fireEvent, render, screen } from "@testing-library/react-native";
+import type { ComponentProps, ReactNode } from "react";
+import { Linking } from "react-native";
 
-import { parseActionCatalog, type ActionDescriptor } from "../src/data/forgeActionCatalog";
-import { headRevision } from "../src/data/forgeContract";
+import type { ActionDescriptor } from "../src/data/forgeActionCatalog";
 import type { CheckItem } from "../src/data/forgePullRequestContract";
-import { threadId } from "../src/data/reviewContract";
-import { slotActions } from "../src/features/pullRequestDetail/actions/actionSlotting";
-import type { ScenarioViews } from "../src/features/pullRequestDetail/actions/scenarioRuns";
-import { ScenarioViewsContext } from "../src/features/pullRequestDetail/actions/ScenarioViewsContext";
 import { ChecksSheet } from "../src/features/pullRequestDetail/overview/ChecksSheet";
 
-// WHY: the native sheet window cannot mount in the Node renderer; the sheet's rows are the contract here.
+// The platform sheet window cannot mount in Node. LegendList's native viewport double keeps the real lifecycle hooks.
 jest.mock("../src/ui/AppSheet", () => {
-  const { View: MockView } = jest.requireActual<typeof import("react-native")>("react-native");
+  const { View, ScrollView } = jest.requireActual<typeof import("react-native")>("react-native");
   return {
-    AppSheet: ({ children }: { readonly children: ReactNode }) => <MockView>{children}</MockView>,
-    AppSheetScrollView: ({
-      children,
-      testID,
-    }: {
-      readonly children: ReactNode;
-      readonly testID?: string;
-    }) => <MockView testID={testID}>{children}</MockView>,
+    AppSheet: ({ children }: { readonly children: ReactNode }) => <View>{children}</View>,
+    AppSheetScrollView: ScrollView,
   };
 });
 
-const HEAD = headRevision("head-1", "headRevision");
-
-function check(checkId: string, state: CheckItem["state"]): CheckItem {
-  return { checkId, detailsUrl: null, durationSeconds: 60, name: checkId, state };
+function job(
+  checkId: string,
+  state: CheckItem["state"],
+  required: boolean | null,
+  extra: Partial<CheckItem> = {},
+): CheckItem {
+  return {
+    activity: null,
+    checkId,
+    detailsUrl: null,
+    durationSeconds: null,
+    name: checkId,
+    onDemand: null,
+    required,
+    state,
+    viewerUrl: null,
+    ...extra,
+  };
 }
-
-const CHECKS: readonly CheckItem[] = [
-  check("macos", "failed"),
-  check("linux", "failed"),
-  check("plan", "passed"),
+const checks = [
+  job("pack", "passed", true, { viewerUrl: "https://ci.example/run/42" }),
+  job("lint", "failed", true),
+  job("build", "pending", true, { activity: "running" }),
+  job("samples", "passed", false),
+  job("legacy", "pending", null, { detailsUrl: "https://off-site.example/run" }),
 ];
-
-/** The Companion's catalog: one fix per failed check, each with its own action id. */
-function catalog(): readonly ActionDescriptor[] {
-  const fix = (checkId: string) => ({
-    actionId: `codewide.scenario.fixCi.${checkId}`,
-    anchor: { checkId, kind: "checks" },
+function action(
+  kind: ActionDescriptor["kind"],
+  label: string,
+  checkId: string | null,
+): ActionDescriptor {
+  return {
+    actionId: `${kind}-${checkId ?? "all"}`,
+    anchor: checkId === null ? { kind: "checksSection" } : { kind: "checks", checkId },
     availability: { state: "enabled" },
     confirm: "none",
-    group: "agent",
+    group: "checks",
     input: null,
     isDefault: false,
-    kind: "fixCi",
-    label: "Fix in agent",
-    order: 100,
+    kind,
+    label,
+    order: 1,
     placement: "secondary",
+    quickSubmit: false,
     toggle: null,
-  });
-  const parsed = parseActionCatalog(
-    { actions: [fix("macos"), fix("linux")], headRevision: HEAD },
-    () => undefined,
-  );
-  if (parsed === null) {
-    throw new Error("the fix catalog fixture must parse");
-  }
-  return parsed.actions;
+  };
+}
+const address = action("fixCi", "Address all checks", null);
+const restart = action("restartCheck", "Restart job", "lint");
+const remove: ActionDescriptor = {
+  ...action("setCheckRequired", "Remove merge requirement", "lint"),
+  input: { type: "text", label: "Reason", placeholder: null },
+  toggle: { on: true },
+};
+const forbidden: ActionDescriptor = {
+  ...action("setCheckRequired", "Remove merge requirement", "pack"),
+  availability: { state: "disabled", reason: "Project policy" },
+  toggle: { on: true },
+};
+const disabledRestart: ActionDescriptor = {
+  ...action("restartCheck", "Restart job", "build"),
+  availability: { state: "disabled", reason: "Already running" },
+};
+const actions = [
+  restart,
+  remove,
+  forbidden,
+  disabledRestart,
+  action("fixCi", "Fix in agent", "lint"),
+];
+function props(
+  overrides: Partial<ComponentProps<typeof ChecksSheet>> = {},
+): ComponentProps<typeof ChecksSheet> {
+  return {
+    actionsFor: (checkId) =>
+      actions.filter((item) => item.anchor?.kind === "checks" && item.anchor.checkId === checkId),
+    addressAction: address,
+    checks,
+    host: "forge.example",
+    onDismiss: jest.fn(),
+    onRun: jest.fn(),
+    pending: {},
+    pendingToggles: {},
+    ...overrides,
+  };
 }
 
-function renderSheet(
-  actions: readonly ActionDescriptor[],
-  views: ScenarioViews,
-  onRun: (action: ActionDescriptor) => void,
-) {
-  const slots = slotActions(
-    actions,
-    {
-      checkIds: new Set(CHECKS.map((item) => item.checkId)),
-      checksSection: true,
-      conflict: false,
-      reviewThreadIds: new Set(),
-    },
-    { availableWidth: 400, gap: 8, measure: () => 100, tablet: false },
+it("keeps required jobs ordered and immediately visible, and can search the collapsed jobs without changing the saved disclosure", () => {
+  render(<ChecksSheet {...props()} />);
+  const rows = () =>
+    screen.getAllByTestId(/^pull-request-checks-job-/u).map((row) => row.props.testID);
+  expect(rows()).toEqual(
+    ["build", "lint", "pack", "legacy"].map((id) => `pull-request-checks-job-${id}`),
   );
-  return render(
-    <ScenarioViewsContext.Provider value={views}>
-      <ChecksSheet
-        actionsFor={(checkId) => slots.anchored.checks.get(checkId) ?? []}
-        checks={CHECKS}
-        host="github.com"
-        onDismiss={() => undefined}
-        onRun={onRun}
-        pending={{}}
-        summary="2 failing, 1 successful"
-      />
-    </ScenarioViewsContext.Provider>,
-  );
-}
-
-it("puts an agent fix on every failed check and none on a passing one", () => {
-  const onRun = jest.fn<undefined, [ActionDescriptor]>();
-  renderSheet(catalog(), new Map(), onRun);
-
-  const macos = screen.getByLabelText("Fix macos in agent");
-  const linux = screen.getByLabelText("Fix linux in agent");
-  expect(screen.queryByLabelText("Fix plan in agent")).toBeNull();
-  // Idle, the icon alone carries the action.
-  expect(within(macos).queryByText("Fix in agent")).toBeNull();
-
-  fireEvent.press(linux);
-  fireEvent.press(macos);
-  expect(
-    onRun.mock.calls.map(([action]) =>
-      action.anchor?.kind === "checks" ? action.anchor.checkId : null,
-    ),
-  ).toEqual(["linux", "macos"]);
+  expect(screen.queryByTestId("pull-request-checks-required-legacy")).toBeNull();
+  const search = screen.getByLabelText("Search checks");
+  fireEvent.changeText(search, "sAmPlE");
+  expect(rows()).toEqual(["pull-request-checks-job-samples"]);
+  fireEvent.changeText(search, "");
+  expect(screen.queryByTestId("pull-request-checks-job-samples")).toBeNull();
+  fireEvent.press(screen.getByTestId("pull-request-checks-other"));
+  expect(screen.getByTestId("pull-request-checks-job-samples")).toBeOnTheScreen();
 });
 
-it("shows and shimmers the live label beside the icon while that check's fix runs", () => {
-  const running = catalog().map((action) =>
-    action.anchor?.kind === "checks" && action.anchor.checkId === "linux"
-      ? { ...action, label: "Fixing CI…" }
-      : action,
+it("opens the admitted viewer from the row, and only offers available restarts in its separate native menu", () => {
+  const open = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
+  const state = props();
+  try {
+    render(<ChecksSheet {...state} />);
+    fireEvent.press(screen.getByTestId("pull-request-checks-job-pack"));
+    expect(open).toHaveBeenCalledWith("https://ci.example/run/42");
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(screen.queryByTestId("pull-request-checks-menu-build")).toBeNull();
+    fireEvent.press(screen.getByTestId("pull-request-checks-menu-lint"));
+    fireEvent.press(screen.getByText("Restart job"));
+    expect(state.onRun).toHaveBeenCalledWith(restart);
+    expect(screen.queryByText("Fix in agent")).toBeNull();
+  } finally {
+    open.mockRestore();
+  }
+});
+
+it("uses the permission, reason input and refreshed state from the catalog; an acknowledged waiver moves to Other checks", () => {
+  const state = props();
+  const view = render(<ChecksSheet {...state} />);
+  const denied = screen.getByTestId("pull-request-checks-required-pack");
+  expect(denied).toBeDisabled();
+  expect(denied).toHaveProp("accessibilityHint", "Project policy");
+  fireEvent.press(denied);
+  expect(state.onRun).not.toHaveBeenCalled();
+  fireEvent.press(screen.getByTestId("pull-request-checks-required-lint"));
+  expect(state.onRun).toHaveBeenCalledWith(remove);
+  expect(screen.getByTestId("pull-request-checks-job-lint")).toBeOnTheScreen();
+  view.rerender(
+    <ChecksSheet
+      {...state}
+      checks={checks.map((item) => (item.checkId === "lint" ? { ...item, required: false } : item))}
+      actionsFor={() => []}
+    />,
   );
-  const views: ScenarioViews = new Map([
-    [
-      "codewide.scenario.fixCi.linux",
-      { kind: "active", startedAt: null, threadId: threadId("thread-1", "threadId") },
-    ],
-  ]);
-  renderSheet(running, views, () => undefined);
-  const linux = screen.getByLabelText("Fix linux in agent");
-  expect(linux).toHaveProp("accessibilityState", { busy: true, disabled: false });
-  expect(within(linux).getByText("Fixing CI…")).toBeOnTheScreen();
-  const macos = screen.getByLabelText("Fix macos in agent");
-  expect(macos).toHaveProp("accessibilityState", { busy: false, disabled: false });
-  expect(within(macos).queryByText(/Fix/u)).toBeNull();
+  expect(screen.queryByTestId("pull-request-checks-job-lint")).toBeNull();
+  fireEvent.press(screen.getByTestId("pull-request-checks-other"));
+  expect(screen.getByLabelText("lint, required for merge")).not.toBeChecked();
+});
+
+it("addresses the entire PR even with passing checks and an empty search result", () => {
+  const state = props({ checks: [job("pass", "passed", null)] });
+  render(<ChecksSheet {...state} />);
+  expect(screen.getByTestId("pull-request-checks-job-pass")).toBeOnTheScreen();
+  expect(screen.queryByTestId("pull-request-checks-other")).toBeNull();
+  fireEvent.changeText(screen.getByLabelText("Search checks"), "not in this PR");
+  expect(screen.getByText("No matching checks")).toBeOnTheScreen();
+  fireEvent.press(screen.getByRole("button", { name: "Address all checks" }));
+  expect(state.onDismiss).toHaveBeenCalledTimes(1);
+  expect(state.onRun).toHaveBeenCalledWith(address);
 });

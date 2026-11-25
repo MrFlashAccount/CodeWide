@@ -153,14 +153,14 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }): Reac
   const revisionRef = useRef(0);
   const downloads = useDownloadManager();
   const showDownloadComplete = (
-    completed: Extract<DownloadSettlement, { readonly status: "completed" }>,
+    completed: Extract<DownloadSettlement, { readonly status: "completed" | "alreadySaved" }>,
   ) => {
     notice.show({
       actionLabel: "Open",
       description: completed.name,
       duration: 6000,
       icon: <Ionicons color={colors.green} name="checkmark-circle" size={iconSize.navigation} />,
-      label: "File saved",
+      label: completed.status === "alreadySaved" ? "Already downloaded" : "File saved",
       onActionPress: () => {
         openDownloadedFile(completed.uri, completed.mimeType ?? undefined).catch(
           (error: unknown) => {
@@ -178,7 +178,7 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }): Reac
     dialog.error("Download failed", error);
   };
   const handleDownloadSettlement = (settlement: DownloadSettlement): void => {
-    if (settlement.status === "completed") {
+    if (settlement.status === "completed" || settlement.status === "alreadySaved") {
       showDownloadComplete(settlement);
       return;
     }

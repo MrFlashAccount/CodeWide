@@ -10,6 +10,7 @@ import type { ActionSlots } from "../actions/actionSlotting";
 import { CatalogActionButton } from "../actions/CatalogActionButton";
 import { StatusRow } from "../sections/StatusRow";
 import { CHECK_STATE_GLYPHS } from "./checkPresentation";
+import { ManualTriggersHost } from "./ManualTriggersHost";
 import { ChecksSheet } from "./ChecksSheet";
 import { checkOutcome, type MergeBoxRow } from "./mergeBox";
 
@@ -19,8 +20,7 @@ const ATTENTION: ReadonlySet<CheckItem["state"]> = new Set(["cancelled", "failed
 /**
  * The Status section's Checks row: `2 failing, 7 successful`; expanded, the
  * failing, cancelled and pending checks with their outcome, and "All checks",
- * which opens the sheet with every check, its anchored actions (Fix in agent)
- * and its details page. The actions anchored to the Checks section (Start CI)
+ * which opens the grouped, searchable sheet for all checks. The actions anchored to the Checks section (Start CI)
  * stay under the summary whether or not the row is expanded. Owns the
  * expansion and the sheet's visibility.
  */
@@ -31,6 +31,7 @@ export function ChecksStatusRow({
   items,
   onRun,
   pending,
+  pendingToggles,
   slots,
 }: {
   readonly checks: MergeBoxRow;
@@ -39,6 +40,7 @@ export function ChecksStatusRow({
   readonly items: readonly CheckItem[];
   readonly onRun: (action: ActionDescriptor) => void;
   readonly pending: Readonly<Record<string, true>>;
+  readonly pendingToggles: Readonly<Record<string, boolean>>;
   readonly slots: Pick<ActionSlots, "anchored">;
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false);
@@ -53,22 +55,28 @@ export function ChecksStatusRow({
       />
     );
   const sheetView = sheet ? (
-    <ChecksSheet
-      actionsFor={(checkId) => slots.anchored.checks.get(checkId) ?? []}
-      checks={items}
-      host={host}
-      onDismiss={() => {
-        setSheet(false);
-      }}
-      onRun={onRun}
-      pending={pending}
-      summary={checks.detail}
-    />
+    <ManualTriggersHost>
+      <ChecksSheet
+        actionsFor={(checkId) => slots.anchored.checks.get(checkId) ?? []}
+        addressAction={
+          slots.anchored.checksSection.find((action) => action.kind === "fixCi") ?? null
+        }
+        checks={items}
+        host={host}
+        onDismiss={() => {
+          setSheet(false);
+        }}
+        onRun={onRun}
+        pending={pending}
+        pendingToggles={pendingToggles}
+      />
+    </ManualTriggersHost>
   ) : null;
+  const commands = slots.anchored.checksSection.filter((action) => action.kind !== "fixCi");
   const sectionActions =
-    slots.anchored.checksSection.length === 0 ? undefined : (
+    commands.length === 0 ? undefined : (
       <View style={styles.actions} testID="pull-request-status-checks-actions">
-        {slots.anchored.checksSection.map((action) => (
+        {commands.map((action) => (
           <CatalogActionButton
             action={action}
             key={action.actionId}

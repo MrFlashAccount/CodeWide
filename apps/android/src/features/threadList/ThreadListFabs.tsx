@@ -1,5 +1,8 @@
+import { useContext } from "react";
+import { CatalogNavigationInsetContext } from "../../presentation/layouts/catalogModeBarGeometry";
 import Reanimated from "react-native-reanimated";
 
+import { PaneChrome } from "../../ui/PaneChrome";
 import { NewThreadFloatingButton } from "../projects/NewThreadFloatingButton";
 import { styles } from "./ThreadListFab.styles";
 import { GlobalVoiceEntryAction, type GlobalVoiceControl } from "./GlobalVoiceEntryAction";
@@ -36,10 +39,10 @@ export function ThreadListFabStack({
   readonly newThread: ThreadListNewThreadAction | null;
 }): React.JSX.Element {
   return (
-    <>
+    <PaneChrome pointerEvents="box-none" style={styles.overlay}>
       <ThreadListVoiceFab globalVoice={globalVoice} primaryVisible={newThread !== null} />
       {newThread === null ? null : <ThreadListNewThreadFab action={newThread} />}
-    </>
+    </PaneChrome>
   );
 }
 
@@ -49,11 +52,12 @@ function ThreadListNewThreadFab({
 }: {
   readonly action: ThreadListNewThreadAction;
 }): React.JSX.Element {
+  const bottom = useContext(CatalogNavigationInsetContext);
   const motion = useThreadListFabMotion(useThreadListFabModel(), "primary", false);
   return (
     <Reanimated.View
       {...hiddenProps(motion.hidden)}
-      style={[styles.primary, motion.style]}
+      style={[styles.primary, { marginBottom: bottom }, motion.style]}
       testID="new-thread-fab-slot"
     >
       <NewThreadFloatingButton onPress={action.onPress} projectName={action.projectName} />
@@ -74,6 +78,7 @@ function ThreadListVoiceFab({
   readonly primaryVisible: boolean;
 }): React.JSX.Element | null {
   const model = useThreadListFabModel();
+  const bottom = useContext(CatalogNavigationInsetContext);
   const motion = useThreadListFabMotion(
     model,
     "secondary",
@@ -85,7 +90,11 @@ function ThreadListVoiceFab({
   return (
     <Reanimated.View
       {...hiddenProps(motion.hidden)}
-      style={[primaryVisible ? styles.secondaryAbovePrimary : styles.secondaryAlone, motion.style]}
+      style={[
+        primaryVisible ? styles.secondaryAbovePrimary : styles.secondaryAlone,
+        { marginBottom: bottom },
+        motion.style,
+      ]}
       testID="global-voice-fab-slot"
     >
       {/* A placement change moves only this wrapper, which fires no layout event in the

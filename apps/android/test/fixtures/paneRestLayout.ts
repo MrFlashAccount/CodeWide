@@ -1,15 +1,6 @@
-import {
-  SIDEBAR_FRAME_SHARE,
-  SIDEBAR_MAX_WIDTH,
-  SIDEBAR_MIN_WIDTH,
-} from "../../src/ui/sidebarDimensions";
+import type { ViewStyle } from "react-native";
 
-/**
- * The catalog's settled sidebar box: relative to the pane frame and bounded, so Yoga resolves it
- * from the frame's actual width instead of a JavaScript measurement.
- */
-export const RESTING_SIDEBAR = {
-  maxWidth: SIDEBAR_MAX_WIDTH,
-  minWidth: SIDEBAR_MIN_WIDTH,
-  width: SIDEBAR_FRAME_SHARE,
-} as const;
+/** At rest Yoga uses the settled split percentage so rotation keeps the two sizes complementary. */
+export function restingSidebar(percent: number):ViewStyle {
+ return {maxWidth:"100%",minWidth:0,width:`${percent}%`};
+}

@@ -1,7 +1,7 @@
 // Generated from vendored Reacticx source. Do not edit.
 
 // vendor/reacticx/src/components/organisms/masked-tab-bar/index.tsx
-import { memo, useCallback, useContext as useContext2, useEffect, useMemo, useRef as useRef2, useState as useState2 } from "react";
+import React, { memo, useCallback, useContext as useContext2, useEffect, useMemo, useRef, useState as useState2 } from "react";
 import {
   StyleSheet,
   Text,
@@ -18,6 +18,9 @@ import Animated, {
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 
+// src/react/useEvent.ts
+import { useEffectEvent } from "react";
+
 // src/react/useConstant.ts
 import { useState } from "react";
 function useConstant(create) {
@@ -25,28 +28,18 @@ function useConstant(create) {
   return value;
 }
 
-// src/react/useLatest.ts
-import { useLayoutEffect, useRef } from "react";
-function useLatest(value) {
-  const ref = useRef(value);
-  useLayoutEffect(() => {
-    ref.current = value;
-  }, [value]);
-  return ref;
-}
-
 // src/react/useEvent.ts
 function useEvent(callback) {
-  const ref = useLatest(callback);
+  const dispatch = useEffectEvent(
+    (...args) => typeof callback === "function" ? callback(...args) : void 0
+  );
   return useConstant(
-    () => (...args) => {
-      const current = ref.current;
-      if (current === null || current === false || current === void 0) {
-        return void 0;
-      }
-      const result = current(...args);
-      return result;
-    }
+    () => (...args) => (
+      // WHY: Our pinned React 19.2 renderers guard every call and publish the implementation at commit.
+      // This adapter deliberately also serves UI events; its renderer contract is covered by v1-use-event.
+      // oxlint-disable-next-line react-hooks-js/rules-of-hooks
+      dispatch(...args)
+    )
   );
 }
 
@@ -159,7 +152,29 @@ function nearestBox(list, center) {
   }
   return best;
 }
-var MaskedTabBarRoot = ({
+function useTabPillMotion() {
+  const pillX = useSharedValue(0);
+  const pillWidth = useSharedValue(0);
+  const placedValueRef = useRef(null);
+  const [motion] = useState2(() => ({ pillX, pillWidth, placedValueRef }));
+  return motion;
+}
+var TabPillMotionContext = React.createContext(null);
+function MaskedTabBarMotionProvider({ children }) {
+  const motion = useTabPillMotion();
+  return /* @__PURE__ */ jsx(TabPillMotionContext.Provider, { value: motion, children });
+}
+function MaskedTabBarRoot(props) {
+  const motion = useContext2(TabPillMotionContext);
+  return motion === null ? /* @__PURE__ */ jsx(StandaloneTabBar, { ...props }) : /* @__PURE__ */ jsx(MeasuredTabBar, { ...props, motion });
+}
+function StandaloneTabBar(props) {
+  const motion = useTabPillMotion();
+  return /* @__PURE__ */ jsx(MeasuredTabBar, { ...props, motion });
+}
+function MeasuredTabBar({
+  motion,
+  active = true,
   children,
   value: valueProp,
   defaultValue,
@@ -177,7 +192,7 @@ var MaskedTabBarRoot = ({
   draggable = true,
   measureRevision = 0,
   style
-}) => {
+}) {
   const isControlled = valueProp !== void 0;
   const [internalValue, setInternalValue] = useState2(
     defaultValue ?? ""
@@ -185,8 +200,7 @@ var MaskedTabBarRoot = ({
   const value = isControlled ? valueProp : internalValue;
   const [boxMap, setBoxMap] = useState2({});
   const [listWidth, setListWidth] = useState2(0);
-  const pillX = useSharedValue(0);
-  const pillWidth = useSharedValue(0);
+  const { pillX, pillWidth, placedValueRef } = motion;
   const press = useSharedValue(0);
   const grabbed = useSharedValue(false);
   const palette = useMemo(
@@ -222,9 +236,8 @@ var MaskedTabBarRoot = ({
     setValue(boxes[0].value);
   }, [value, boxes, setValue]);
   const activeBox = boxMap[value];
-  const placedValueRef = useRef2(null);
   useEffect(() => {
-    if (!activeBox) return;
+    if (!active || !activeBox) return;
     if (grabbed.value) return;
     if (placedValueRef.current !== value && placedValueRef.current !== null) {
       placedValueRef.current = value;
@@ -237,7 +250,7 @@ var MaskedTabBarRoot = ({
     cancelAnimation(pillWidth);
     pillX.value = activeBox.x;
     pillWidth.value = activeBox.width;
-  }, [activeBox, pillX, pillWidth, grabbed, value]);
+  }, [active, activeBox, pillX, pillWidth, placedValueRef, grabbed, value]);
   const ctx = useMemo(
     () => ({
       value,
@@ -301,7 +314,7 @@ var MaskedTabBarRoot = ({
       children
     }
   ) });
-};
+}
 var MaskedTabBarList = ({
   children,
   style
@@ -328,13 +341,13 @@ var MaskedTabBarList = ({
   useEffect(() => {
     boxesValue.value = boxes;
   }, [boxes, boxesValue]);
-  const layoutRevision = useRef2(0);
+  const layoutRevision = useRef(0);
   const onLayout = useEvent((e) => {
     layoutRevision.current += 1;
     setListWidth(e.nativeEvent.layout.width);
   });
-  const listRef = useRef2(null);
-  const rowRef = useRef2(null);
+  const listRef = useRef(null);
+  const rowRef = useRef(null);
   useEffect(() => {
     if (measureRevision === 0) return;
     const requestedLayout = layoutRevision.current;
@@ -379,86 +392,100 @@ var MaskedTabBarList = ({
     }
   );
   const gesture = useMemo(
-    () => Gesture.Pan().minDistance(0).shouldCancelWhenOutside(false).onBegin((e) => {
-      press.value = withSpring2(1, PRESS_SPRING);
-      dragged.value = false;
-      pendingValue.value = "";
-      hoveredValue.value = "";
-      const inside = e.x >= pillX.value && e.x <= pillX.value + pillWidth.value;
-      grabbed.value = draggable && inside;
-      grabOffset.value = pillX.value - e.x;
-      if (grabbed.value) {
-        dragTarget.value = pillX.value;
+    () => {
+      const pan = Gesture.Pan().withTestId("catalog-tab-pan").minDistance(0).shouldCancelWhenOutside(false).onBegin((e) => {
+        press.value = withSpring2(1, PRESS_SPRING);
+        dragged.value = false;
+        pendingValue.value = "";
+        hoveredValue.value = "";
+        const inside = e.x >= pillX.value && e.x <= pillX.value + pillWidth.value;
+        grabbed.value = draggable && inside;
+        grabOffset.value = pillX.value - e.x;
+        if (grabbed.value) {
+          dragTarget.value = pillX.value;
+          dragVelocity.value = 0;
+        }
+      }).onStart((e) => {
+        if (grabbed.value) return;
+        const tapped = boxAtX(boxesValue.value, e.x);
+        if (!tapped) return;
+        pendingValue.value = tapped.value;
+        startPillMotionOnUI(tapped, pillX, pillWidth);
+      }).onUpdate((e) => {
+        if (!grabbed.value) return;
+        if (Math.abs(e.translationX) > SELECTED_TAP_MAX_TRANSLATION || Math.abs(e.translationY) > SELECTED_TAP_MAX_TRANSLATION) {
+          dragged.value = true;
+        }
+        dragTarget.value = clampValue(
+          e.x + grabOffset.value,
+          0,
+          Math.max(listWidthValue.value - pillWidth.value, 0)
+        );
+        const over = nearestBox(
+          boxesValue.value,
+          dragTarget.value + pillWidth.value / 2
+        );
+        if (over && over.value !== hoveredValue.value) {
+          hoveredValue.value = over.value;
+          pillWidth.value = withSpring2(over.width, PILL_SPRING);
+        }
+      }).onFinalize((_event, success) => {
+        press.value = withSpring2(0, PRESS_SPRING);
+        const wasGrabbed = grabbed.value;
+        const selectedTap = !dragged.value;
+        grabbed.value = false;
+        dragged.value = false;
+        hoveredValue.value = "";
         dragVelocity.value = 0;
-      }
-    }).onStart((e) => {
-      if (grabbed.value) return;
-      const tapped = boxAtX(boxesValue.value, e.x);
-      if (!tapped) return;
-      pendingValue.value = tapped.value;
-      startPillMotionOnUI(tapped, pillX, pillWidth);
-    }).onUpdate((e) => {
-      if (!grabbed.value) return;
-      if (Math.abs(e.translationX) > SELECTED_TAP_MAX_TRANSLATION || Math.abs(e.translationY) > SELECTED_TAP_MAX_TRANSLATION) {
-        dragged.value = true;
-      }
-      dragTarget.value = clampValue(
-        e.x + grabOffset.value,
-        0,
-        Math.max(listWidthValue.value - pillWidth.value, 0)
-      );
-      const over = nearestBox(
-        boxesValue.value,
-        dragTarget.value + pillWidth.value / 2
-      );
-      if (over && over.value !== hoveredValue.value) {
-        hoveredValue.value = over.value;
-        pillWidth.value = withSpring2(over.width, PILL_SPRING);
-      }
-    }).onFinalize((_event, success) => {
-      press.value = withSpring2(0, PRESS_SPRING);
-      const wasGrabbed = grabbed.value;
-      const selectedTap = !dragged.value;
-      grabbed.value = false;
-      dragged.value = false;
-      hoveredValue.value = "";
-      dragVelocity.value = 0;
-      if (!success) {
-        pendingValue.value = "";
-        const selected = boxForValue(boxesValue.value, value);
-        if (selected) {
-          pillX.value = withSpring2(selected.x, PILL_SPRING);
-          pillWidth.value = withSpring2(selected.width, PILL_SPRING);
+        if (!success) {
+          pendingValue.value = "";
+          const selected = boxForValue(boxesValue.value, value);
+          if (selected) {
+            pillX.value = withSpring2(selected.x, PILL_SPRING);
+            pillWidth.value = withSpring2(selected.width, PILL_SPRING);
+          }
+          return;
         }
-        return;
-      }
-      if (!wasGrabbed) {
-        const nextValue = pendingValue.value;
-        pendingValue.value = "";
-        if (nextValue === "") return;
-        if (nextValue === value && onSelectedValueActivate) {
-          scheduleOnRN(onSelectedValueActivate, nextValue);
-        } else {
-          scheduleOnRN(setValue, nextValue);
+        if (!wasGrabbed) {
+          const nextValue = pendingValue.value;
+          pendingValue.value = "";
+          if (nextValue === "") return;
+          if (nextValue === value && onSelectedValueActivate) {
+            scheduleOnRN(onSelectedValueActivate, nextValue);
+          } else {
+            scheduleOnRN(setValue, nextValue);
+          }
+          return;
         }
-        return;
-      }
-      pendingValue.value = "";
-      const box = nearestBox(
-        boxesValue.value,
-        dragTarget.value + pillWidth.value / 2
-      );
-      if (!box) return;
-      pillX.value = withSpring2(box.x, {
-        ...PILL_SPRING,
-        velocity: dragVelocity.value
+        pendingValue.value = "";
+        const box = nearestBox(
+          boxesValue.value,
+          dragTarget.value + pillWidth.value / 2
+        );
+        if (!box) return;
+        pillX.value = withSpring2(box.x, {
+          ...PILL_SPRING,
+          velocity: dragVelocity.value
+        });
+        pillWidth.value = withSpring2(box.width, PILL_SPRING);
+        if (selectedTap && box.value === value && onSelectedValueActivate) {
+          scheduleOnRN(onSelectedValueActivate, box.value);
+        }
+        scheduleOnRN(setValue, box.value);
       });
-      pillWidth.value = withSpring2(box.width, PILL_SPRING);
-      if (selectedTap && box.value === value && onSelectedValueActivate) {
-        scheduleOnRN(onSelectedValueActivate, box.value);
-      }
-      scheduleOnRN(setValue, box.value);
-    }),
+      const tap = Gesture.Tap().withTestId("catalog-tab-tap").maxDistance(SELECTED_TAP_MAX_TRANSLATION).onEnd((event, success) => {
+        if (!success) return;
+        const box = boxAtX(boxesValue.value, event.x);
+        if (!box) return;
+        if (box.value === value && onSelectedValueActivate) {
+          scheduleOnRN(onSelectedValueActivate, value);
+        } else {
+          startPillMotionOnUI(box, pillX, pillWidth);
+          scheduleOnRN(setValue, box.value);
+        }
+      });
+      return Gesture.Race(pan, tap);
+    },
     [
       boxesValue,
       listWidthValue,
@@ -526,8 +553,8 @@ var MaskedTabBarTrigger = ({
   const { registerTrigger, measureRevision } = useMaskedTabBar("MaskedTabBar.Trigger");
   const layer = useMaskedTabLayer();
   const rowRef = useContext2(MaskedTabRowContext);
-  const triggerRef = useRef2(null);
-  const layoutRevision = useRef2(0);
+  const triggerRef = useRef(null);
+  const layoutRevision = useRef(0);
   useEffect(() => {
     if (measureRevision === 0 || layer !== "base") return;
     const row = rowRef?.current;
@@ -666,6 +693,7 @@ export {
   MaskedTabBarIcon,
   MaskedTabBarLabel,
   MaskedTabBarList,
+  MaskedTabBarMotionProvider,
   MaskedTabBarRoot,
   MaskedTabBarTrigger,
   index_default as default

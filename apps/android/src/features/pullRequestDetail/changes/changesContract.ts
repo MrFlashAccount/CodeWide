@@ -29,7 +29,7 @@ export type PullRequestChangesProps = {
   readonly nowMs: number;
   readonly offline: boolean;
   readonly onRun: (action: ActionDescriptor) => void;
-  readonly onStale: (kind: "outcomeUnknown" | "stale") => void;
+  readonly onStale: () => void;
   readonly overview: PullRequestOverview;
   /** Capabilities the PR account's plugin declares; empty until the accounts snapshot loads. */
   readonly providerCapabilities: readonly string[];

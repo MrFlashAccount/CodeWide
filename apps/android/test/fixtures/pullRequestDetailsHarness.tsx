@@ -5,11 +5,12 @@
  * module mocks (`jest.mock` is hoisted per file).
  */
 import { RpcResponseError } from "@codewide/sync-client";
-import { act, render, within } from "@testing-library/react-native";
+import { act, fireEvent, render, within } from "@testing-library/react-native";
 import { Suspense, type ReactNode } from "react";
 import { Text } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { AppNoticeProvider } from "../../src/ui/AppNotice";
 import { parsePullRequestKeyParam } from "../../src/data/forgeContract";
 import { createForgeResources } from "../../src/data/forgeResources";
 import { createReviewResources } from "../../src/data/reviewResources";
@@ -40,9 +41,11 @@ export function companion({
   conversation,
   conversationDeclared,
   extraCapabilities,
+  drafts = [],
   olderConversation,
   overview = overview91,
 }: {
+  readonly drafts?: readonly unknown[];
   readonly conversation: unknown;
   readonly conversationDeclared: boolean;
   /** Further capabilities the PR's plugin declares. */
@@ -73,7 +76,7 @@ export function companion({
     "companion/pullRequest/conversation/read": conversation,
     "companion/pullRequest/files/read": { files: [], headRevision: "head-1", nextCursor: null },
     "companion/pullRequest/read": overview,
-    "companion/review/drafts/read": { drafts: [] },
+    "companion/review/drafts/read": { drafts, revision: overview.headRevision },
   };
   const cursors: unknown[] = [];
   const rpcAfterAttach = async <Result,>(
@@ -154,6 +157,7 @@ export function renderScreen({
   capabilityOverrides = {},
   conversation = conversation91,
   conversationDeclared = true,
+  drafts = [],
   extraCapabilities = [],
   olderConversation = null,
   openChanges = jest.fn(),
@@ -163,6 +167,7 @@ export function renderScreen({
   readonly capabilityOverrides?: Partial<Capabilities>;
   readonly conversation?: unknown;
   readonly conversationDeclared?: boolean;
+  readonly drafts?: readonly unknown[];
   readonly extraCapabilities?: readonly string[];
   readonly olderConversation?: unknown;
   readonly openChanges?: (view: "files" | "guide") => void;
@@ -175,6 +180,7 @@ export function renderScreen({
   const server = companion({
     conversation,
     conversationDeclared,
+    drafts,
     extraCapabilities,
     olderConversation,
     overview,
@@ -186,7 +192,9 @@ export function renderScreen({
         insets: { bottom: 0, left: 0, right: 0, top: 0 },
       }}
     >
-      <Suspense fallback={<Text>Loading pull request</Text>}>{children}</Suspense>
+      <AppNoticeProvider>
+        <Suspense fallback={<Text>Loading pull request</Text>}>{children}</Suspense>
+      </AppNoticeProvider>
     </SafeAreaProvider>
   );
   const view = render(
@@ -219,6 +227,19 @@ export function renderScreen({
   );
   mounted.push({ clear: () => server.forge.queryClient.clear(), unmount: view.unmount });
   return { server, view };
+}
+
+/** Supplies the two native layout events for tests that interact with a visible discussion. */
+export async function renderVisibleDiscussion(options: Parameters<typeof renderScreen>[0]) {
+  const screen = renderScreen(options);
+  await screen.view.findByTestId("pull-request-discussion-heading-count");
+  const section = screen.view.getByTestId("pull-request-conversation");
+  const page = screen.view.getByTestId("pull-request-overview");
+  fireEvent(section, "layout", {
+    nativeEvent: { layout: { x: 0, y: 480, width: 420, height: 40 } },
+  });
+  fireEvent(page, "layout", { nativeEvent: { layout: { x: 0, y: 0, width: 420, height: 900 } } });
+  return screen;
 }
 
 /** Types into one reply input through the editor's native text and Markdown events. */

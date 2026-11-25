@@ -81,9 +81,8 @@ export function workspaceThreadsSearchSessionId(root: NavigationState | undefine
 export function useWorkspaceThreadsSearchSessionId(): string | null {
   const navigation = useNavigationContainerRef();
   const subscribe = useEvent((onChange: () => void) => navigation.addListener("state", onChange));
-  const snapshot = useEvent(() =>
-    navigation.isReady() ? workspaceThreadsSearchSessionId(navigation.getRootState()) : null,
-  );
+  const snapshot = () =>
+    navigation.isReady() ? workspaceThreadsSearchSessionId(navigation.getRootState()) : null;
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 

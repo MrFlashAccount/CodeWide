@@ -1,8 +1,10 @@
 import { useThreadHeaderActions } from "./threadHeaderActions";
-import type { ThreadHeaderProps } from "./threadHeaderContract";
+import { ThreadPullRequestPickerContext, type ThreadHeaderProps } from "./threadHeaderContract";
 /** V1 ThreadActions owner, extracted without changing interaction or resource lifetime. */
-import { useState, type ReactElement } from "react";
+import { useContext, useState, type ReactElement } from "react";
+import { AttachPullRequestSheet } from "../pullRequests/AttachPullRequestSheet";
 import { Platform } from "react-native";
+import { useEvent } from "../../react/useEvent";
 import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { AppSheet } from "../../ui/AppSheet";
 import { MenuAction } from "../../ui/MenuAction";
@@ -11,10 +13,30 @@ import { OverflowMenuButton } from "../../ui/OverflowMenuButton";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./ThreadActions.styles";
 
-export function ThreadHeaderMenu(props: ThreadHeaderProps) {
+export function ThreadHeaderMenu(props: ThreadHeaderProps): ReactElement {
   const { onOpenMenu } = props;
   const [webMenuVisible, setWebMenuVisible] = useState(false);
-  const { actions, handleAction } = useThreadHeaderActions(props);
+  const [picking, setPicking] = useState(false);
+  const picker = useContext(ThreadPullRequestPickerContext);
+  const open = useEvent(() => {
+    setPicking(true);
+  });
+  const close = useEvent(() => {
+    setPicking(false);
+  });
+  const available = picker?.threadId === props.threadId;
+  const { actions, handleAction } = useThreadHeaderActions(props, available ? open : null);
+  const sheet =
+    picking && available ? (
+      <AttachPullRequestSheet
+        badges={picker.badges}
+        connectionId={picker.connectionId}
+        forge={picker.forge}
+        key={picker.connectionId}
+        onAttach={picker.onAttach}
+        onClose={close}
+      />
+    ) : null;
   if (Platform.OS === "web") {
     return (
       <>
@@ -52,15 +74,19 @@ export function ThreadHeaderMenu(props: ThreadHeaderProps) {
             ))}
           </AppSheet>
         )}
+        {sheet}
       </>
     );
   }
   return (
-    <NativeThreadMenu
-      actions={actions}
-      onSelect={handleAction}
-      {...(onOpenMenu === undefined ? {} : { onOpenMenu })}
-    />
+    <>
+      <NativeThreadMenu
+        actions={actions}
+        onSelect={handleAction}
+        {...(onOpenMenu === undefined ? {} : { onOpenMenu })}
+      />
+      {sheet}
+    </>
   );
 }
 

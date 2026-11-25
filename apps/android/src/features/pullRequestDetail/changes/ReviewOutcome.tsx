@@ -5,8 +5,9 @@ import { colors, controlSize, spacing, typeScale } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 import { publishedDetail, publishedTitle } from "./submitResultCopy";
 
-/** What the last Submit did. */
+/** The most recent acknowledged publication, retained if a later attempt fails. */
 export type SubmitResult =
+  | { readonly kind: "verdict"; readonly reviewUrl: string | null; readonly verdict: string }
   | {
       readonly kind: "published";
       readonly left: number;
@@ -14,17 +15,12 @@ export type SubmitResult =
       readonly reviewUrl: string | null;
       readonly toAgent: number;
       readonly verdict: string;
-    }
-  | {
-      readonly kind: "failed";
-      readonly reason: string;
-      readonly verdict: string;
     };
 
 /**
  * One slim line under the Changes toolbar reporting the last Submit instead of
  * a toast: what was published (with the forge's review page when it is an
- * https page on the account host) or why Submit failed while the drafts stay.
+ * https page on the account host) after a successful submission.
  */
 export function ReviewOutcome({
   host,
@@ -33,21 +29,12 @@ export function ReviewOutcome({
   readonly host: string;
   readonly result: SubmitResult;
 }): React.JSX.Element {
-  if (result.kind === "failed") {
-    return (
-      <View style={styles.row} testID="review-dock-outcome">
-        <Text numberOfLines={1} style={[styles.text, styles.failed]}>
-          {`${result.verdict} was not submitted: ${result.reason}`}
-        </Text>
-      </View>
-    );
-  }
   const reviewUrl = result.reviewUrl === null ? null : safeProviderUrl(result.reviewUrl, host);
   return (
     <View style={styles.row} testID="review-dock-outcome">
       <Text numberOfLines={1} style={styles.text}>
         <Text style={styles.title}>{publishedTitle(result.verdict, host)}</Text>
-        {` · ${publishedDetail(result)}`}
+        {result.kind === "published" ? ` · ${publishedDetail(result)}` : null}
       </Text>
       {reviewUrl === null ? null : (
         <Text
@@ -66,9 +53,6 @@ export function ReviewOutcome({
 }
 
 const styles = StyleSheet.create({
-  failed: {
-    color: colors.error,
-  },
   link: {
     ...typeScale.label,
     color: colors.primary,

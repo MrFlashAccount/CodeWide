@@ -10,8 +10,8 @@ type GoalMode =
   | { readonly goal: ThreadGoal; readonly kind: "edit" };
 
 type ComposerGoalModeBinding = {
-  readonly captureGoalAttachment: () => () => void;
   readonly closeGoalAttachment: () => void;
+  readonly closeSubmittedGoalAttachment: () => void;
   readonly editingGoal: ThreadGoal | null;
   readonly goalAttachmentVisible: boolean;
   readonly openGoalAttachment: () => void;
@@ -38,18 +38,15 @@ export function useComposerGoalMode(scope: string): ComposerGoalModeBinding {
   const closeGoalAttachment = useEvent(() => {
     mode$.set({ kind: "idle" });
   });
-  const captureGoalAttachment = useEvent(() => {
-    const owner = mode$;
-    const captured = owner.peek();
-    return () => {
-      if (owner.peek() === captured) {
-        owner.set({ kind: "idle" });
-      }
-    };
-  });
+  // A pending submission may only close the exact edit it captured.
+  const closeSubmittedGoalAttachment = () => {
+    if (mode$.peek() === mode) {
+      mode$.set({ kind: "idle" });
+    }
+  };
   return {
-    captureGoalAttachment,
     closeGoalAttachment,
+    closeSubmittedGoalAttachment,
     editingGoal: mode.kind === "edit" ? mode.goal : null,
     goalAttachmentVisible: mode.kind !== "idle",
     openGoalAttachment,

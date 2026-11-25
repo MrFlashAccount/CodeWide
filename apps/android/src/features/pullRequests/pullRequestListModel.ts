@@ -119,14 +119,6 @@ export function pullRequestTermText(field: PullRequestTermField): string {
   return termDraftModel[field].get();
 }
 
-/** Whether the Accounts sheet is open; the catalog header and problem rows open it. */
-export const forgeAccountsSheetOpen = observable(false);
-
-/** Opens the Accounts sheet of the visible catalog. */
-export function openForgeAccounts(): void {
-  forgeAccountsSheetOpen.set(true);
-}
-
 /** Applies the submitted free-text or qualifier query. */
 export function selectPullRequestSearchText(text: string): void {
   const normalized = text.trim();

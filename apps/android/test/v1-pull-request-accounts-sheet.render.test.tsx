@@ -9,12 +9,14 @@ import {
   type ForgeAccountKey,
   type ForgeAccountsSnapshot,
 } from "../src/data/forgeContract";
-import { AccountsSheet } from "../src/features/pullRequests/accounts/AccountsSheet";
+import { ConnectionForgeAccounts } from "../src/features/pullRequests/accounts/ConnectionForgeAccounts";
+import { SettingsSheet } from "../src/features/settings/SettingsSheet";
 import type { PullRequestsWorkspaceCapabilities } from "../src/features/pullRequests/workspaceCapabilities";
 import {
   arcanumProvider,
   connectedAccount,
   githubProvider,
+  hostLoginFlow,
   onboardingAccounts,
 } from "./fixtures/forgeWireFixtures";
 import { invokeAppDialogAction, getAppDialogRequest, resetAppDialog } from "./mocks/AppDialog";
@@ -23,7 +25,9 @@ import { invokeAppDialogAction, getAppDialogRequest, resetAppDialog } from "./mo
 jest.mock("../src/ui/AppSheet", () => {
   const { View: MockView } = jest.requireActual<typeof import("react-native")>("react-native");
   return {
-    AppSheet: ({ children }: { readonly children: ReactNode }) => <MockView>{children}</MockView>,
+    AppSheet: ({ children }: { readonly children: ReactNode }) => (
+      <MockView testID="native-sheet-window">{children}</MockView>
+    ),
     AppSheetScrollView: ({
       children,
       testID,
@@ -92,11 +96,27 @@ function renderSheet(
         insets: { bottom: 0, left: 0, right: 0, top: 0 },
       }}
     >
-      <AccountsSheet
-        capabilities={workspaceCapabilities}
-        connectionId="server"
-        onDismiss={() => undefined}
-        snapshot={snapshot}
+      <SettingsSheet
+        advanced={null}
+        chats={null}
+        downloads={null}
+        security={null}
+        servers={[]}
+        version={null}
+        entryPage="pullRequests"
+        onAddServer={() => undefined}
+        onClose={() => undefined}
+        visible
+        voiceAssistant={{ content: null, description: "", onOpen: () => undefined }}
+        renderPullRequests={(page) => (
+          <ConnectionForgeAccounts
+            capabilities={workspaceCapabilities}
+            connectionId="server"
+            page={page}
+            serverName="Workstation"
+            snapshot={snapshot}
+          />
+        )}
       />
     </SafeAreaProvider>,
   );
@@ -128,60 +148,114 @@ function deferred<Value>(): {
   return { promise, reject, resolve };
 }
 
-it("lists each provider's accounts with an Add account row and no provider switch", () => {
-  const view = renderSheet(POOL, capabilities());
-
-  const github = within(view.getByTestId("forge-provider-group-github"));
-  expect(github.getByText("GitHub")).toBeOnTheScreen();
-  expect(github.getByText("@sergeigarin")).toBeOnTheScreen();
-  expect(github.getByText("@reviewer")).toBeOnTheScreen();
-  expect(github.getByRole("button", { name: "Add GitHub account" })).toBeOnTheScreen();
-  // Account switches only: one per account, none for a provider.
-  expect(view.UNSAFE_getAllByType(Switch)).toHaveLength(2);
-  expect(view.queryByLabelText(/enabled$/u)).toBeNull();
-  expect(accountSwitch(view, "sergeigarin").props.value).toBe(true);
-  expect(accountSwitch(view, "reviewer").props.value).toBe(false);
-  // Removal lives in the row menu, not as primary buttons.
-  expect(view.queryByRole("button", { name: "Remove account" })).toBeNull();
-  expect(view.queryByRole("button", { name: "Log out on host" })).toBeNull();
-});
-
-it("shows a missing plugin quietly without an Add account action", () => {
-  const view = renderSheet(POOL, capabilities());
-
-  const arcanum = within(view.getByTestId("forge-provider-group-arcanum"));
-  expect(arcanum.getByText("Plugin not installed")).toBeOnTheScreen();
+it("lists accounts from different providers together and offers Add account once", () => {
+  const mixed = snapshotOf({
+    ...onboardingAccounts,
+    accounts: [
+      connectedAccount,
+      {
+        ...connectedAccount,
+        account: "arc-review",
+        login: "arc-review",
+        host: arcanumProvider.defaultHost,
+        pluginId: arcanumProvider.pluginId,
+      },
+      secondAccount,
+    ],
+  });
+  const view = renderSheet(mixed, capabilities());
+  const buttons = view.getAllByRole("button").map((button) => button.props.accessibilityLabel);
+  expect(buttons).toEqual([
+    "Back to settings",
+    "@sergeigarin, github.com",
+    `@arc-review, ${arcanumProvider.defaultHost}`,
+    "@reviewer, github.com",
+    "Add account",
+  ]);
   expect(
-    arcanum.getByText("The provider's plugin is not installed on the companion host"),
+    within(view.getByTestId("forge-account-arc-review")).getByText(
+      `Arcanum · ${arcanumProvider.defaultHost}`,
+    ),
   ).toBeOnTheScreen();
-  expect(arcanum.queryByRole("button", { name: "Add Arcanum account" })).toBeNull();
+  expect(view.UNSAFE_queryAllByType(Switch)).toHaveLength(0);
+  fireEvent.press(view.getByRole("button", { name: "@reviewer, github.com" }));
+  expect(accountSwitch(view, "reviewer").props.value).toBe(false);
+  expect(view.getAllByTestId("native-sheet-window")).toHaveLength(1);
+  expect(view.getByRole("header", { name: "@reviewer" })).toBeOnTheScreen();
+  expect(view.queryByText("Add account")).toBeNull();
+  fireEvent.press(view.getByRole("button", { name: "Back to pull requests" }));
+  expect(view.getByRole("header", { name: "Pull requests" })).toBeOnTheScreen();
+  expect(view.getByRole("button", { name: "Add account" })).toBeOnTheScreen();
 });
 
-it("opens the provider's sign-in sheet from Add account", () => {
+it("explains a missing plugin in the shared chooser and keeps it unavailable for sign-in", () => {
   const view = renderSheet(POOL, capabilities());
-
-  expect(view.queryByTestId("forge-sign-in-sheet-github")).toBeNull();
-  fireEvent.press(view.getByRole("button", { name: "Add GitHub account" }));
-
-  const signIn = within(view.getByTestId("forge-sign-in-sheet-github"));
-  expect(signIn.getByText("Add GitHub account")).toBeOnTheScreen();
-  expect(signIn.getByText("Sign in with GitHub")).toBeOnTheScreen();
-  expect(signIn.getByText("Paste a token")).toBeOnTheScreen();
+  fireEvent.press(view.getByRole("button", { name: "Add account" }));
+  expect(view.getByRole("button", { name: "Arcanum" })).toBeDisabled();
+  expect(
+    view.getByText(/Plugin not installed.*not installed on the companion host/),
+  ).toBeOnTheScreen();
+  expect(view.getByRole("button", { name: "GitHub" })).toBeEnabled();
 });
 
-it("treats a provider disabled in the registry like any other provider", () => {
+it("keeps the provider choice even on an empty single-provider server and returns to settings after sign-in", async () => {
+  const empty = snapshotOf({ ...onboardingAccounts, accounts: [], providers: [githubProvider] });
+  const linked = POOL.accounts[0];
+  const startAuth = jest.fn(async () => ({ kind: "connected" as const, account: linked }));
+  const view = renderSheet(empty, capabilities({ startAuth }));
+  fireEvent.press(view.getByRole("button", { name: "Add account" }));
+  fireEvent.press(view.getByRole("button", { name: "GitHub" }));
+  fireEvent.press(view.getByRole("button", { name: "Back" }));
+  fireEvent.press(view.getByRole("button", { name: "GitHub" }));
+  await act(async () => {
+    fireEvent.press(view.getByRole("button", { name: "Use @sergeigarin" }));
+  });
+  expect(startAuth).toHaveBeenCalledWith("server", {
+    host: "github.com",
+    login: "sergeigarin",
+    methodId: "gh-link",
+    pluginId: "github",
+  });
+  expect(view.queryByRole("button", { name: "Use @sergeigarin" })).toBeNull();
+  expect(view.queryByRole("header", { name: "Add account" })).toBeNull();
+  expect(view.getByRole("button", { name: "Add account" })).toBeOnTheScreen();
+});
+
+it("keeps the three sign-in steps and their Back history inside the original settings sheet", () => {
+  const view = renderSheet(POOL, capabilities());
+  const sheet = view.getByTestId("native-sheet-window");
+  fireEvent.press(view.getByRole("button", { name: "Add account" }));
+  expect(within(sheet).getByRole("header", { name: "Connect a provider" })).toBeOnTheScreen();
+  fireEvent.press(within(sheet).getByRole("button", { name: "GitHub" }));
+  fireEvent.press(within(sheet).getByRole("button", { name: "Paste a token" }));
+  expect(within(sheet).getByText("Save token")).toBeOnTheScreen();
+  expect(view.queryByTestId("tray-backdrop")).toBeNull();
+  fireEvent.press(within(sheet).getByRole("button", { name: "Back" }));
+  expect(within(sheet).queryByText("Save token")).toBeNull();
+  fireEvent.press(within(sheet).getByRole("button", { name: "Back" }));
+  fireEvent.press(within(sheet).getByRole("button", { name: "Back to pull requests" }));
+  expect(within(sheet).getByRole("button", { name: "Add account" })).toBeOnTheScreen();
+});
+
+it("resumes a pending host sign-in when that provider is selected", () => {
+  const pending = snapshotOf({ ...onboardingAccounts, flows: [hostLoginFlow] });
+  const view = renderSheet(pending, capabilities());
+  fireEvent.press(view.getByRole("button", { name: "Add account" }));
+  fireEvent.press(view.getByRole("button", { name: "GitHub" }));
+  expect(view.getByText(hostLoginFlow.userCode)).toBeOnTheScreen();
+});
+
+it("keeps accounts and sign-in available for a provider disabled in the registry", () => {
   const disabled = snapshotOf({
     ...onboardingAccounts,
     accounts: [{ ...connectedAccount, catalogEnabled: true }],
     providers: [{ ...githubProvider, enabled: false, installation: { state: "installed" } }],
   });
   const view = renderSheet(disabled, capabilities());
-
-  const github = within(view.getByTestId("forge-provider-group-github"));
-  expect(github.getByText("@sergeigarin")).toBeOnTheScreen();
-  expect(view.UNSAFE_getAllByType(Switch)).toHaveLength(1);
-  fireEvent.press(github.getByRole("button", { name: "Add GitHub account" }));
-  expect(view.getByTestId("forge-sign-in-sheet-github")).toBeOnTheScreen();
+  expect(view.getByText("@sergeigarin")).toBeOnTheScreen();
+  fireEvent.press(view.getByRole("button", { name: "Add account" }));
+  fireEvent.press(view.getByRole("button", { name: "GitHub" }));
+  expect(view.getByRole("button", { name: "Sign in with GitHub" })).toBeOnTheScreen();
 });
 
 it("calls the account switch, holds the requested value while pending and restores it on failure", async () => {
@@ -190,13 +264,14 @@ it("calls the account switch, holds the requested value while pending and restor
     (_connectionId: string, _account: ForgeAccountKey, _enabled: boolean) => request.promise,
   );
   const view = renderSheet(POOL, capabilities({ setAccountEnabled }));
+  fireEvent.press(view.getByRole("button", { name: "@sergeigarin, github.com" }));
   act(() => {
     accountSwitch(view, "sergeigarin").props.onValueChange(false);
   });
 
   expect(setAccountEnabled).toHaveBeenCalledWith("server", connectedAccount.account, false);
   expect(accountSwitch(view, "sergeigarin").props).toMatchObject({ disabled: true, value: false });
-  expect(view.getByText("@sergeigarin")).toBeOnTheScreen();
+  expect(view.getByRole("header", { name: "@sergeigarin" })).toBeOnTheScreen();
 
   await act(async () => {
     request.reject(new Error("The companion refused the change"));
@@ -211,6 +286,7 @@ it("removes an account from the row menu and confirms a host logout", async () =
   const disconnect = jest.fn(() => Promise.resolve());
   const view = renderSheet(POOL, capabilities({ disconnect }));
 
+  fireEvent.press(view.getByRole("button", { name: "@sergeigarin, github.com" }));
   fireEvent.press(view.getByLabelText("Actions for @sergeigarin"));
   fireEvent.press(view.getByLabelText("Actions for @sergeigarin: Remove account"));
   await act(async () => {
@@ -222,6 +298,8 @@ it("removes an account from the row menu and confirms a host logout", async () =
     mode: "unlink",
   });
 
+  fireEvent.press(view.getByRole("button", { name: "@sergeigarin, github.com" }));
+  fireEvent.press(view.getByLabelText("Actions for @sergeigarin"));
   fireEvent.press(view.getByLabelText("Actions for @sergeigarin: Log out on host"));
   expect(getAppDialogRequest()?.title).toBe("Log out @sergeigarin on github.com?");
   expect(disconnect).toHaveBeenCalledTimes(1);

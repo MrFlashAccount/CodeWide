@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 describe("release dry runs", () => {
-  it("limits release and Preview APKs to physical-device ABIs", () => {
+  it("defaults release and Preview APKs to physical-device ABIs and accepts an emulator override", () => {
     const fixture = createFixture("android-gradle");
     copyFixtureFile(fixture, "scripts/android-gradle.sh");
     chmodSync(join(fixture, "scripts/android-gradle.sh"), 0o755);
@@ -48,6 +48,7 @@ printf '%s\\n' "$*" >>"$COMMAND_LOG"
     mkdirSync(androidHome, { recursive: true });
     const environment = {
       ANDROID_HOME: androidHome,
+      CODEWIDE_RELEASE_ARCHITECTURES: "",
       COMMAND_LOG: commandLog,
       HOME: join(fixture, "home"),
       JAVA_HOME: javaHome,
@@ -72,12 +73,19 @@ printf '%s\\n' "$*" >>"$COMMAND_LOG"
       fixture,
       environment,
     );
+    runCommand(
+      "sh",
+      ["scripts/android-gradle.sh", "--", ":app:assemblePreview"],
+      fixture,
+      { ...environment, CODEWIDE_RELEASE_ARCHITECTURES: "x86_64" },
+    );
 
     const log = readFileSync(commandLog, "utf8").split("\n");
-    expect(log).toHaveLength(4);
+    expect(log).toHaveLength(5);
     expect(log[0]).toMatch(/ -PreactNativeArchitectures=arm64-v8a :app:assembleRelease$/u);
     expect(log[1]).toMatch(/ -PreactNativeArchitectures=arm64-v8a :app:assemblePreview$/u);
     expect(log[2]).toMatch(/\/apps\/android\/android :app:assembleDebug$/u);
+    expect(log[3]).toMatch(/ -PreactNativeArchitectures=x86_64 :app:assemblePreview$/u);
   });
 
   it("keeps release-candidate deployment behind exactly three operator one-shots", () => {

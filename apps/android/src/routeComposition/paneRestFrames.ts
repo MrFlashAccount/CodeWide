@@ -1,3 +1,4 @@
+import { HALF_PERCENT, FULL_PERCENT, yogaPercent } from "../ui/paneSplitSizes";
 import type { DimensionValue } from "react-native";
 
 import { V1_TWO_PANE_MIN_WIDTH } from "../native/window-layout";
@@ -53,7 +54,7 @@ export type RightFrame = {
 };
 
 const FULL = "100%";
-const HALF = "50%";
+
 // Keep the reading surface viable while the UI thread still places it beside the catalog
 // in a window that has already folded. Clear the bound in the same style that stacks it.
 const MIN_BESIDE_WIDTH = V1_TWO_PANE_MIN_WIDTH - sidebarWidth(V1_TWO_PANE_MIN_WIDTH);
@@ -87,6 +88,10 @@ export function restCatalogFrame(arrangement: PaneArrangement): CatalogFrame {
   const opacity = arrangement.left === "covered" ? COVERED_CATALOG_OPACITY : 1;
   const keepsSidebar =
     arrangement.sidebar && (arrangement.left === "beside" || arrangement.left === "covered");
+  const { catalogPercent = null } = arrangement;
+  if (keepsSidebar && catalogPercent !== null) {
+    return { maxWidth: FULL, minWidth: 0, opacity, width: yogaPercent(catalogPercent) };
+  }
   return keepsSidebar
     ? {
         maxWidth: SIDEBAR_MAX_WIDTH,
@@ -100,6 +105,7 @@ export function restCatalogFrame(arrangement: PaneArrangement): CatalogFrame {
 /** Beside the catalog the destination takes the rest of the row; otherwise it lies over it. */
 export function restDestinationFrame(arrangement: PaneArrangement): DestinationFrame {
   "worklet";
+  const { catalogPercent = null } = arrangement;
   const radius = arrangement.centerLeftRadius;
   switch (arrangement.left) {
     case "beside":
@@ -108,7 +114,7 @@ export function restDestinationFrame(arrangement: PaneArrangement): DestinationF
         borderTopLeftRadius: radius,
         flexGrow: 1,
         left: 0,
-        minWidth: MIN_BESIDE_WIDTH,
+        minWidth: catalogPercent === null ? MIN_BESIDE_WIDTH : 0,
         position: "relative",
         width: "auto",
       };
@@ -146,7 +152,7 @@ export function restCenterClipFrame(arrangement: PaneArrangement): CenterClipFra
     borderTopRightRadius: arrangement.centerRightRadius,
     width:
       arrangement.right === "beside" || (arrangement.right === "cover" && arrangement.sidebar)
-        ? HALF
+        ? yogaPercent(arrangement.centerPercent ?? HALF_PERCENT)
         : FULL,
   };
 }
@@ -157,13 +163,15 @@ export const REST_CENTER_CONTENT_FRAME: CenterContentFrame = { width: FULL };
 /** The right pane beside the center, over it, or past the trailing edge at its beside width. */
 export function restRightFrame(arrangement: PaneArrangement): RightFrame {
   "worklet";
+  const center = arrangement.centerPercent ?? HALF_PERCENT;
+  const width = yogaPercent(FULL_PERCENT - center);
   switch (arrangement.right) {
     case "beside":
-      return { left: arrangement.left === "alone" ? 0 : HALF, width: HALF };
+      return { left: arrangement.left === "alone" ? 0 : yogaPercent(center), width };
     case "cover":
       return { left: 0, width: FULL };
     case "offscreen":
       break;
   }
-  return { left: arrangement.left === "alone" ? 0 : FULL, width: HALF };
+  return { left: arrangement.left === "alone" ? 0 : FULL, width };
 }

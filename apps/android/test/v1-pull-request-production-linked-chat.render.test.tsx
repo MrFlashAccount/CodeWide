@@ -1,8 +1,16 @@
 import { act, fireEvent, testRouter, waitFor, within } from "expo-router/testing-library";
 import { router } from "expo-router/build/imperative-api";
 
+import { forgeAccountKey, pullRequestKey } from "../src/data/forgeContract";
+import { forgeResources } from "../src/data/forgeRuntime";
+import { forgeLinkOptions } from "../src/routeComposition/forgeLinkOptions";
+
 import { linkedThreadSelectionKey } from "../src/routeComposition/pullRequestNavigation";
-import { renderProductionPullRequestRouter } from "./fixtures/PullRequestProductionRouter";
+import {
+  linkServer as mockLinkServer,
+  prLink,
+  renderProductionPullRequestRouter,
+} from "./fixtures/PullRequestProductionRouter";
 import { productionReviewThread } from "./fixtures/PullRequestProductionScreens";
 import { getAppDialogRequest, resetAppDialog } from "./mocks/AppDialog";
 import { RESTING_SIDEBAR } from "./fixtures/paneRestLayout";
@@ -25,6 +33,7 @@ jest.mock("expo-router", () => {
   const { useIsFocused: useRealIsFocused } = jest.requireActual("expo-router/build/useIsFocused");
   return {
     Stack: RealStack,
+    Redirect: jest.requireActual("expo-router/build/link/Redirect").Redirect,
     useIsFocused: useRealIsFocused,
     useLocalSearchParams: hooks.useLocalSearchParams,
     usePathname: hooks.usePathname,
@@ -46,10 +55,16 @@ jest.mock("expo-router", () => {
   };
 });
 jest.mock("expo-symbols", () => ({}));
-jest.mock("../src/data/forgeRuntime", () => ({
-  forgeResources: {},
-  reviewResources: {},
+// The native sheet needs a measured window to enable presses. Keep the account rows and router real.
+jest.mock("../src/ui/AppSheet", () => ({
+  AppSheet: jest.requireActual("react-native").View,
+  AppSheetScrollView: jest.requireActual("react-native").ScrollView,
 }));
+jest.mock("../src/data/forgeRuntime", () => {
+  const { QueryClient } =
+    jest.requireActual<typeof import("@tanstack/react-query")>("@tanstack/react-query");
+  return { forgeResources: { queryClient: new QueryClient() }, reviewResources: {} };
+});
 jest.mock("../src/data/forgeQueryResource", () => ({ useForgeQuery: () => ({}) }));
 jest.mock("../src/data/forgeRemoteValue", () => ({ remoteValue: () => null }));
 jest.mock("../src/data/minuteClock", () => ({ useMinuteClock: () => 0 }));
@@ -119,6 +134,7 @@ jest.mock("../src/services/workspace/workspaceRouteResources", () => ({
       desktop: mockDesktop,
       list: {
         loadedThreadSummaries: [],
+        settingsConnections: [mockLinkServer],
         prepareThreadLink: (selectionKey: string) => {
           mockOrder.push("prepare");
           mockPrepareThreadLink(selectionKey);
@@ -164,9 +180,11 @@ function expectCatalogModeBarHidden(
   view: ReturnType<typeof renderProductionPullRequestRouter>,
 ): void {
   expect(view.queryByTestId("floating-catalog-mode-bar")).toBeNull();
-  expect(
-    view.getByTestId("floating-catalog-mode-bar", { includeHiddenElements: true }),
-  ).not.toBeVisible();
+  for (const bar of view.getAllByTestId("floating-catalog-mode-bar", {
+    includeHiddenElements: true,
+  })) {
+    expect(bar).not.toBeVisible();
+  }
 }
 
 beforeEach(() => {
@@ -180,6 +198,62 @@ beforeEach(() => {
   mockWorkspaceListeners.clear();
   resetAppDialog();
 });
+function cacheResolvedLink(count: number, origin: string | null): void {
+  const url = new URL(prLink);
+  const targets = ["alice", "bob"].slice(0, count).map((login) => ({
+    account: forgeAccountKey(login, "account"),
+    canonical: pullRequestKey("fpr1.github-91", "canonical"),
+    connectionId: "server",
+    login,
+    number: "7",
+    provider: "Fixture Forge",
+    pullRequest: pullRequestKey(`fpr1.${login}`, "pullRequest"),
+    repository: "octo/repo",
+    server: "Fixture server",
+    serverIconId: "desktop" as const,
+  }));
+  forgeResources.queryClient.setQueryData(
+    forgeLinkOptions([mockLinkServer], url, origin).queryKey,
+    targets,
+  );
+}
+
+it("retains the source chat when a compact in-app link opens a PR and the window unfolds", async () => {
+  cacheResolvedLink(1, "server");
+  const view = renderProductionPullRequestRouter("/threads/server/source-chat");
+  fireEvent.press(view.getByTestId("chat-pr-link"));
+  await waitFor(() => expect(view.getPathname()).toBe("/pulls/server/fpr1.alice"));
+  resizeWorkspace(true, 860);
+  expect(view.getByTestId("production-pull-requests-catalog")).toBeSelected();
+  fireEvent(view.getByRole("tab", { name: "Threads" }), "accessibilityTap");
+  expect(view.getPathname()).toBe("/threads/server/source-chat");
+});
+
+it.each([1, 2])(
+  "shows the catalog after unfolding a shared PR with %i matching accounts",
+  async (count) => {
+    cacheResolvedLink(count, null);
+    const view = renderProductionPullRequestRouter(`/openpr?url=${encodeURIComponent(prLink)}`);
+    if (count === 2) {
+      fireEvent.press(await view.findByRole("button", { name: "@bob · Fixture Forge" }));
+    }
+    const expected = count === 2 ? "/pulls/server/fpr1.bob" : "/pulls/server/fpr1.alice";
+    await waitFor(() => expect(view.getPathname()).toBe(expected));
+    const detail = view.getByTestId("pull-request-primary-pane");
+    expect(view.queryByTestId("production-pull-requests-catalog")).toBeNull();
+    resizeWorkspace(true, 860);
+    const catalog = view.getByTestId("production-pull-requests-catalog");
+    expect(catalog).toBeVisible();
+    expect(catalog).toBeSelected();
+    expect(view.getByTestId("floating-catalog-mode-bar")).toBeVisible();
+    expect(view.getByTestId("pull-request-primary-pane")).toBe(detail);
+    expect(view.getPathname()).toBe(expected);
+    resizeWorkspace(false, 400);
+    testRouter.back();
+    expect(view.getPathname()).toBe("/pulls");
+  },
+);
+
 it("opens the overview's review chat through preparation and canonical tab navigation", async () => {
   productionReviewThread.current = { threadId: "resolved-thread", title: "Linked thread" };
   const view = renderProductionPullRequestRouter();
@@ -390,6 +464,7 @@ it("keys compact claims to the active route across resize, Back, close and resto
   });
   expect(accessibleActionLabels(view)).toEqual([
     "Pull requests",
+    "Resize panels",
     "Start linked review chat",
     "Threads",
   ]);

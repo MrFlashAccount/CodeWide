@@ -272,7 +272,7 @@ it("hides the video chrome on a tap without taking the touch from the player", a
   expect(controls().props.pointerEvents).toBe("box-none");
 });
 
-it("downloads a host video from its actions menu", async () => {
+it("downloads a host video once and offers to open the verified file on a second tap", async () => {
   const directory = { name: "Downloads", native: {}, uri: "content://downloads" };
   const pickDirectory = jest.fn(async () => directory);
   const start = jest.fn(() => ({
@@ -285,8 +285,10 @@ it("downloads a host video from its actions menu", async () => {
       uri: "content://downloads/comparison.mp4",
     }),
   }));
+  const saved = { bytes: 1, mimeType: "video/mp4", uri: "content://downloads/comparison.mp4" };
+  const findSaved = jest.fn(async () => (start.mock.calls.length > 0 ? saved : null));
   const view = render(
-    <FullscreenProviders downloads={createTestDownloadManager({ pickDirectory, start })}>
+    <FullscreenProviders downloads={createTestDownloadManager({ findSaved, pickDirectory, start })}>
       <RouteAttachmentVideoPreview
         getAccess={access}
         name="comparison.mp4"
@@ -320,6 +322,13 @@ it("downloads a host video from its actions menu", async () => {
   });
   expect(pickDirectory).toHaveBeenCalledTimes(1);
   expect(view.getByText("File saved")).toBeTruthy();
+  await act(async () => {
+    menu?.props.onSelect("download");
+  });
+  expect(await view.findByText("Already downloaded")).toBeTruthy();
+  const notice = view.getByRole("alert", { name: "Already downloaded" });
+  expect(within(notice).getByText("Open")).toBeTruthy();
+  expect(start).toHaveBeenCalledTimes(1);
 });
 
 it("offers no download for a video without a direct download route", async () => {

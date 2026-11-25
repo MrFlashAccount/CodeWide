@@ -7,12 +7,14 @@ import { withSpring } from "react-native-reanimated";
  * no visible bounce; long enough for the eye to follow a pane across a tablet-width screen. The
  * spring keeps Reanimated's default `ReduceMotion.System`, so the system setting stills it.
  */
-export const PANE_SPRING_DURATION_MS = 460;
+// Reanimated settles a duration-based spring in approximately 1.5 perceptual durations.
+const PANE_SPRING_DURATION_MS = 150;
 const PANE_SPRING_DAMPING_RATIO = 0.92;
 /** How far a covered catalog dims under the destination that slides over it. */
 export const COVERED_CATALOG_OPACITY = 0;
 
-const PANE_SPRING = {
+/** Settles a released divider and programmatic pane rearrangements with the same motion. */
+export const PANE_SPRING = {
   dampingRatio: PANE_SPRING_DAMPING_RATIO,
   duration: PANE_SPRING_DURATION_MS,
 } as const;

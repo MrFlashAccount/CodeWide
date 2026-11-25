@@ -13,7 +13,7 @@ export type ThreePanelsPane = "left" | "center" | "right";
  * `fullscreen` shows one pane alone while the other two stay mounted.
  */
 export type ThreePanelsVariant =
-  | { readonly kind: "stacked" }
+  | { readonly kind: "stacked"; readonly stashedRight?: true }
   | { readonly kind: "split"; readonly panes: "center+right" | "left+center" }
   | { readonly kind: "fullscreen"; readonly pane: ThreePanelsPane };
 

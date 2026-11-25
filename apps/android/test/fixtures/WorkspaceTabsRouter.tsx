@@ -7,6 +7,7 @@ import { Slot } from "expo-router/build/views/Navigator";
 import { Pressable, Text, View } from "react-native";
 
 import { WorkspaceCatalogMaster } from "../../src/routeComposition/WorkspaceCatalogMaster";
+import { WorkspaceSafeInsetsContext } from "../../src/routeComposition/workspaceSafeInsets";
 import { WorkspaceTabsRouteLayout } from "../../src/routeComposition/WorkspaceTabsRouteLayout";
 
 function RootLayout(): React.JSX.Element {
@@ -17,12 +18,16 @@ function StackLayout(): React.JSX.Element {
   return <Stack screenOptions={{ animation: "none", headerShown: false }} />;
 }
 
+export const testWorkspaceInsets = { bottom: 24, top: 32 } as const;
+
 function WorkspaceStackLayout(): React.JSX.Element {
   return (
-    <Stack screenOptions={{ animation: "none", headerShown: false }}>
-      <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="settings/index" options={{ presentation: "transparentModal" }} />
-    </Stack>
+    <WorkspaceSafeInsetsContext.Provider value={testWorkspaceInsets}>
+      <Stack screenOptions={{ animation: "none", headerShown: false }}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="settings/index" options={{ presentation: "transparentModal" }} />
+      </Stack>
+    </WorkspaceSafeInsetsContext.Provider>
   );
 }
 

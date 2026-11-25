@@ -78,6 +78,9 @@ export function useAnimatedStyle<Result>(factory: () => Result): Result {
   return factory();
 }
 
+// The renderer reads the prop snapshot synchronously in the absence of a native UI runtime.
+export { useAnimatedStyle as useAnimatedProps };
+
 export function useAnimatedRef<Value>(): RefObject<Value | null> {
   return createRef<Value>();
 }
@@ -171,7 +174,7 @@ export function cancelAnimation<Value>(_value: SharedValue<Value>): void {
   // Mock animations settle synchronously, so there is no scheduled frame to cancel.
 }
 
-function createAnimatedComponent<Props>(component: ComponentType<Props>): ComponentType<Props> {
+export function createAnimatedComponent<Props>(component: ComponentType<Props>): ComponentType<Props> {
   return component;
 }
 

@@ -1,3 +1,4 @@
+import { AppNoticeProvider } from "../src/ui/AppNotice";
 import { useSelector } from "@legendapp/state/react";
 import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react-native";
 
@@ -7,7 +8,6 @@ import { parsePullRequestScenarios } from "../src/data/forgeScenarioContract";
 import { threadId, type ThreadId } from "../src/data/reviewContract";
 import { CatalogActionButton } from "../src/features/pullRequestDetail/actions/CatalogActionButton";
 import {
-  scenarioFailure,
   scenarioViews,
   withScenarioLabels,
   type ScenarioViews,
@@ -115,21 +115,23 @@ function renderActions(startScenario: Start, views: ScenarioViews) {
   }
   const onOpenThread = jest.fn<undefined, [ThreadId]>();
   const model = createPullRequestScreenModel();
-  const hook = renderHook(() =>
-    usePullRequestActions({
-      capabilities,
-      model,
-      onChooseWorkspace: async () => Promise.reject(new Error("a live chat needs no choice")),
-      onOpenThread,
-      onRefresh: () => undefined,
-      scenarioViews: views,
-      target: {
-        connectionId: "server",
-        headRevision: HEAD,
-        host: "github.com",
-        pullRequest,
-      },
-    }),
+  const hook = renderHook(
+    () =>
+      usePullRequestActions({
+        capabilities,
+        model,
+        onChooseWorkspace: async () => Promise.reject(new Error("a live chat needs no choice")),
+        onOpenThread,
+        onRefresh: () => undefined,
+        scenarioViews: views,
+        target: {
+          connectionId: "server",
+          headRevision: HEAD,
+          host: "github.com",
+          pullRequest,
+        },
+      }),
+    { wrapper: AppNoticeProvider },
   );
   return { hook, model, onOpenThread };
 }
@@ -207,8 +209,8 @@ it("labels each Companion scenario state for the shown head", () => {
     threadId: REVIEW_CHAT,
   });
   expect(reviewLabel(failed)).toBe("Review PR");
-  expect(scenarioFailure(catalog(), failed)).toEqual({
-    label: "Review PR",
+  expect(failed.get(REVIEW)).toMatchObject({
+    kind: "failed",
     reason: "usage limit reached",
   });
   // A slot for another check leaves the anchored Fix in agent action idle.

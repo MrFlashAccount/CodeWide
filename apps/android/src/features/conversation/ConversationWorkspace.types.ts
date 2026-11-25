@@ -1,6 +1,7 @@
 import type { RenderBlock } from "@codewide/renderers";
 import type { ReactNode } from "react";
 import type { StoredConnection } from "../../data/connection-profile-types";
+import type { PullRequestKey } from "../../data/forgeContract";
 import type { FileTransferController } from "../../data/file-transfer-controller";
 import type { PendingServerRequest } from "../../data/pending-request-types";
 import type { SendMode, TurnSendOptions } from "../../data/thread-delivery-state";
@@ -56,6 +57,7 @@ export type ActiveWorkspaceConversationProps = {
     | {
         readonly connectionId: string;
         readonly kind: "thread";
+        readonly reviewPullRequest?: PullRequestKey;
         readonly searchWindow: SearchConversationWindow | null;
         readonly threadId: string;
       }

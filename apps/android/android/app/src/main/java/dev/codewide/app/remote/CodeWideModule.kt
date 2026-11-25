@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.OpenableColumns
 import android.net.Uri
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -128,6 +129,27 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   )
 
   @ReactMethod
+  fun shareDownloads(uris: com.facebook.react.bridge.ReadableArray, mimeType: String?, promise: Promise) {
+    try {
+      DownloadedDocumentActions.share(context, uris, mimeType)
+      promise.resolve(null)
+    } catch (error: Exception) {
+      promise.reject("SHARE_DOWNLOAD_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun renameDownload(uriValue: String, name: String, promise: Promise) {
+    thread(name = "CodeWideDownloadRename", isDaemon = true) {
+      try {
+        promise.resolve(DownloadedDocumentActions.rename(context, uriValue, name))
+      } catch (error: Exception) {
+        promise.reject("RENAME_DOWNLOAD_FAILED", error.message, error)
+      }
+    }
+  }
+
+  @ReactMethod
   fun openDocument(uriValue: String, mimeType: String?, promise: Promise) {
     try {
       val uri = Uri.parse(uriValue)
@@ -151,6 +173,21 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       promise.resolve(null)
     } catch (error: Throwable) {
       promise.reject("OPEN_DOCUMENT_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun contentDocumentName(uriValue: String, promise: Promise) {
+    thread(name = "CodeWideDocumentMetadata", isDaemon = true) {
+      try {
+        val uri = requireContentUri(uriValue)
+        val name = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+          if (it.moveToFirst()) it.getString(0) else null
+        }
+        promise.resolve(name)
+      } catch (error: Exception) {
+        promise.reject("DOCUMENT_METADATA_FAILED", "Could not read the selected file name", error)
+      }
     }
   }
 

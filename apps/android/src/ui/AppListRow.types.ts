@@ -59,9 +59,11 @@ interface AppListRowContentProps {
   /** Keep fixed versus content-measured mode stable during a row's mounted lifetime. */
   readonly fixedHeight?: number;
   readonly multiline?: boolean;
+  readonly onLongPress?: () => void;
   readonly onPress?: () => void;
   readonly position?: "only" | "first" | "middle" | "last";
   readonly selected?: boolean;
+  readonly selectionRole?: "checkbox" | "radio";
   /** Shimmers the unchanged title while an operation on the row awaits confirmation. */
   readonly shimmering?: boolean;
   readonly testID?: string;

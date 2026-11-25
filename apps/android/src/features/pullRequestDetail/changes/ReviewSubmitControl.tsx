@@ -3,7 +3,6 @@ import { useState } from "react";
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import type { DraftComment } from "../../../data/reviewDraftContract";
 import { dockCounts } from "./dockCounts";
-import type { SubmitResult } from "./ReviewOutcome";
 import { SubmitReviewSheet } from "./SubmitReviewSheet";
 import { SubmitSplitButton } from "./SubmitSplitButton";
 
@@ -16,7 +15,7 @@ export function ReviewSubmitControl({
   drafts,
   host,
   offline,
-  result,
+  retry,
   submit,
   verdicts,
 }: {
@@ -24,7 +23,7 @@ export function ReviewSubmitControl({
   readonly drafts: readonly DraftComment[];
   readonly host: string;
   readonly offline: boolean;
-  readonly result: SubmitResult | null;
+  readonly retry: boolean;
   readonly submit: (
     verdict: ActionDescriptor,
     body: string | null,
@@ -40,9 +39,9 @@ export function ReviewSubmitControl({
   return (
     <>
       <SubmitSplitButton
-        accessibilityLabel={submitAccessibilityLabel(result, verdict, counts.total)}
+        accessibilityLabel={submitAccessibilityLabel(retry, verdict, counts.total)}
         disabled={offline || verdict === null}
-        label={submitLabel(result, counts.total)}
+        label={submitLabel(retry, counts.total)}
         onOpenSubmit={() => {
           setOpen(true);
         }}
@@ -68,24 +67,23 @@ export function ReviewSubmitControl({
   );
 }
 
-function submitLabel(result: SubmitResult | null, drafts: number): string {
-  if (result?.kind === "failed") {
+function submitLabel(retry: boolean, drafts: number): string {
+  if (retry) {
     return "Retry";
   }
   return drafts === 0 ? "Review" : `Review · ${String(drafts)}`;
 }
 
 function submitAccessibilityLabel(
-  result: SubmitResult | null,
+  retry: boolean,
   verdict: ActionDescriptor | null,
   drafts: number,
 ): string {
-  const action =
-    result?.kind === "failed"
-      ? "Retry submit"
-      : verdict === null
-        ? "Submit review"
-        : `Submit review · ${verdict.label}`;
+  const action = retry
+    ? "Retry submit"
+    : verdict === null
+      ? "Submit review"
+      : `Submit review · ${verdict.label}`;
   return drafts === 0
     ? action
     : `${action}, ${String(drafts)} ${drafts === 1 ? "draft" : "drafts"}`;

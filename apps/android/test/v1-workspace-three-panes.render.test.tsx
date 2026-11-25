@@ -3,6 +3,7 @@ import { BackHandler, Text, View } from "react-native";
 
 import { WorkspaceCenterLayout } from "../src/routeComposition/WorkspaceCenterLayout";
 import { WorkspacePaneFrame } from "../src/routeComposition/WorkspacePaneFrame";
+import { WorkspaceSafeInsetsContext } from "../src/routeComposition/workspaceSafeInsets";
 import {
   placeFramePresentation,
   resolvePaneArrangement,
@@ -11,8 +12,8 @@ import {
   type WorkspacePaneCapabilities,
 } from "../src/routeComposition/workspacePanes";
 import { colors, radii } from "../src/theme";
-import { PaneChromeControls } from "./fixtures/PaneChromeControls";
-import { RESTING_SIDEBAR } from "./fixtures/paneRestLayout";
+import { PaneCapabilityControls } from "./fixtures/PaneChromeControls";
+import { restingSidebar } from "./fixtures/paneRestLayout";
 
 const VIEWPORT = 1600;
 const NONE: WorkspacePaneCapabilities = {};
@@ -46,7 +47,7 @@ function PaneContent({ name }: { readonly name: string }): React.JSX.Element {
   return (
     <View>
       <Text testID={`${name}-content`}>{name}</Text>
-      <PaneChromeControls name={name} />
+      <PaneCapabilityControls name={name} />
     </View>
   );
 }
@@ -126,15 +127,15 @@ describe("the left and right panes are never visible together", () => {
 
   it.each(frames)("resolves desktop %s %o to one side of the center", (desktop, presentation) => {
     for (const fullscreen of requests) {
-      for (const rightPresent of [false, true]) {
+      for (const rightSplit of [null, "left+center", "center+right"] as const) {
         const visibility = resolveWorkspacePaneVisibility({
           fullscreen,
           multiPane: desktop && presentation.kind === "wide",
-          rightPresent,
+          rightSplit,
         });
         const arrangement = resolvePaneArrangement({
           presentation: placeFramePresentation(presentation, visibility),
-          rightPresent,
+          rightPresent: rightSplit !== null,
           visibility,
         });
         if (arrangement.right === "beside") {
@@ -150,6 +151,24 @@ describe("the left and right panes are never visible together", () => {
 });
 
 describe("center corners follow the one visible neighbouring pane", () => {
+  it.each([
+    ["left", null],
+    ["right", NONE],
+  ] as const)(
+    "keeps the rounded frame inside system bars beside the %s pane and expands it on fullscreen",
+    async (_, right) => {
+      const view = render(
+        <WorkspaceSafeInsetsContext.Provider value={{ bottom: 24, top: 52 }}>
+          <Workspace center={FULLSCREEN} right={right} />
+        </WorkspaceSafeInsetsContext.Provider>,
+      );
+      const frame = view.getByTestId("v1-workspace-destination");
+      expect(frame).toHaveStyle({ marginBottom: 24, marginTop: 52 });
+      fireEvent.press(view.getByLabelText("Open center fullscreen"));
+      await waitFor(() => expect(frame).toHaveStyle({ marginBottom: 0, marginTop: 0 }));
+    },
+  );
+
   it("rounds the left side beside the left pane only", () => {
     expectCenterRadii(render(<Workspace />), { left: radii.composer, right: 0 });
   });
@@ -201,7 +220,7 @@ describe("pane widths", () => {
     const view = render(<Workspace />);
     expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle({
       opacity: 1,
-      ...RESTING_SIDEBAR,
+      ...restingSidebar(30),
     });
     expect(view.getByTestId("v1-workspace-destination")).toHaveStyle(BESIDE_CATALOG);
     expect(view.getByTestId("center")).toHaveStyle({ width: "100%" });
@@ -211,7 +230,7 @@ describe("pane widths", () => {
     const view = render(<Workspace right={NONE} />);
     // The covered catalog keeps its width and dims under the destination.
     const catalog = view.getByTestId("workspace-catalog-pane", { includeHiddenElements: true });
-    expect(catalog).toHaveStyle({ opacity: 0, ...RESTING_SIDEBAR });
+    expect(catalog).toHaveStyle({ opacity: 0, ...restingSidebar(30) });
     expect(catalog).toHaveProp("pointerEvents", "none");
     expect(view.getByTestId("left-content", { includeHiddenElements: true })).not.toBeVisible();
     expect(view.getByTestId("v1-workspace-destination")).toHaveStyle(OVER_FRAME);
@@ -234,7 +253,7 @@ describe("pane widths", () => {
     expect(view.getByTestId("left-content")).toBe(left);
     expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle({
       opacity: 1,
-      ...RESTING_SIDEBAR,
+      ...restingSidebar(30),
     });
     expect(view.getByTestId("v1-workspace-destination")).toHaveStyle(BESIDE_CATALOG);
     expectCenterRadii(view, { left: radii.composer, right: 0 });

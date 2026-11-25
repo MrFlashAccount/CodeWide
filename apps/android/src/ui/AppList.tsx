@@ -37,6 +37,10 @@ type AppListProps<ItemT> = AppListCommonProps<ItemT> &
         readonly virtualized: false;
       }
     | {
+        /** An exact cell extent for lists whose row layout guarantees it. */
+        readonly getFixedItemSize?: (item: ItemT, index: number) => number;
+        /** Opt in only when row content can be rebound to another item. */
+        readonly recycleItems?: boolean;
         /** Optional native scroll host used by sheets and other gesture owners. */
         readonly scrollComponent?: AppListScrollComponent;
         readonly virtualized: true;
@@ -67,12 +71,16 @@ function VirtualizedAppList<ItemT>({
       data={props.data}
       // The last row's state follows the count; callers add what their rows read.
       extraData={[itemCount, props.extraData]}
+      {...(props.getFixedItemSize === undefined
+        ? {}
+        : { getFixedItemSize: props.getFixedItemSize })}
       keyboardShouldPersistTaps={props.keyboardShouldPersistTaps}
       keyExtractor={props.keyExtractor}
       ListEmptyComponent={props.empty ?? null}
       ListFooterComponent={props.footer ?? null}
       ListHeaderComponent={props.header ?? null}
       nestedScrollEnabled={props.nestedScrollEnabled}
+      recycleItems={props.recycleItems === true}
       renderItem={renderItem}
       {...(props.scrollComponent === undefined ? {} : { renderScrollComponent })}
       showsVerticalScrollIndicator={props.showsVerticalScrollIndicator}

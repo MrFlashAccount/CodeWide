@@ -64,16 +64,22 @@ export function centerClipFrame(state: PaneMotionState): CenterClipFrame {
   return {
     borderBottomRightRadius: pane.centerRightRadius,
     borderTopRightRadius: pane.centerRightRadius,
-    width: pane.centerClipWidth,
+    // A single visible center fills its destination in the same Yoga pass. An independent
+    // animated pixel width here can land a frame later than its moving parent.
+    width: pane.centerClipWidth === pane.detailWidth ? "100%" : pane.centerClipWidth,
   };
 }
 
-/** The center content box: the clip's width at rest, the larger end while panes move. */
+/** The center content box: the clip's width at rest, its current layout width while panes move. */
 export function centerContentFrame(state: PaneMotionState): CenterContentFrame {
   "worklet";
-  return state.moving.get()
-    ? { width: movingPaneGeometry(state).centerWidth }
-    : REST_CENTER_CONTENT_FRAME;
+  if (state.moving.get()) {
+    const pane = movingPaneGeometry(state);
+    if (pane.centerWidth > pane.centerClipWidth) {
+      return { width: pane.centerWidth };
+    }
+  }
+  return REST_CENTER_CONTENT_FRAME;
 }
 
 /** The right pane box, relative to its destination. */
@@ -92,6 +98,11 @@ export function rightFrame(state: PaneMotionState): RightFrame {
 /** Trailing space outside the visible pane. At rest Yoga resolves a fully covered edge. */
 export function currentChromeInset(state: PaneMotionState, box: PaneBox): number | "100%" {
   "worklet";
+  const drag = state.drag.get();
+  if (drag !== null) {
+    // Below the minimum the pane and its chrome stay in place under the covering neighbour.
+    return 0;
+  }
   return state.moving.get()
     ? paneChromeInset(movingPaneGeometry(state), box)
     : restChromeInset(state.arrangement.get(), box);

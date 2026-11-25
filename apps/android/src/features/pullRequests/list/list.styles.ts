@@ -136,7 +136,6 @@ export const listStyles = StyleSheet.create({
   },
   floatingBarContent: {
     flexGrow: 1,
-    paddingBottom: catalogModeBarContentInset,
   },
   // The linked-thread count in a row's subtitle line: link glyph and number.
   linkedCount: {

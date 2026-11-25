@@ -1,3 +1,4 @@
+import type { TurnSendOptions } from "../../data/thread-delivery-state";
 import type { ThreadGoal } from "@codewide/codex-protocol/v0.155.1/v2";
 import { readThreadAgent, threadAgentSupports } from "../../data/threadAgent";
 import type { useConversationOwner } from "../../ui/use-conversation-owner";
@@ -31,6 +32,7 @@ export function useComposerInteractions({
   draftThreadId,
   onSetGoal,
   openDrawing,
+  questionReply,
   queueInputs,
   remoteThread,
   terminalEnabled,
@@ -51,6 +53,7 @@ export function useComposerInteractions({
   draftThreadId: string | null;
   onSetGoal: ConversationGoalCapabilities["onSetGoal"];
   openDrawing: ComposerFeatureDestinations["openDrawing"];
+  questionReply: ((text: string, options: TurnSendOptions) => Promise<string>) | null;
   queueInputs: QueueWorkspaceCapabilities;
   remoteThread: Parameters<typeof useComposerDelivery>[0]["remoteThread"];
   terminalEnabled: boolean;
@@ -143,7 +146,10 @@ export function useComposerInteractions({
     onEditQueued: queueInputs.onEditQueued,
     onInterrupt: composerInputs.onInterrupt,
     onListQueue: queueInputs.onListQueue,
-    onSend: composerInputs.onSend,
+    onSend:
+      questionReply === null
+        ? composerInputs.onSend
+        : async (text, _mode, options) => questionReply(text, options),
     onStartVoiceTranscription: composerInputs.onStartVoiceTranscription,
     pastedAttachmentPending: composerStateBinding.largePasteStateBinding.pastedAttachmentPending,
     pastedAttachmentPendingRef:
@@ -171,5 +177,9 @@ export function useComposerInteractions({
     composerAccessoryActionsBinding,
     composerDeliveryBinding,
     openGoalDetails: composerFeatureActionsBinding.openGoalDetails,
+    questionReplyActive:
+      questionReply !== null &&
+      goalSubmission === null &&
+      composerStateBinding.queueEditStateBinding.queuedComposerEdit === null,
   };
 }

@@ -10,7 +10,7 @@ import {
   type ProviderOnboardingStep,
 } from "./providerTrayNavigation";
 
-/** Reacticx Tray header: Back belongs to the left title group; Close stays alone on the right. */
+/** Provider step title with Back on nested pages. */
 export function ProviderTrayHeader({
   back = false,
   step,
@@ -29,7 +29,6 @@ export function ProviderTrayHeader({
         {back ? <ProviderTrayBack /> : null}
         <ProviderTrayHeaderCopy step={step} title={title} />
       </View>
-      <TrayClose />
     </Tray.Header>
   );
 }
@@ -65,13 +64,5 @@ function ProviderTrayBack(): React.JSX.Element {
     <Tray.Back>
       {({ color, size }) => <Ionicons color={color} name="chevron-back" size={size} />}
     </Tray.Back>
-  );
-}
-
-function TrayClose(): React.JSX.Element {
-  return (
-    <Tray.Close>
-      {({ color, size }) => <Ionicons color={color} name="close" size={size} />}
-    </Tray.Close>
   );
 }

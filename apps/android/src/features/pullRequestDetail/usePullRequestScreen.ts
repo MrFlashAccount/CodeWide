@@ -20,10 +20,10 @@ import type { DraftComment } from "../../data/reviewDraftContract";
 import { useConstant } from "../../react/useConstant";
 import { useEvent } from "../../react/useEvent";
 import { spacing } from "../../theme";
+import { useScenarioFailureNotices } from "./actions/useScenarioFailureNotices";
 import { measureActionLabel } from "./actions/actionMeasure";
 import { isAgentRowAction, slotActions, type ActionSlots } from "./actions/actionSlotting";
 import {
-  scenarioFailure,
   scenarioViews,
   withScenarioLabels,
   type ScenarioView,
@@ -70,12 +70,7 @@ export type PullRequestScreenData = {
   readonly providerIcon: ProviderIcon | null;
   /** The forge name the PR account's plugin declares (`Arcanum`); `null` until it loads. */
   readonly providerName: string | null;
-  /** The first scenario whose run failed at the shown head, with the real reason. */
-  readonly scenarioFailure: {
-    readonly label: string;
-    readonly reason: string;
-  } | null;
-  /** The Companion's live run state of each scenario action at the shown head. */
+  /** Run states of the scenario actions on this PR. */
   readonly scenarioViews: ScenarioViews;
   readonly setRowWidth: (width: number) => void;
   readonly slots: ActionSlots;
@@ -132,6 +127,7 @@ export function usePullRequestScreen(props: PullRequestScreenProps): PullRequest
     overview.headRevision,
   );
   const outsideAgentRows = withoutAgentRows(overview.catalog.actions, scenarios);
+  useScenarioFailureNotices(overview, outsideAgentRows);
   const labelled = withScenarioLabels(overview.catalog.actions, outsideAgentRows, useMinuteClock());
   const drafts = useDrafts(props);
   const slots = pullRequestSlots(labelled, overview, {
@@ -160,7 +156,6 @@ export function usePullRequestScreen(props: PullRequestScreenProps): PullRequest
     providerCapabilities: capabilitiesOf(provider),
     providerIcon: provider?.icon ?? null,
     providerName: forgeNameOf(provider),
-    scenarioFailure: scenarioFailure(overview.catalog.actions, outsideAgentRows),
     scenarioViews: scenarios,
     setRowWidth,
     slots,

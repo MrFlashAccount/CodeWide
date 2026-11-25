@@ -4,7 +4,6 @@ import { StyleSheet, View } from "react-native";
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import type { PullRequestOverview } from "../../../data/forgePullRequestContract";
 import { spacing } from "../../../theme";
-import { CatalogActionButton } from "../actions/CatalogActionButton";
 import type { ActionSlots } from "../actions/actionSlotting";
 import { StatusRow } from "../sections/StatusRow";
 import { STATUS_TEXT_INSET } from "../sections/statusLayout";
@@ -21,12 +20,12 @@ type MergeBoxProps = {
   readonly overview: PullRequestOverview;
   readonly pending: Readonly<Record<string, true>>;
   readonly pendingToggles: Readonly<Record<string, boolean>>;
-  readonly slots: Pick<ActionSlots, "anchored" | "autoMerge" | "merge">;
+  readonly slots: Pick<ActionSlots, "autoMerge" | "merge">;
 };
 
 /**
  * The last rows of the Status section for an open or draft PR: the merge
- * state (with the actions anchored to a conflict below its reason), then the
+ * state and its reason, then the
  * merge method button and auto-merge. Checks have their own Status row. Owns
  * the chosen merge method. A merged or closed PR renders nothing.
  */
@@ -35,10 +34,6 @@ export function MergeBox(props: MergeBoxProps): React.JSX.Element | null {
   if (box.kind === "settled") {
     return null;
   }
-  const conflict =
-    props.overview.merge.state === "conflicts" && props.slots.anchored.conflict.length > 0 ? (
-      <ConflictActions {...props} />
-    ) : undefined;
   return (
     <View testID="pull-request-merge-box">
       <StatusRow
@@ -49,29 +44,8 @@ export function MergeBox(props: MergeBoxProps): React.JSX.Element | null {
         testID="pull-request-merge-box-state"
         title={box.merge.title}
         tone={box.merge.tone}
-      >
-        {conflict}
-      </StatusRow>
+      />
       <MergeControls {...props} mergeable={box.mergeable} />
-    </View>
-  );
-}
-
-/** The catalog actions anchored to a merge conflict, below its reason. */
-function ConflictActions(props: MergeBoxProps): React.JSX.Element {
-  return (
-    <View style={styles.actions}>
-      {props.slots.anchored.conflict.map((action) => (
-        <CatalogActionButton
-          action={action}
-          key={action.actionId}
-          onPress={(selected) => {
-            props.onRun(selected, null);
-          }}
-          pending={props.pending[action.actionId] === true}
-          variant="compact"
-        />
-      ))}
     </View>
   );
 }
@@ -161,12 +135,6 @@ function AutoMerge({
 }
 
 const styles = StyleSheet.create({
-  actions: {
-    columnGap: spacing.xs,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    rowGap: spacing.xs,
-  },
   // Aligned with the Status rows' text, under the merge state it acts on.
   controls: {
     gap: spacing.xs,

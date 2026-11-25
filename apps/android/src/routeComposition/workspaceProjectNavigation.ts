@@ -39,9 +39,8 @@ function projectSessionParam(params: NavigationState["routes"][number]["params"]
 export function useWorkspaceProjectSessionId(): string | null {
   const navigation = useNavigationContainerRef();
   const subscribe = useEvent((onChange: () => void) => navigation.addListener("state", onChange));
-  const snapshot = useEvent(() =>
-    navigation.isReady() ? workspaceProjectSessionId(navigation.getRootState()) : null,
-  );
+  const snapshot = () =>
+    navigation.isReady() ? workspaceProjectSessionId(navigation.getRootState()) : null;
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 

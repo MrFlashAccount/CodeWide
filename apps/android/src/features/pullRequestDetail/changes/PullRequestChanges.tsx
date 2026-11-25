@@ -33,6 +33,7 @@ import {
   acceptReadingBack,
 } from "./fileReading";
 import { useChangesData, type ChangesData } from "./useChangesData";
+import { useFileExpansion, type FileExpansion } from "./useFileExpansion";
 import { useDraftComposer, type DraftComposer } from "./useDraftComposer";
 import { useSubmitReview } from "./useSubmitReview";
 
@@ -68,7 +69,7 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
         dialog.error("Could not send to the agent", error);
       });
   });
-  const { result, submit } = useSubmitReview({
+  const { result, retry, submit } = useSubmitReview({
     capabilities: props.capabilities,
     drafts: data.drafts,
     onStale: props.onStale,
@@ -87,6 +88,7 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
     composer,
   );
   const reading = useFileReading(props, data);
+  const expansion = useFileExpansion(data.headFiles, reading.files ? data.selected : null);
   useAndroidBackHandler(
     acceptReadingBack(reading.back, composer, fileComment),
     reading.backToFiles,
@@ -104,7 +106,7 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
       drafts={data.drafts}
       host={props.host}
       offline={props.offline}
-      result={result}
+      retry={retry}
       submit={submit}
       verdicts={props.verdicts}
     />
@@ -135,6 +137,7 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
         {reading.files ? (
           <ChangesToolbar
             actions={reading.actions}
+            expansion={expansion.view.state}
             extra={fileMenu}
             file={data.selected}
             filesOpen={filesOpen}
@@ -142,6 +145,7 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
               setFilesOpen(!filesOpen);
             }}
             onRun={props.onRun}
+            onToggleExpansion={expansion.toggle}
             scrollPath={display.value.scrollPath}
             tablet={besideDiff}
           />
@@ -153,6 +157,7 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
             composer={composer}
             data={data}
             display={display.value}
+            expansion={expansion.view}
             filesOpen={filesOpen}
             onLinePress={onLinePress}
             onSendToAgent={sendToAgent}
@@ -186,6 +191,7 @@ function ChangesBody({
   composer,
   data,
   display,
+  expansion,
   filesOpen,
   onLinePress,
   onSendToAgent,
@@ -197,6 +203,7 @@ function ChangesBody({
   readonly composer: DraftComposer;
   readonly data: ChangesData;
   readonly display: DiffDisplay;
+  readonly expansion: FileExpansion;
   readonly filesOpen: boolean;
   readonly onLinePress: (reference: CodeReviewLineReference) => void;
   readonly onSendToAgent: (draftIds: readonly DraftId[]) => void;
@@ -233,8 +240,8 @@ function ChangesBody({
           display={display}
           draftPuts={data.draftPuts}
           drafts={data.drafts}
+          expansion={expansion}
           filesOpen={filesOpen}
-          headFiles={data.headFiles}
           host={props.host}
           onDeleteDraft={(draft) => {
             props.reviewCapabilities.deleteDraft(connectionId, draft).catch((error: unknown) => {

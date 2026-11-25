@@ -30,11 +30,13 @@ function ignoreClose(): void {}
 export function PullRequestConversationPane({
   connectionId,
   onManageProjects,
+  pullRequest,
   threadId,
 }: {
   readonly connectionId: string;
   /** Presents project management over the mounted PR route; it never navigates. */
   readonly onManageProjects: () => void;
+  readonly pullRequest: PullRequestKey;
   readonly threadId: ThreadId;
 }): React.JSX.Element | null {
   const parsed = v1ThreadRouteParams({ connectionId, threadId });
@@ -48,16 +50,22 @@ export function PullRequestConversationPane({
       onOpen={openPullRequest}
       threadId={threadId}
     >
-      <ValidPullRequestConversation onManageProjects={onManageProjects} thread={parsed.value} />
+      <ValidPullRequestConversation
+        onManageProjects={onManageProjects}
+        pullRequest={pullRequest}
+        thread={parsed.value}
+      />
     </LinkedPullRequestChipProvider>
   );
 }
 
 function ValidPullRequestConversation({
   onManageProjects,
+  pullRequest,
   thread,
 }: {
   readonly onManageProjects: () => void;
+  readonly pullRequest: PullRequestKey;
   readonly thread: V1ThreadRouteParams;
 }): React.JSX.Element {
   const onClose = useThreePanels().chrome.close ?? ignoreClose;
@@ -82,6 +90,7 @@ function ValidPullRequestConversation({
           destination={{
             connectionId,
             kind: "thread",
+            reviewPullRequest: pullRequest,
             searchWindow: null,
             threadId,
           }}

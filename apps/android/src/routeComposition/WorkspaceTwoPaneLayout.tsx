@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { useContext, type ReactElement } from "react";
 import {
   StyleSheet,
   type StyleProp,
@@ -6,14 +6,22 @@ import {
   type ViewProps,
   type ViewStyle,
 } from "react-native";
-import Reanimated, { useAnimatedStyle, type AnimatedRef } from "react-native-reanimated";
+import Reanimated, {
+  useAnimatedProps,
+  useAnimatedStyle,
+  type AnimatedRef,
+  type SharedValue,
+} from "react-native-reanimated";
 
 import {
   WorkspaceResizeCheckpoint,
   type WorkspaceResizeTarget,
 } from "../native/WorkspaceResizeCheckpoint";
+import { useCoveredPaneFocus } from "./useCoveredPaneFocus";
+import { PaneDividerShade } from "./PaneDividerShade";
 import { catalogFrame, destinationFrame } from "./paneFrames";
 import type { PaneMotionState } from "./paneMotion";
+import { consumedWorkspaceInsets, WorkspaceSafeInsetsContext } from "./workspaceSafeInsets";
 
 /**
  * Responsive placement of the left (catalog) pane and the center destination. The two expanded
@@ -40,16 +48,20 @@ type WorkspacePaneViewProps = Pick<
 >;
 
 type WorkspaceTwoPaneLayoutProps = {
+  readonly cacheDetailDuring: SharedValue<boolean> | null;
   readonly catalog: ReactElement | null;
   readonly catalogViewProps: WorkspacePaneViewProps;
   readonly detail: ReactElement | null;
   readonly detailStyle?: StyleProp<ViewStyle>;
   readonly detailViewProps: WorkspacePaneViewProps;
+  readonly divider?: ReactElement | null;
   /** The frame view the pane motion measures when a rearrangement starts. */
   readonly frameRef: AnimatedRef<View>;
   readonly frameStyle?: StyleProp<ViewStyle>;
   /** The frame's one pane motion; every pane frame below derives from it. */
   readonly geometry: PaneMotionState;
+  /** A split clips the rounded surface itself to the safe area. */
+  readonly insetDetail: boolean;
   readonly presentation: WorkspaceTwoPanePresentation;
   readonly resizeTarget: WorkspaceResizeTarget;
   readonly testID?: string;
@@ -58,45 +70,70 @@ type WorkspaceTwoPaneLayoutProps = {
 /**
  * Places the catalog and the destination from the frame's pane motion. At rest Yoga lays them out
  * in one row: the catalog at its relative sidebar width and the destination beside it, or over the
- * frame. While panes move the destination lies absolutely, slides by its left edge and the catalog
- * only dims, so neither relayouts its content per frame. Callers retain navigation, lifetime,
+ * frame. During resize both surfaces lay out at their current widths. Below the catalog minimum,
+ * the growing destination covers its stationary neighbour. Callers retain navigation, lifetime,
  * interaction and surface ownership.
  */
 export function WorkspaceTwoPaneLayout({
+  cacheDetailDuring,
   catalog,
   catalogViewProps,
   detail,
   detailStyle,
   detailViewProps,
+  divider,
   frameRef,
   frameStyle,
   geometry,
+  insetDetail,
   presentation,
   resizeTarget,
   testID,
 }: WorkspaceTwoPaneLayoutProps): React.JSX.Element {
+  const catalogRef = useCoveredPaneFocus(presentation.kind === "wideDetailExpanded");
+  const windowInsets = useContext(WorkspaceSafeInsetsContext);
+  const frameInsets = insetDetail ? windowInsets : consumedWorkspaceInsets;
+  const cacheWideDetail = presentation.kind === "wide";
+  // Reuse the adjacent pane across tab switches without keeping a GPU texture during normal use.
+  const detailLayerProps = useAnimatedProps(() => ({
+    renderToHardwareTextureAndroid: cacheWideDetail && cacheDetailDuring?.value === true,
+  }));
   const catalogStyle = useAnimatedStyle(() => catalogFrame(geometry));
   const destinationStyle = useAnimatedStyle(() => destinationFrame(geometry));
   return (
-    <Reanimated.View ref={frameRef} style={[styles.frame, frameStyle]} testID={testID}>
+    <Reanimated.View
+      collapsable={false}
+      ref={frameRef}
+      style={[styles.frame, frameStyle]}
+      testID={testID}
+    >
       <Reanimated.View
         {...catalogViewProps}
+        ref={catalogRef}
         style={[styles.catalog, presentation.kind === "detailOnly" && styles.hidden, catalogStyle]}
       >
         {catalog}
+        <PaneDividerShade geometry={geometry} pane="left" />
       </Reanimated.View>
       <Reanimated.View
         {...detailViewProps}
+        animatedProps={detailLayerProps}
         // The pane placement follows the surface style, so the frame owns the destination's box.
         style={[
           detailStyle,
           styles.destination,
+          { marginBottom: frameInsets.bottom, marginTop: frameInsets.top },
           presentation.kind === "catalogOnly" && styles.hidden,
           destinationStyle,
         ]}
       >
-        {detail}
+        <WorkspaceSafeInsetsContext.Provider
+          value={insetDetail ? consumedWorkspaceInsets : windowInsets}
+        >
+          {detail}
+        </WorkspaceSafeInsetsContext.Provider>
       </Reanimated.View>
+      {divider}
       <WorkspaceResizeCheckpoint target={resizeTarget} />
     </Reanimated.View>
   );

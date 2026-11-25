@@ -57,6 +57,8 @@ interface IMaskedTabBarContext {
 }
 
 interface IMaskedTabBarRoot {
+  /** Only the visible control reconciles a shared indicator against its measured boxes. */
+  readonly active?: boolean;
   children: ReactNode;
   readonly value?: string;
   readonly defaultValue?: string;

@@ -1,3 +1,8 @@
+import { useContext } from "react";
+import {
+  CatalogNavigationInsetContext,
+  catalogModeBarContentInset,
+} from "../../../presentation/layouts/catalogModeBarGeometry";
 import { PaneBody } from "../../../ui/PaneBody";
 import { LegendList } from "@legendapp/list/react-native";
 import { Animated, View } from "react-native";
@@ -191,6 +196,7 @@ function PullRequestRows({
   readonly props: Parameters<typeof PullRequestList>[0];
   readonly pullToSearch: boolean;
 }): React.JSX.Element {
+  const bottom = useContext(CatalogNavigationInsetContext);
   const pullSearch = useCatalogSearchPullGesture({
     enabled: pullToSearch,
     gestureTestID: "pull-request-list-pull-to-search",
@@ -203,7 +209,10 @@ function PullRequestRows({
   }
   return (
     <LegendList
-      contentContainerStyle={styles.floatingBarContent}
+      contentContainerStyle={[
+        styles.floatingBarContent,
+        { paddingBottom: catalogModeBarContentInset + bottom },
+      ]}
       data={items}
       estimatedItemSize={CATALOG_ROW_CELL_HEIGHT}
       getItemType={(item) => item.kind}

@@ -4,6 +4,7 @@ import { createContext, useContext, type ComponentProps, type ReactElement } fro
 import { ConversationSelectionPlaceholder } from "../features/conversation/ConversationEmptyState";
 import { useReducedMotionPreference } from "../rendering/reduced-motion-store";
 import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
+import { WorkspaceSafeContent } from "./WorkspaceSafeContent";
 import { isNoServerWorkspace } from "./noServerWorkspace";
 import { WorkspaceCatalogMaster } from "./WorkspaceCatalogMaster";
 import { WorkspacePaneFrame } from "./WorkspacePaneFrame";
@@ -76,10 +77,13 @@ export function ThreadsWorkspacePaneLayout(props: PaneLayoutProps): React.JSX.El
 
 /** Prevents the anchored catalog descriptor from mounting twice inside the destination slot. */
 export function ThreadsWorkspaceScreenLayout(props: ScreenLayoutProps): React.JSX.Element {
-  return props.route.name === "(lists)" ? (
-    <ThreadsCatalogPlacement>{props.children}</ThreadsCatalogPlacement>
-  ) : (
+  if (props.route.name === "(lists)") {
+    return <ThreadsCatalogPlacement>{props.children}</ThreadsCatalogPlacement>;
+  }
+  return props.route.name === "threads/[connectionId]/[threadId]" ? (
     props.children
+  ) : (
+    <WorkspaceSafeContent>{props.children}</WorkspaceSafeContent>
   );
 }
 
@@ -93,7 +97,11 @@ function ThreadsCatalogPlacement({
   if (!destination) {
     return children;
   }
-  return desktop ? <ConversationSelectionPlaceholder /> : null;
+  return desktop ? (
+    <WorkspaceSafeContent>
+      <ConversationSelectionPlaceholder />
+    </WorkspaceSafeContent>
+  ) : null;
 }
 
 function threadsCatalogPresentation(props: PaneLayoutProps) {

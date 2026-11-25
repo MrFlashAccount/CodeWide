@@ -109,6 +109,7 @@ export type ForgeProvider = {
   readonly icon: ProviderIcon | null;
   /** Whether the provider's plugin can serve now; `unknown` from a Companion that predates the report. */
   readonly installation: ProviderInstallation;
+  readonly linkHosts: readonly string[];
   readonly pluginId: string;
 };
 
@@ -216,6 +217,7 @@ function forgeProvider(value: unknown, path: string): ForgeProvider {
     forgeName: text(provider.forgeName, `${path}.forgeName`),
     icon: providerIcon(provider.icon),
     installation: providerInstallation(provider.installation, `${path}.installation`),
+    linkHosts: textList(provider.linkHosts ?? [], `${path}.linkHosts`),
     pluginId: nonEmptyText(provider.pluginId, `${path}.pluginId`),
   };
 }

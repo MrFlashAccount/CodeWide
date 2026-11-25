@@ -9,16 +9,22 @@ route keys and nested state while inactive.
 ## Owners
 
 - `WorkspaceShell` owns persistent providers and the workspace root Stack. It registers `(tabs)`
-  plus settings, browser and drawing, and it does not mirror a selected catalog mode.
+  plus settings, browser and drawing. Its Android window draws panes behind both system bars.
+  In a split, the rounded destination frame starts below the status bar and optional diagnostics row
+  and ends above system navigation. It consumes those insets for its nested panes. Stacked and
+  fullscreen destinations draw to the edge and reserve the insets inside their content.
+  Catalog lists scroll behind system navigation and reserve its height in their scroll-end padding
+  and floating controls. Non-pane routes inset their content once inside their own surface.
 - `WorkspaceTabsRouteLayout` owns the standard `expo-router/js-tabs` policy, exact route-name
-  mapping, `backBehavior="history"`, inactive-scene isolation, the single floating
-  `CatalogModeBarHost` and its presentation claim.
+  mapping, `backBehavior="history"`, inactive-scene isolation and the shared tab indicator motion.
 - `ThreadsWorkspaceRouteLayout` and `PullRequestsWorkspaceRouteLayout` each own one nested Stack,
-  their responsive panes and their anchored catalog root. Neither layout renders the shared bar or
-  imports its sibling.
+  their responsive panes and their anchored catalog root. PR links enter the destination with
+  the catalog in its stack, including when Android shares a link on a phone. Unfolding reveals
+  that same catalog beside the open PR. The catalog highlights the canonical PR key while
+  Details keeps the account-bound key for provider requests. Each catalog hosts its measured control.
 - `WorkspaceTabSceneIsolation` keeps both descriptors mounted while applying the complete active or
-  inactive display, pointer and accessibility contract. Native screens and the plain-`View`
-  fallback use the same wrapper authority.
+  inactive display, pointer and accessibility contract. The two native stacks occupy fixed,
+  non-collapsible hosts. Tab focus changes their visibility without moving the child views.
 - `CatalogSearchOverlayHost` is the shared presentation boundary that retains and hides a complete
   catalog while Search covers those same bounds. Threads and Pull requests supply their own search
   state and result surfaces; neither may mount Search below its fixed catalog header.
@@ -108,9 +114,8 @@ but it does not own transport, persistence, protocol reduction or application da
 - One owner drives all pane geometry. The frame resolves one settled `PaneArrangement`
   (`resolvePaneArrangement`) and `usePaneMotionState` publishes it to the UI thread once per
   change. At rest Yoga owns pane layout: every pane box takes the relative frame of the settled
-  arrangement (`paneRestFrames.ts`: the frame is a row; the catalog is `34%` of it within
-  320–480 or the whole frame; the destination flows beside it or lies over the frame; center and
-  right split the destination in halves or the right pane covers it), so no measured pixel width
+  arrangement (`paneRestFrames.ts`). The catalog and the destination use their frame's current
+  percentages. A center/right split uses the whole frame above the covered catalog. No pixel width
   or position reaches a settled style and a resized, folded, rotated or inset frame relayouts
   without any JavaScript event. Only a rearrangement uses explicit pixels: `startPaneMotion`
   measures the frame on the UI thread (`measure` on the frame's animated ref) when it starts,
@@ -120,14 +125,16 @@ but it does not own transport, persistence, protocol reduction or application da
   and leading radius, center clip and right radius, right pane position and width) is derived
   in worklets from that one progress (`paneFrames.ts`, `paneGeometry.ts`, pure functions); when it
   settles the boxes return to their relative frames, which Yoga lays out to exactly the motion's
-  explicit end (`sidebarWidth` and the halves use the same formulas; `pane-rest-layout-yoga.test.ts`
-  checks it with Yoga). Android's native Stack can publish its smaller screen bounds a layout
-  pass later. On landing, `DestinationViewport` caps the inner panes at the destination width
+  explicit end (the visible shares use the same formulas; `pane-rest-layout-yoga.test.ts`
+  checks it with Yoga). Android absolute-fill push screens resolve their width from the stack in that same Yoga pass;
+  their native height and modal/sheet sizing remain platform-owned. A center filling its destination
+  inherits that width so a second animated style cannot lag the moving parent. Other Android
+  screen presentations can still publish smaller bounds a layout pass later. On landing, `DestinationViewport` caps the inner panes at the destination width
   until the enclosing screen fits; an unconstrained outer view observes the real screen size.
   A new motion or a changed workspace frame releases that cap. A frame that cannot be measured
   settles at once. While panes move they lie
-  absolutely and move by their Yoga left offsets and clipping: content layout widths
-  hold the larger end of a motion and change at most at its start and settle, never per frame. No
+  absolutely. The layout widths and left offsets follow the same displayed edge on each frame.
+  Below the minimum, the shrinking pane holds its minimum width while its neighbour covers it. No
   pane uses layout transitions, entering/exiting animations or its own spring. A closed right pane
   stays mounted, hidden, while it slides out, until the motion settles. Reduced motion (system or
   app preference) and changes that are not rearrangements settle into the Yoga layout at once.
@@ -145,16 +152,21 @@ but it does not own transport, persistence, protocol reduction or application da
   settles (a measured box around chrome keeps the content width). Data for geeks samples the
   UI-thread frame intervals of each rearrangement (`pane_motion_frame_ms`); otherwise no frame
   callback runs.
-- Android runtimes with the native snapshot view use snapshots for pane rearrangements by
-  default. Older runtimes keep the fixed body layout. Set `EXPO_PUBLIC_PANE_BODY_MODE` to
+- Continuous divider drags keep the mounted reading content live. Android retains its outgoing
+  pixels for preset and navigation transitions, and on release while a deferred transcript
+  reflows. After the user selects a split or releases the divider, the transcript lays out at that
+  known final width behind its outgoing pixels while the frame continues moving. Android fades
+  to the new rows as soon as they fit together, within the same transition budget. Set `EXPO_PUBLIC_PANE_BODY_MODE` to
   `live` or `fixed` for local comparisons. Only `PaneBody` reading surfaces participate.
-  In live mode the body follows the same visible edge as chrome. In snapshot mode the frame asks mounted reading
+  The live comparison follows the visible edge of the chrome. In snapshot mode the frame asks mounted reading
   surfaces to capture their visible area before the spring starts. A single mounted subtree
-  takes the destination width. Its outgoing drawing stays at its original pixel scale and fades
+  inherits its pane width through Yoga. Its outgoing drawing stays at its original pixel scale and fades
   over the resized content when the child's width changes. Capture is local to the Android
   view, skips focused text editors and is bounded in pixels and time. Headers and composers
-  keep using the frame's normal geometry. The PR overview retains its bottom edge if the reader
-  was at the end of the page before the width changed.
+  keep using the frame's normal geometry. For a chat, the Android scroll host keeps the visible content of the last row anchored at the
+  bottom if the reader was at the end. In history it preserves the reading offset of the first
+  visible row through the virtualizer’s width and height updates. The PR overview retains its
+  bottom edge when a navigation snapshot is captured at the end of the page.
 - `features/pullRequests` and `features/pullRequestDetail` must not import each other. They meet only
   through typed route intents owned here.
 - Tab activation and compact linked-chat handoff must not use `router.replace`, `dismissTo`,
@@ -179,11 +191,10 @@ beside a PR, or the linked pull request beside a thread). One frame owns one mod
   or `fullscreen` of one present pane), applies it to the left/center geometry, and owns Back:
   while a pane is fullscreen, Back leaves fullscreen before anything below the frame handles it.
 - The left and right panes are never visible at the same time. The frame owns this invariant for
-  every subtree: a present right pane resolves the split to `center+right`, and
-  `placeFramePresentation` turns a route's `wide` presentation into `wideDetailExpanded`, so the
-  catalog is covered (dimmed, inert, hidden from assistive technology, still mounted) for exactly
-  as long as the right pane is open; closing the right pane resolves `left+center` and restores
-  it. Routes hand the frame only `WorkspaceFramePresentation` (no expanded kinds) and never claim
+  every subtree. Opening the right pane selects the center/right split. A fullscreen center offers
+  the catalog presets at its left edge and the registered right pane's presets at its right edge.
+  Choosing either split retains the other neighbour and its state. The system Back gesture from
+  fullscreen restores the most recently selected split. Routes hand the frame only `WorkspaceFramePresentation` (no expanded kinds) and never claim
   the catalog themselves. Opening or closing the right pane is one rearrangement, so the catalog,
   the destination and the right pane move on the same spring.
 - The right pane must render inside its route tree, so it cannot be a sibling of the frame's
@@ -219,14 +230,20 @@ beside a PR, or the linked pull request beside a thread). One frame owns one mod
   it never rounds both sides. Fullscreen and phone layouts have no neighbours and no rounding. Both
   radii are part of the frame's arrangement: the destination's leading edge and the center's
   trailing edge move with the same progress.
-- Sizing: beside the center the left pane keeps the sidebar width (`sidebarWidth`: 34 % of the
-  frame within 320–480, which the catalog content fills) and the center takes
-  the rest; when the right pane is beside the center they split the whole frame width equally
-  over the covered catalog. A fullscreen right pane covers the retained
-  center; a fullscreen center keeps the right pane mounted past the trailing edge; a fullscreen
-  left pane moves the destination past the trailing edge at the frame width; a covered catalog
-  keeps its width and dims. Every hidden pane stays mounted. Beside other panes the right pane
-  keeps the left pane's edge inset (`threadListLayout.edgeInset`) on both sides.
+- On wide screens each visible pane occupies at least 30% of the frame. The catalog can grow to
+  50%; its default follows the responsive sidebar width within those bounds. Center/right opens
+  at 50/50. Each pair remembers its last open share in device preferences.
+- The frame owns the divider's touch target, preset menu and accessibility actions. The middle
+  third of the seam accepts a touch. Its small grip stays visible until release or cancellation. A
+  tap offers open splits. During a drag the edge follows the finger on the UI thread. A spring settles the snap into or out of cover. Releasing a
+  changed open split captures the transcript once before releasing a deferred width. Presets use
+  the same reading-surface transition as fullscreen navigation. An open split starts moving on selection, and the React commit adopts that running spring. The chat transcript
+  keeps its measured width during continuous drag and reflows at the actual divider position
+  after a brief pause or on release. On Android the retained frame gives way to the resized rows
+  once they have reached the committed width and adjacent visible rows meet. The header and composer keep their live geometry. After the minimum-width detent, the growing pane covers its stationary neighbour,
+  which dims with the covered fraction. At half the minimum width it snaps fully covered. The
+  finger can reverse even after this snap. Lifting the finger commits the split or fullscreen.
+  The edge target and Android Back restore the split. Hidden panes retain their mounted content.
 - Surfaces: the left and right panes sit on the frame color (`threadListSurface`) with no border
   against the center (`conversationSurface`). The pane frame owns surface color by position;
   `ThreePanelsPane` declares the tone (`left`/`right` recessed, `center` raised) through
@@ -248,12 +265,11 @@ beside a PR, or the linked pull request beside a thread). One frame owns one mod
   (`WorkspaceCenterLayout` declarations carry `label` and `shows`). Components read position,
   tone, chrome and neighbour from the context, never from props or position assumptions.
 - `ThreePanelsHeader` (`ui/ThreePanelsHeader.tsx`) is the standard pane header, used by the PR app
-  bar and the conversation header (review chat, thread conversation): `[←] title [trailing] [⤢]
-[⋯] [×]`. The content supplies a back intent (`exit` leaves the content's root, `nested` steps
+  bar and the conversation header (review chat, thread conversation): `[←] title [trailing] [⋯] [×]`. The content supplies a back intent (`exit` leaves the content's root, `nested` steps
   back inside the pane), its title, trailing actions and menu; the header shows `nested` Back
-  always, `exit` Back only where the pane declares no close, and the fullscreen toggle and `×`
+  always, `exit` Back only on a stacked screen where the pane declares no close, and the close action `×`
   from the chrome. So a right pane shows `×` on PR Details (no Back) and Back plus `×` on Files
-  changed / Review guide; the PR route's center keeps its route Back and no `×`.
+  changed / Review guide; the wide center relies on its catalog edge and the phone center keeps its route Back.
 - Neighbour suppression: the PR screen hides its linked-chat button while the neighbour is a
   conversation (the PR route's review chat, or the thread that opened the PR in its right pane);
   `LinkedPullRequestChipProvider`, mounted inside the conversation's pane, drops the pull request
@@ -262,8 +278,7 @@ beside a PR, or the linked pull request beside a thread). One frame owns one mod
   and `fullscreen`, none by default. Undeclared actions never appear and cannot be triggered;
   fullscreen resolves only for a pane the split shows (a covered catalog offers none). Today the
   catalogs declare nothing, the PR center declares fullscreen, and the review chat and a thread's
-  pull request pane declare close and fullscreen. Widen/Narrow is not a capability: center and
-  right always split equally.
+  pull request pane declare close and fullscreen. The divider owns user-facing resize and fullscreen gestures.
 
 ## Compatibility and lifetimes
 
@@ -284,7 +299,7 @@ routes remain usable without a query provider. Conversation navigation is captur
 `ConversationRouteFullscreenOverlay`.
 
 No route publishes a presentation claim over the catalog or the shared bar: covering the catalog
-beside a right pane is the pane frame's rule, and the bar stays the Tabs layout's presentation.
+beside a right pane is the pane frame's rule, and the bar stays inside its catalog.
 
 ## Module and deletion proofs
 

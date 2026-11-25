@@ -22,7 +22,7 @@ import {
   publishedDetail,
   publishedTitle,
 } from "../src/features/pullRequestDetail/changes/submitResultCopy";
-import { safeProviderUrl } from "../src/data/forgeProviderUrl";
+import { checkViewerUrl, safeProviderUrl } from "../src/data/forgeProviderUrl";
 import { draftBadges } from "../src/features/review/comments/draftDisplay";
 import { resumeIndex, stopNarration, walkStops } from "../src/features/review/guide/guideWalk";
 import {
@@ -45,6 +45,24 @@ describe("provider URLs", () => {
     ["not a url", null],
   ])("opens %s only when https on the provider host", (url, expected) => {
     expect(safeProviderUrl(url, "github.com")).toBe(expected);
+  });
+  it("opens legacy viewers only on the account host and validates modern HTTPS viewer URLs", () => {
+    const overview = parsePullRequestOverview(overview91, () => undefined);
+    const check = overview?.checkItems[0];
+    if (!check) throw new Error("Missing fixture check");
+    const admitted = "https://ci.example/run/42";
+    expect(checkViewerUrl({ ...check, detailsUrl: admitted }, "github.com")).toBeNull();
+    expect(checkViewerUrl({ ...check, detailsUrl: "https://github.com/run" }, "github.com")).toBe(
+      "https://github.com/run",
+    );
+    expect(checkViewerUrl({ ...check, viewerUrl: admitted }, "github.com")).toBe(admitted);
+    for (const viewerUrl of [
+      "http://ci.example",
+      "https://ci.example:9000/run",
+      "https://u:p@ci.example/run",
+    ]) {
+      expect(checkViewerUrl({ ...check, viewerUrl }, "github.com")).toBeNull();
+    }
   });
 });
 
@@ -97,6 +115,10 @@ describe("guide walk", () => {
 describe("counters agree with their headers", () => {
   const passed = {
     checkId: "c1",
+    activity: null,
+    required: null,
+    onDemand: null,
+    viewerUrl: null,
     detailsUrl: null,
     durationSeconds: 10,
     name: "companion",

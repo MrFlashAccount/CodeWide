@@ -1,16 +1,7 @@
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 
-/**
- * How Details offers the plugin's verdict group, decided only by availability (never by plugin id
- * or forge name):
- * - `prominent`: the viewer has a real choice (at least two enabled verdicts), so a split button
- *   leads with `lead` (the group default when it is enabled, else the first enabled verdict) and
- *   lists every verdict in its menu;
- * - `menu`: one verdict is enabled (for example only Comment on the author's own PR), so nothing
- *   prominent is shown and the app bar menu offers Submit review with it;
- * - `none`: no verdict can be submitted.
- * Every choice opens the Submit review sheet; none publishes a verdict by itself.
- */
+/** A standalone approval or multiple enabled verdicts get a primary button. A sole composed
+ * review lives in the app bar menu. The catalog's enabled default leads in either location. */
 export type VerdictChoice =
   | {
       readonly kind: "prominent";
@@ -27,5 +18,7 @@ export function verdictChoice(verdicts: readonly ActionDescriptor[]): VerdictCho
   if (lead === undefined) {
     return { kind: "none" };
   }
-  return enabled.length > 1 ? { kind: "prominent", lead, verdicts } : { kind: "menu", lead };
+  return enabled.length > 1 || lead.quickSubmit
+    ? { kind: "prominent", lead, verdicts }
+    : { kind: "menu", lead };
 }

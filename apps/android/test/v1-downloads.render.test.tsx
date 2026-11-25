@@ -1,12 +1,15 @@
-import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, waitFor, within } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { DownloadManagerProvider } from "../src/data/DownloadManagerProvider";
 import type { DownloadManager } from "../src/data/downloadManager";
+import { createDownloadId, type DownloadEntry } from "../src/data/downloadRecords";
 import { DownloadsSheet } from "../src/features/downloads/DownloadsSheet";
 import { DownloadSettings } from "../src/features/settings/DownloadSettings";
 import type { RunningDownload } from "../src/native/file-transfer";
+import { invokeAppDialogAction } from "./mocks/AppDialog";
+import { setLegendListInitialRenderLimit } from "./mocks/LegendNativeList";
 import { createTestDownloadManager } from "./downloads.fixture";
 
 // WHY: Node cannot create the external Compose sheet window; the mock renders its content inline
@@ -14,8 +17,11 @@ import { createTestDownloadManager } from "./downloads.fixture";
 jest.mock("@expo/ui/jetpack-compose", () => {
   const React = jest.requireActual<typeof import("react")>("react");
   const { View: NativeView } = jest.requireActual<typeof import("react-native")>("react-native");
-  const Host = ({ children }: { readonly children?: ReactNode }) => (
+  const Container = ({ children }: { readonly children?: ReactNode }) => (
     <NativeView>{children}</NativeView>
+  );
+  const Host = ({ children }: { readonly children?: ReactNode }) => (
+    <NativeView testID="compose-host">{children}</NativeView>
   );
   const ModalBottomSheet = React.forwardRef(function MockModalBottomSheet(
     { children }: { readonly children?: ReactNode },
@@ -24,7 +30,12 @@ jest.mock("@expo/ui/jetpack-compose", () => {
     React.useImperativeHandle(ref, () => ({ hide: async () => undefined }), []);
     return <NativeView testID="native-sheet-window">{children}</NativeView>;
   });
-  return { Host, ModalBottomSheet, RNHostView: Host };
+  return {
+    Host,
+    ModalBottomSheet,
+    RNHostView: Container,
+    DropdownMenu: Object.assign(Container, { Trigger: Container, Items: Container }),
+  };
 });
 
 type Transfer = {
@@ -61,7 +72,11 @@ function downloadsHarness(): {
       });
       transfers.push({
         finish: () => {
-          resolve({ bytes: 2048, sha256: "a".repeat(64), uri: `content://downloads${source.path}` });
+          resolve({
+            bytes: 2048,
+            sha256: "a".repeat(64),
+            uri: `content://downloads${source.path}`,
+          });
         },
         pause,
         progress: (transferred, total) => {
@@ -144,10 +159,51 @@ it("lists downloads with progress, pause and the completed file's actions", asyn
   fireEvent.press(view.getByLabelText("Download actions, first.mp4"));
   expect(view.getByText("Open")).toBeTruthy();
   expect(view.getByText("Remove from list")).toBeTruthy();
-  fireEvent.press(view.getByLabelText("Download actions, first.mp4: Delete"));
+  fireEvent.press(view.getByRole("menuitem", { name: "Delete" }));
   await waitFor(() => {
     expect(view.queryByText("first.mp4")).toBeNull();
   });
+});
+
+it("windows individual downloads within a day and opens actions only for the requested file", () => {
+  const { manager } = downloadsHarness();
+  const now = new Date(2026, 10, 22, 12).getTime();
+  const entries = Array.from({ length: 1000 }, (_, index): DownloadEntry => ({
+    id: createDownloadId(now - index),
+    name: `sample-${index}.txt`,
+    startedAt: now - index,
+    source: { kind: "path", path: `/sample-${index}.txt` },
+    state: {
+      status: "completed",
+      uri: `content://downloads/${index}`,
+      bytes: 2048,
+      completedAt: now,
+      mimeType: "text/plain",
+    },
+  }));
+  manager.entries$.set(entries);
+  setLegendListInitialRenderLimit(12);
+  try {
+    const view = render(
+      <Providers manager={manager}>
+        <DownloadsSheet openedAt={now} onClose={() => undefined} />
+      </Providers>,
+    );
+    expect(view.getByText("sample-0.txt")).toBeTruthy();
+    expect(view.queryByText("sample-999.txt")).toBeNull();
+    const sheet = within(view.getByTestId("native-sheet-window"));
+    expect(sheet.queryByTestId("compose-host")).toBeNull();
+    fireEvent.changeText(view.getByLabelText("Search downloads"), "sample-999");
+    fireEvent.press(view.getByLabelText("Download actions, sample-999.txt"));
+    expect(sheet.getAllByTestId("compose-host")).toHaveLength(1);
+    fireEvent.press(view.getByRole("menuitem", { name: "Select" }));
+    expect(
+      view.getByRole("checkbox", { name: "sample-999.txt, 2 KB" }).props.accessibilityState.checked,
+    ).toBe(true);
+    expect(sheet.queryByTestId("compose-host")).toBeNull();
+  } finally {
+    setLegendListInitialRenderLimit(Number.POSITIVE_INFINITY);
+  }
 });
 
 it("shows the download location in Settings and changes it there", async () => {
@@ -162,4 +218,34 @@ it("shows the download location in Settings and changes it there", async () => {
   await waitFor(() => {
     expect(view.getByText("Downloads")).toBeTruthy();
   });
+});
+
+it("filters by filename and deletes only the checked downloads after confirmation", async () => {
+  const { manager, transfers } = downloadsHarness();
+  for (const name of ["plan.txt", "report.pdf", "report.txt"]) {
+    const transfer = await startDownload(manager, transfers, name);
+    await act(async () => {
+      transfer.finish();
+    });
+  }
+  const view = render(
+    <Providers manager={manager}>
+      <DownloadsSheet openedAt={Date.now()} onClose={() => undefined} />
+    </Providers>,
+  );
+  fireEvent.changeText(view.getByLabelText("Search downloads"), "missing");
+  expect(view.getByText("No matching downloads")).toBeTruthy();
+  fireEvent.changeText(view.getByLabelText("Search downloads"), "  REPORT ");
+  expect(view.queryByText("plan.txt")).toBeNull();
+  fireEvent(view.getByLabelText("report.pdf, 2 KB"), "longPress");
+  fireEvent.press(view.getByRole("checkbox", { name: "report.txt, 2 KB" }));
+  expect(view.getByText("2 selected")).toBeTruthy();
+  fireEvent.press(view.getByLabelText("Delete selected downloads"));
+  act(() => invokeAppDialogAction("Cancel"));
+  expect(manager.entries$.peek()).toHaveLength(3);
+  fireEvent.press(view.getByLabelText("Delete selected downloads"));
+  act(() => invokeAppDialogAction("Delete"));
+  expect(manager.entries$.peek().map((entry) => entry.name)).toEqual(["plan.txt"]);
+  fireEvent.press(view.getByLabelText("Clear download search"));
+  expect(view.getByText("plan.txt")).toBeTruthy();
 });

@@ -143,6 +143,8 @@ const featurePublicModules = {
     "workspaceCapabilities",
   ],
   pullRequests: [
+    "AttachPullRequestSheet",
+    "forgeAccountSettingsPage",
     "PullRequestsFeature",
     "CatalogModeBar",
     "PullRequestsHeader",
@@ -172,6 +174,7 @@ const featurePublicModules = {
   ],
   requests: [
     "QuestionFeature",
+    "questionReplyContext",
     "pendingRequests",
     "RequestFeature",
     "requestResponse",

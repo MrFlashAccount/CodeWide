@@ -1,38 +1,41 @@
-import { StyleSheet, View } from "react-native";
+import { useContext } from "react";
+import { StyleSheet } from "react-native";
 
 import { CatalogModeBar, type CatalogMode } from "../features/pullRequests/CatalogModeBar";
 import {
+  CatalogNavigationInsetContext,
   catalogModeBarBottomInset,
   catalogModeBarHorizontalInset,
 } from "../presentation/layouts/catalogModeBarGeometry";
-import { useEvent } from "../react/useEvent";
-import { useWorkspaceTabSceneNavigation } from "./workspaceTabSceneNavigation";
+import { useWorkspaceTabsNavigation } from "./workspaceTabSceneNavigation";
+import { PaneChrome } from "../ui/PaneChrome";
 
 const FLOATING_MODE_BAR_Z_INDEX = 20;
 
-/** Renders the controlled Reacticx bar inside the active catalog master's local bounds. */
+/** Keeps the measured control in its catalog so its selection spring survives tab switches. */
 export function CatalogModeBarHost({
   mode,
 }: {
   readonly mode: CatalogMode;
 }): React.JSX.Element | null {
-  const navigation = useWorkspaceTabSceneNavigation();
-  const activateMode = useEvent((selectedMode: CatalogMode): void => {
-    navigation.activate(selectedMode);
-  });
-  if (!navigation.tabActive) {
+  const { activate, activeMode } = useWorkspaceTabsNavigation();
+  const bottom = useContext(CatalogNavigationInsetContext);
+  if (activeMode === null) {
     return null;
   }
   return (
-    <View pointerEvents="box-none" style={styles.bar} testID="floating-catalog-mode-bar">
-      <CatalogModeBar mode={mode} onSelect={activateMode} />
-    </View>
+    <PaneChrome
+      pointerEvents="box-none"
+      style={[styles.bar, { bottom: catalogModeBarBottomInset + bottom }]}
+      testID="floating-catalog-mode-bar"
+    >
+      <CatalogModeBar active={activeMode === mode} mode={activeMode} onSelect={activate} />
+    </PaneChrome>
   );
 }
 
 const styles = StyleSheet.create({
   bar: {
-    bottom: catalogModeBarBottomInset,
     left: catalogModeBarHorizontalInset,
     position: "absolute",
     right: catalogModeBarHorizontalInset,

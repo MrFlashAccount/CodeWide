@@ -1,8 +1,12 @@
+import {
+  CatalogNavigationInsetContext,
+  catalogModeBarContentInset,
+} from "../../presentation/layouts/catalogModeBarGeometry";
 import type { ThreadSidebarProps } from "./ThreadSidebarContract";
 import { ThreadSidebarHeader } from "./ThreadSidebarHeader";
 import { useThreadListViewportPaging } from "./threadListViewportPaging";
 import { LegendList } from "@legendapp/list/react-native";
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { useEvent } from "../../react/useEvent";
 import { Animated, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { GestureDetector } from "react-native-gesture-handler";
@@ -95,6 +99,7 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     project === null ? onLoadMore : projectSource.loadMore,
   );
   const pullSearch = useThreadListPullGesture(props.onOpenSearch, initialOffset, listKey);
+  const bottom = useContext(CatalogNavigationInsetContext);
   const fabModel = useThreadListFabModel();
   const attachFabScroll = useThreadListFabScroll(fabModel);
   const handleListScroll = useEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -117,7 +122,7 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
             ) : (
               <Reanimated.View style={styles.threadListSuspended}>
                 <LegendList
-                  contentContainerStyle={styles.floatingBarContent}
+                  contentContainerStyle={{ paddingBottom: catalogModeBarContentInset + bottom }}
                   data={scroll.rows}
                   dataKey={`desktop-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
                   drawDistance={320}

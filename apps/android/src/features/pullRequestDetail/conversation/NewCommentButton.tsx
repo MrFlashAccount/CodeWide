@@ -1,7 +1,10 @@
+import { useSelector } from "@legendapp/state/react";
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet } from "react-native";
 
+import type { CommentAttachment } from "../../../data/forgeCommentAttachment";
+import { useConstant } from "../../../react/useConstant";
 import { useEvent } from "../../../react/useEvent";
 import {
   colors,
@@ -15,38 +18,39 @@ import {
 import { AppSheet } from "../../../ui/AppSheet";
 import { AppText as Text } from "../../../ui/Typography";
 import type { MessageSendResult } from "../../messageContent/messageContent";
-import { MessageReplyInput } from "../../messageContent/MessageReplyInput";
+import { createCommentDraft } from "./commentDraft";
+import { CommentComposer } from "./CommentComposer";
 
 const PRESSED_OPACITY = 0.72;
 
-/**
- * The floating "Comment" pill of Details, GitHub Mobile style. It opens a
- * composer sheet with a Markdown input whose Send publishes one top-level
- * comment through the owner's write; an acknowledged comment closes the
- * sheet, while a refusal or failure keeps it open with the text (and the
- * input's error). Owns only the sheet's visibility.
- */
+/** Opens the PR's Markdown editor. Its draft belongs to the mounted PR. */
 export function NewCommentButton({
   onSend,
+  onUpload,
 }: {
   readonly onSend: (markdown: string) => Promise<MessageSendResult>;
+  readonly onUpload: ((file: CommentAttachment) => Promise<string>) | null;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
-  const send = useEvent(async (markdown: string): Promise<MessageSendResult> => {
-    const result = await onSend(markdown);
-    if (result.status === "sent") {
+  const draft = useConstant(createCommentDraft);
+  const canDismiss = useSelector(() => draft.state.status.get() !== "sending");
+  const show = useEvent(() => {
+    setOpen(true);
+  });
+  const done = useEvent(() => {
+    setOpen(false);
+  });
+  const dismiss = useEvent((next: boolean) => {
+    if (!next && !draft.busy()) {
       setOpen(false);
     }
-    return result;
   });
   return (
     <>
       <Pressable
         accessibilityLabel="Comment on this pull request"
         accessibilityRole="button"
-        onPress={() => {
-          setOpen(true);
-        }}
+        onPress={show}
         style={({ pressed }) => [styles.pill, pressed && styles.pressed]}
         testID="pull-request-comment-button"
       >
@@ -55,39 +59,19 @@ export function NewCommentButton({
       </Pressable>
       {open ? (
         <AppSheet
-          contentProps={{ dismissLabel: "Close the comment" }}
-          isOpen
-          onOpenChange={(next) => {
-            if (!next) {
-              setOpen(false);
-            }
+          contentProps={{
+            dismissLabel: "Close the comment",
+            enableDynamicSizing: false,
+            enablePanDownToClose: canDismiss,
+            snapPoints: ["100%"],
           }}
+          isOpen
+          onOpenChange={dismiss}
         >
-          <CommentComposer onSend={send} />
+          <CommentComposer draft={draft} onDone={done} onSend={onSend} onUpload={onUpload} />
         </AppSheet>
       ) : null}
     </>
-  );
-}
-
-/** The sheet's heading and the Markdown input whose Send publishes the comment. */
-function CommentComposer({
-  onSend,
-}: {
-  readonly onSend: (markdown: string) => Promise<MessageSendResult>;
-}): React.JSX.Element {
-  return (
-    <View style={styles.sheet} testID="pull-request-comment-sheet">
-      <Text accessibilityRole="header" style={styles.title}>
-        Comment
-      </Text>
-      <MessageReplyInput
-        accessibilityLabel="Comment on this pull request"
-        onSend={onSend}
-        placeholder="Add a comment…"
-        testID="pull-request-new-comment"
-      />
-    </View>
   );
 }
 
@@ -111,13 +95,5 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: PRESSED_OPACITY,
-  },
-  sheet: {
-    gap: spacing.sm,
-    paddingBottom: spacing.md,
-  },
-  title: {
-    ...typeScale.title,
-    color: colors.text,
   },
 });

@@ -282,6 +282,36 @@ describe("pull request reads", () => {
     expect(overview?.attention).toEqual({ revision: "a".repeat(64), state: "new" });
   });
 
+  it("keeps legacy requirements unknown and validates check activity, policy and the admitted viewer link", () => {
+    const source = overview91.checkItems[0];
+    const read = (extra: Readonly<Record<string, unknown>>) =>
+      parsePullRequestOverview(
+        { ...overview91, checkItems: [{ ...source, ...extra }] },
+        () => undefined,
+      );
+    expect(read({})?.checkItems[0]).toMatchObject({
+      activity: null,
+      required: null,
+      onDemand: null,
+      viewerUrl: null,
+    });
+    expect(
+      read({
+        activity: "running",
+        required: false,
+        onDemand: true,
+        viewerUrl: "https://ci.example/job",
+      })?.checkItems[0],
+    ).toMatchObject({
+      activity: "running",
+      required: false,
+      onDemand: true,
+      viewerUrl: "https://ci.example/job",
+    });
+    expect(read({ required: "false" })).toBeNull();
+    expect(read({ activity: "typo" })).toBeNull();
+  });
+
   it("rejects malformed attention revisions instead of treating them as unread", () => {
     const firstSection = reviewRequestedPage.sections[0];
     const firstRow = firstSection?.rows[0];

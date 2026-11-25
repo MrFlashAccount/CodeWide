@@ -1038,3 +1038,71 @@ test("a running file search reveals matches arriving on a later page", async () 
     await page.close();
   }
 });
+
+// Use two distant hunks with enough retained context on either side to scroll
+// even the compact patch. Both positions are user-visible reading positions.
+const contextFixtureLines = Array.from({ length: 720 }, (_, index) => `text ${index + 1}`);
+function makeContextHunk(center) {
+  const radius = 33;
+  const start = center - radius;
+  const count = 2 * radius + 1;
+  const lines = contextFixtureLines.slice(start - 1, start - 1 + count);
+  return [
+    `@@ -${start},${count} +${start},${count} @@`,
+    ...lines.flatMap((line, index) =>
+      index === radius ? [`-previous ${center}`, `+${line}`] : [` ${line}`],
+    ),
+  ].join("\n");
+}
+const contextPatch = {
+  kind: "update",
+  diff: ["--- a/file.ts", "+++ b/file.ts", makeContextHunk(190), makeContextHunk(530), ""].join(
+    "\n",
+  ),
+};
+
+for (const mode of ["unified", "split"]) {
+  test(`keeps the current hunk on screen when expanding and collapsing a ${mode} diff`, async () => {
+    const page = await openReview();
+    try {
+      await send(page, "settings", { mode, showLineNumbers: false, wrapLines: true });
+      const showFile = (full, requestId) =>
+        send(page, "document", {
+          requestId,
+          document: {
+            fullFileDiff: full,
+            path: "file.ts",
+            patches: [contextPatch],
+            revision: full ? "whole" : "compact",
+            source: full ? contextFixtureLines.join("\n") + "\n" : "",
+          },
+        });
+      function row(number) {
+        return page
+          .locator(
+            `.pierre-preview-host:visible [data-column-number="${number}"]:not([data-line-type="change-deletion"])`,
+          )
+          .last();
+      }
+      const moveLineToTop = (line) =>
+        line.evaluate((element) => {
+          const viewport = document.getElementById("preview");
+          viewport.scrollTop +=
+            element.getBoundingClientRect().top - viewport.getBoundingClientRect().top + 4;
+        });
+      const lineTop = (line) => line.evaluate((element) => element.getBoundingClientRect().top);
+      await showFile(false, 1);
+      await moveLineToTop(row(508));
+      const top = await lineTop(row(508));
+      await showFile(true, 2);
+      await expect.poll(() => lineTop(row(508))).toBeCloseTo(top, 0);
+      await moveLineToTop(row(480));
+      const omittedLineTop = await lineTop(row(480));
+      await showFile(false, 3);
+      await expect.poll(() => lineTop(row(497))).toBeCloseTo(omittedLineTop, 0);
+      await expect(row(480)).toHaveCount(0);
+    } finally {
+      await page.close();
+    }
+  });
+}

@@ -18,7 +18,7 @@ export function createComposerGoalSubmission(
   }
   const goal = mode.editingGoal === null ? null : (currentGoal ?? mode.editingGoal);
   return {
-    close: mode.captureGoalAttachment(),
+    close: mode.closeSubmittedGoalAttachment,
     submit: async (objective: string): Promise<void> => {
       if (mode.editingGoal !== null && currentGoal === null) {
         throw new Error("This goal is no longer available to edit");

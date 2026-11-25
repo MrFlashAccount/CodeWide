@@ -1,12 +1,13 @@
 import { Pressable, Text, View } from "react-native";
 
+import { ThreePanelsHeader } from "../../src/ui/ThreePanelsHeader";
 import { useThreePanels } from "../../src/ui/threePanels";
 
 /**
  * Renders the pane chrome `ThreePanelsContext` publishes the way a pane header does: the fullscreen
  * toggle and the pane's close, so route tests can drive pane actions without the real content.
  */
-export function PaneChromeControls({
+export function PaneCapabilityControls({
   name,
 }: {
   /** Names the pane in control labels: `Open <name> fullscreen` and `Close <name>`. */
@@ -37,4 +38,9 @@ export function PaneChromeControls({
       )}
     </View>
   );
+}
+
+/** Real pane header for screen fixtures with lightweight body content. */
+export function PaneChromeControls({name}:{readonly name:string}):React.JSX.Element {
+ return <ThreePanelsHeader back={null} testID={`${name} chrome`} title={<Text>{name}</Text>}/>;
 }

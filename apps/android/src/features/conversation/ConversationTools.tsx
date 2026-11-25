@@ -134,6 +134,7 @@ export function useConversationTools(props: UseConversationToolsProps) {
     },
   );
   const documentNavigationBinding = useDocumentNavigation(
+    props.draftConnectionId,
     props.cwd,
     props.attachmentsInputs.getTransferAccess,
     props.getStableTransferAccess,

@@ -9,7 +9,6 @@ import {
   typeTracking,
   typeWeight,
 } from "../../../theme";
-import { APP_SHEET_MAX_WIDTH } from "../../../ui/appSheetGeometry";
 
 const CHOICE_SIZE = 22;
 const FACET_ICON_SIZE = 34;
@@ -185,11 +184,6 @@ export const filterStyles = StyleSheet.create({
     color: colors.textDim,
     letterSpacing: typeTracking.caps,
     paddingTop: spacing.md,
-  },
-  sheet: {
-    alignSelf: "center",
-    maxWidth: APP_SHEET_MAX_WIDTH,
-    width: "100%",
   },
   suggestion: {
     alignItems: "center",

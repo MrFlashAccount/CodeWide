@@ -1,6 +1,6 @@
 import { useSelector } from "@legendapp/state/react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useDeferredValue, useState, useTransition, type ReactNode } from "react";
+import { useDeferredValue, useTransition } from "react";
 import { StyleSheet, View } from "react-native";
 
 import type { AccountState, ForgeProvider } from "../../data/forgeContract";
@@ -16,15 +16,14 @@ import { CatalogSearchOverlayHost } from "../../presentation/layouts/CatalogSear
 import { hasLinkedAccount } from "./accounts/accountPresentation";
 import { useMinuteClock } from "../../data/minuteClock";
 import { useEvent } from "../../react/useEvent";
-import { AccountsSheet } from "./accounts/AccountsSheet";
 import { PullRequestFilterSheet } from "./list/PullRequestFilterSheet";
 import { PullRequestList, PullRequestSearchSurface } from "./list/PullRequestList";
 import { AccountsPlaceholder } from "./onboarding/AccountsPlaceholder";
 import { OnboardingScreen } from "./onboarding/OnboardingScreen";
+import { ProviderConnectTray } from "./onboarding/ProviderConnectTray";
+import { useTray } from "../../vendor/reacticx/tray";
 import { PullRequestsHeader } from "./PullRequestsHeader";
 import {
-  forgeAccountsSheetOpen,
-  openForgeAccounts,
   openPullRequestFilters,
   openPullRequestSearch,
   pullRequestListModel,
@@ -45,74 +44,81 @@ export function PullRequestsCatalog({
   connectionId,
   forge,
   onOpenPullRequest,
+  onOpenSettings,
 }: {
   readonly capabilities: PullRequestsWorkspaceCapabilities;
   readonly connectionId: string;
   readonly forge: ForgeResources;
   /** Navigation intent: reveals the PR destination immediately. */
   readonly onOpenPullRequest: (row: PullRequestRow) => void;
+  readonly onOpenSettings: () => void;
 }): React.JSX.Element {
-  const accountsOpen = useSelector(forgeAccountsSheetOpen);
-  const [openOnboardingConnection, setOpenOnboardingConnection] = useState<string | null>(null);
   const state = useForgeQuery(forge.accounts, { connectionId });
   const snapshot = remoteValue(state);
   const handleTrayOpenChange = useEvent((open: boolean): void => {
-    setOpenOnboardingConnection(open ? connectionId : null);
     if (open) {
       revalidateProviders(forge, connectionId);
     }
   });
   const reconnect = useEvent((): void => {
     revalidateProviders(forge, connectionId);
-    openForgeAccounts();
+    onOpenSettings();
   });
   if (snapshot === null) {
     return (
-      <CatalogFrame>
+      <View style={styles.fill}>
+        <PullRequestsHeader onAddAccount={null} onOpenSettings={onOpenSettings} />
         <AccountsPlaceholder
           onRetry={() => {
             forge.accounts.refresh({ connectionId }).catch(() => undefined);
           }}
           state={state}
         />
-      </CatalogFrame>
+      </View>
     );
   }
   const linked = hasLinkedAccount(snapshot);
-  const onboardingOpen = openOnboardingConnection === connectionId;
   return (
-    <View style={styles.fill}>
-      {!linked || onboardingOpen ? (
-        <CatalogFrame>
-          <OnboardingScreen
-            capabilities={capabilities}
-            connectionId={connectionId}
-            onTrayOpenChange={handleTrayOpenChange}
-            snapshot={snapshot}
-          />
-        </CatalogFrame>
-      ) : null}
-      {linked && !onboardingOpen ? (
+    <ProviderConnectTray
+      capabilities={capabilities}
+      connectionId={connectionId}
+      onOpenChange={handleTrayOpenChange}
+      snapshot={snapshot}
+    >
+      {!linked ? (
+        <>
+          <CatalogAccountHeader onOpenSettings={onOpenSettings} />
+          <OnboardingScreen />
+        </>
+      ) : (
         <ConnectedList
           accounts={snapshot.accounts}
           connectionId={connectionId}
           forge={forge}
           onOpenPullRequest={onOpenPullRequest}
+          onOpenSettings={onOpenSettings}
           onReconnect={reconnect}
           providers={snapshot.providers}
         />
-      ) : null}
-      {accountsOpen ? (
-        <AccountsSheet
-          capabilities={capabilities}
-          connectionId={connectionId}
-          onDismiss={() => {
-            forgeAccountsSheetOpen.set(false);
-          }}
-          snapshot={snapshot}
-        />
-      ) : null}
-    </View>
+      )}
+    </ProviderConnectTray>
+  );
+}
+
+function CatalogAccountHeader({
+  onOpenSettings,
+  refreshing = false,
+}: {
+  readonly onOpenSettings: () => void;
+  readonly refreshing?: boolean;
+}): React.JSX.Element {
+  const tray = useTray();
+  return (
+    <PullRequestsHeader
+      onAddAccount={tray.open}
+      onOpenSettings={onOpenSettings}
+      refreshing={refreshing}
+    />
   );
 }
 
@@ -121,6 +127,7 @@ function ConnectedList({
   connectionId,
   forge,
   onOpenPullRequest,
+  onOpenSettings,
   onReconnect,
   providers,
 }: {
@@ -128,6 +135,7 @@ function ConnectedList({
   readonly connectionId: string;
   readonly forge: ForgeResources;
   readonly onOpenPullRequest: (row: PullRequestRow) => void;
+  readonly onOpenSettings: () => void;
   readonly onReconnect: (account: AccountState) => void;
   readonly providers: readonly ForgeProvider[];
 }): React.JSX.Element {
@@ -153,10 +161,6 @@ function ConnectedList({
   });
   const retry = useEvent((): void => {
     forge.lists.refresh(params).catch(() => undefined);
-  });
-  const manageProviders = useEvent((): void => {
-    revalidateProviders(forge, connectionId);
-    openForgeAccounts();
   });
   const submitSearch = useEvent((text: string): void => {
     startFilterTransition(() => {
@@ -200,7 +204,7 @@ function ConnectedList({
         }
         testID="pull-request-search-host"
       >
-        <PullRequestsHeader onManageProviders={manageProviders} refreshing={refreshing} />
+        <CatalogAccountHeader onOpenSettings={onOpenSettings} refreshing={refreshing} />
         <PullRequestList {...listProps} />
       </CatalogSearchOverlayHost>
       <PullRequestFilterSheet
@@ -227,15 +231,6 @@ function publishedListIsRefreshing(
   page: PullRequestListPage | null,
 ): boolean {
   return page !== null && (pendingFilter || (state.status === "ready" && state.refreshing));
-}
-
-function CatalogFrame({ children }: { readonly children: ReactNode }): React.JSX.Element {
-  return (
-    <View style={styles.fill}>
-      <PullRequestsHeader />
-      {children}
-    </View>
-  );
 }
 
 const styles = StyleSheet.create({

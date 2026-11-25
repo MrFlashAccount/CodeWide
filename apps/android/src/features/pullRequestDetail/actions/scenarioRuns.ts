@@ -21,7 +21,7 @@ export type ScenarioView =
   /** A queued or running run; `startedAt` is `null` until the run leaves the queue. */
   | { readonly kind: "active"; readonly startedAt: string | null; readonly threadId: ThreadId }
   | { readonly finishedAt: string; readonly kind: "done" }
-  | { readonly kind: "failed"; readonly reason: string };
+  | { readonly finishedAt: string | null; readonly kind: "failed"; readonly reason: string };
 
 /** Views by catalog `actionId`; an action without an entry is idle. */
 export type ScenarioViews = ReadonlyMap<string, ScenarioView>;
@@ -70,7 +70,7 @@ function viewOf(slot: ScenarioSlotState, head: HeadRevision): ScenarioView {
   }
   return state.status === "done"
     ? { finishedAt: state.finishedAt, kind: "done" }
-    : { kind: "failed", reason: state.reason };
+    : { finishedAt: state.finishedAt, kind: "failed", reason: state.reason };
 }
 
 /** The view of every scenario action in `actions` for the shown `head`. */
@@ -125,23 +125,13 @@ export function withScenarioLabels(
     return actions;
   }
   return actions.map((action) => {
+    if (action.kind === "fixCi" && action.anchor?.kind === "checksSection") {
+      // This scenario diagnoses the entire revision, including passing checks.
+      return action;
+    }
     const view = views.get(action.actionId);
     return view === undefined ? action : { ...action, label: scenarioLabel(action, view, nowMs) };
   });
-}
-
-/** The first failed scenario action at the shown head, with the real reason. */
-export function scenarioFailure(
-  actions: readonly ActionDescriptor[],
-  views: ScenarioViews,
-): { readonly label: string; readonly reason: string } | null {
-  for (const action of actions) {
-    const view = views.get(action.actionId);
-    if (view?.kind === "failed") {
-      return { label: action.label, reason: view.reason };
-    }
-  }
-  return null;
 }
 
 /** What a tap does beyond the label, by the action's live scenario state. */

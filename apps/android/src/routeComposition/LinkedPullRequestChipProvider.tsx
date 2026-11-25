@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 import type { PullRequestKey } from "../data/forgeContract";
 import type { PullRequestBadge } from "../data/forgePullRequestContract";
-import { pullRequestLinkResources } from "../data/forgeRuntime";
+import { forgeResources, pullRequestLinkResources } from "../data/forgeRuntime";
 import { pullRequestBadgeKey } from "../data/pullRequestLinkResources";
 import {
   ComposerLinkedPullRequestContext,
@@ -12,6 +12,9 @@ import {
 } from "../features/composer/composerLinkedPullRequest";
 import { useEvent } from "../react/useEvent";
 import { useThreePanels, type ThreePanelsContent } from "../ui/threePanels";
+import { ThreadPullRequestPickerContext } from "../features/turnActions/threadHeaderContract";
+import { workspaceFeatures } from "../features/workspace/createWorkspaceFeatures";
+import { threadId as reviewThreadId } from "../data/reviewContract";
 
 /**
  * Supplies the composer's linked pull request chip for one mounted conversation. The links are
@@ -45,11 +48,28 @@ export function LinkedPullRequestChipProvider({
       onOpen(badge.pullRequest);
     }
   });
+  const attach = useEvent(async (pullRequest: PullRequestKey): Promise<void> => {
+    await workspaceFeatures.pullRequestDetail.setLink(
+      { connectionId, pullRequest },
+      reviewThreadId(threadId, "threadId"),
+      true,
+    );
+  });
   return (
     <ComposerLinkedPullRequestContext.Provider
       value={linkedPullRequestChip(badges ?? [], shownBeside, open)}
     >
-      {children}
+      <ThreadPullRequestPickerContext.Provider
+        value={{
+          badges: badges ?? [],
+          connectionId,
+          forge: forgeResources,
+          onAttach: attach,
+          threadId,
+        }}
+      >
+        {children}
+      </ThreadPullRequestPickerContext.Provider>
     </ComposerLinkedPullRequestContext.Provider>
   );
 }

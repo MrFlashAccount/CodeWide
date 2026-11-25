@@ -1,27 +1,11 @@
 import { StyleSheet } from "react-native";
 
-import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../../theme";
+import { colors, controlSize, spacing, typeScale, typeWeight } from "../../../theme";
 
 const SECTION_LABEL_TRACKING = 0.6;
 
 /** Overview geometry (N-01/N-02): 16dp inset, 8dp between cards, 12dp card inset, lines ≥48dp. */
 export const overviewStyles = StyleSheet.create({
-  banner: {
-    backgroundColor: colors.surfaceContainer,
-    borderColor: colors.border,
-    borderRadius: radii.medium,
-    borderWidth: 1,
-    gap: spacing.xs,
-    padding: spacing.sm,
-  },
-  bannerError: {
-    backgroundColor: colors.errorContainer,
-    borderColor: colors.errorContainer,
-  },
-  bannerWarning: {
-    backgroundColor: colors.warningContainer,
-    borderColor: colors.warningContainer,
-  },
   body: {
     ...typeScale.body,
     color: colors.text,

@@ -3,11 +3,11 @@
 // vendor/reacticx/src/components/organisms/tray/index.tsx
 import {
   createContext as createContext2,
-  memo,
   useContext as useContext2,
   useEffect,
+  useLayoutEffect,
   useMemo,
-  useRef as useRef2,
+  useRef,
   useState as useState3
 } from "react";
 import {
@@ -37,6 +37,9 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN } from "react-native-worklets";
 
+// src/react/useEvent.ts
+import { useEffectEvent } from "react";
+
 // src/react/useConstant.ts
 import { useState } from "react";
 function useConstant(create) {
@@ -44,28 +47,18 @@ function useConstant(create) {
   return value;
 }
 
-// src/react/useLatest.ts
-import { useLayoutEffect, useRef } from "react";
-function useLatest(value) {
-  const ref = useRef(value);
-  useLayoutEffect(() => {
-    ref.current = value;
-  }, [value]);
-  return ref;
-}
-
 // src/react/useEvent.ts
 function useEvent(callback) {
-  const ref = useLatest(callback);
+  const dispatch = useEffectEvent(
+    (...args) => typeof callback === "function" ? callback(...args) : void 0
+  );
   return useConstant(
-    () => (...args) => {
-      const current = ref.current;
-      if (current === null || current === false || current === void 0) {
-        return void 0;
-      }
-      const result = current(...args);
-      return result;
-    }
+    () => (...args) => (
+      // WHY: Our pinned React 19.2 renderers guard every call and publish the implementation at commit.
+      // This adapter deliberately also serves UI events; its renderer contract is covered by v1-use-event.
+      // oxlint-disable-next-line react-hooks-js/rules-of-hooks
+      dispatch(...args)
+    )
   );
 }
 
@@ -307,9 +300,9 @@ var TrayRoot = ({
   const origin = useSharedValue(0);
   const hasScrollable = useSharedValue(false);
   const isDragging = useSharedValue(false);
-  const measured = useRef2(0);
-  const presented = useRef2(false);
-  const transitionVersion = useRef2(0);
+  const measured = useRef(0);
+  const presented = useRef(false);
+  const transitionVersion = useRef(0);
   const setOpen = useEvent((next) => {
     if (!isControlled) setInternalOpen(next);
     onOpenChange?.(next);
@@ -349,8 +342,11 @@ var TrayRoot = ({
     const first = measured.current === 0;
     measured.current = next;
     travel.value = next + insets.bottom + motion.travelPadding;
-    if (first || reduceMotion) sheetHeight.value = next;
-    else sheetHeight.value = withSpring(next, motion.heightSpring);
+    if (first || reduceMotion || !navigation.canGoBack && present.value < 1) {
+      sheetHeight.value = next;
+    } else {
+      sheetHeight.value = withSpring(next, motion.heightSpring);
+    }
     if (presented.current) return;
     presented.current = true;
     const start = offsets[Math.min(initialDetent, offsets.length - 1)] ?? 0;
@@ -524,11 +520,14 @@ var TrayTrigger = ({
   return /* @__PURE__ */ jsx(Pressable, { accessibilityRole: "button", onPress: () => open(view), style, children: /* @__PURE__ */ jsx(TrayTintContext.Provider, { value: palette.text, children }) });
 };
 var TrayContent = ({
+  backBehavior = "dismiss",
   children,
   style
 }) => {
   const {
     visible,
+    canGoBack,
+    goBack,
     close,
     height,
     present,
@@ -543,6 +542,8 @@ var TrayContent = ({
   const insets = useSafeAreaInsets();
   const dismissOnBackdropPress = useContext2(TrayDismissContext);
   const transformStyle = useAnimatedStyle(() => ({
+    // Hide the border and elevation along with the page until presentation starts.
+    opacity: present.value > 0 ? 1 : 0,
     transform: [
       { translateY: (1 - present.value) * travel.value + dragY.value },
       {
@@ -551,8 +552,8 @@ var TrayContent = ({
     ]
   }));
   const heightStyle = useAnimatedStyle(() => ({
-    height: height.value,
-    opacity: height.value === 0 ? 0 : 1
+    // Use the page's natural height on the first Fabric layout.
+    height: height.value > 0 ? height.value : void 0
   }));
   const backdropStyle = useAnimatedStyle(() => ({
     opacity: present.value * interpolate(
@@ -563,90 +564,99 @@ var TrayContent = ({
     )
   }));
   if (!visible) return null;
-  return /* @__PURE__ */ jsx(Modal, { transparent: true, statusBarTranslucent: true, visible: true, animationType: "none", onRequestClose: close, children: /* @__PURE__ */ jsx(GestureHandlerRootView, { style: styles.fill, unstable_forceActive: true, children: /* @__PURE__ */ jsx(
-    KeyboardAvoidingView,
+  return /* @__PURE__ */ jsx(
+    Modal,
     {
-      behavior: "padding",
-      pointerEvents: "box-none",
-      style: styles.fill,
-      testID: "tray-keyboard-layout",
-      children: /* @__PURE__ */ jsxs(View, { style: styles.fill, pointerEvents: "box-none", children: [
-        /* @__PURE__ */ jsx(
-          Pressable,
-          {
-            accessibilityLabel: "Dismiss tray",
-            accessibilityRole: "button",
-            onPress: dismissOnBackdropPress ? close : void 0,
-            pointerEvents: dismissOnBackdropPress ? "auto" : "none",
-            style: styles.backdrop,
-            testID: "tray-backdrop",
-            children: /* @__PURE__ */ jsx(
-              Animated.View,
+      transparent: true,
+      statusBarTranslucent: true,
+      visible: true,
+      animationType: "none",
+      onRequestClose: backBehavior === "previousView" && canGoBack ? goBack : close,
+      children: /* @__PURE__ */ jsx(GestureHandlerRootView, { style: styles.fill, unstable_forceActive: true, children: /* @__PURE__ */ jsx(
+        KeyboardAvoidingView,
+        {
+          behavior: "padding",
+          pointerEvents: "box-none",
+          style: styles.fill,
+          testID: "tray-keyboard-layout",
+          children: /* @__PURE__ */ jsxs(View, { style: styles.fill, pointerEvents: "box-none", children: [
+            /* @__PURE__ */ jsx(
+              Pressable,
               {
-                pointerEvents: "none",
-                style: [styles.backdropFill, { backgroundColor: palette.backdrop }, backdropStyle]
+                accessibilityLabel: "Dismiss tray",
+                accessibilityRole: "button",
+                onPress: dismissOnBackdropPress ? close : void 0,
+                pointerEvents: dismissOnBackdropPress ? "auto" : "none",
+                style: StyleSheet.absoluteFill,
+                testID: "tray-backdrop",
+                children: /* @__PURE__ */ jsx(
+                  Animated.View,
+                  {
+                    pointerEvents: "none",
+                    style: [StyleSheet.absoluteFill, { backgroundColor: palette.backdrop }, backdropStyle]
+                  }
+                )
               }
-            )
-          }
-        ),
-        /* @__PURE__ */ jsx(
-          View,
-          {
-            style: [styles.wrap, { paddingBottom: Math.max(insets.bottom, 12) }],
-            pointerEvents: "box-none",
-            children: /* @__PURE__ */ jsx(GestureDetector, { gesture: pan, children: /* @__PURE__ */ jsx(
-              Animated.View,
+            ),
+            /* @__PURE__ */ jsx(
+              View,
               {
-                style: [
-                  styles.sheet,
+                style: [styles.wrap, { paddingBottom: Math.max(insets.bottom, 12) }],
+                pointerEvents: "box-none",
+                children: /* @__PURE__ */ jsx(GestureDetector, { gesture: pan, children: /* @__PURE__ */ jsx(
+                  Animated.View,
                   {
-                    backgroundColor: palette.surface,
-                    borderColor: palette.border,
-                    borderRadius: radius
-                  },
-                  transformStyle,
-                  style
-                ],
-                children: /* @__PURE__ */ jsx(Animated.View, { style: [styles.clip, heightStyle], children: /* @__PURE__ */ jsxs(
-                  View,
-                  {
-                    style: styles.measure,
-                    onLayout: onContentLayout,
-                    testID: "tray-content-measure",
-                    children: [
-                      /* @__PURE__ */ jsx(View, { style: styles.handleArea, children: /* @__PURE__ */ jsx(View, { style: [styles.handle, { backgroundColor: palette.handle }] }) }),
-                      children
-                    ]
+                    style: [
+                      styles.sheet,
+                      {
+                        backgroundColor: palette.surface,
+                        borderColor: palette.border,
+                        borderRadius: radius
+                      },
+                      transformStyle,
+                      style
+                    ],
+                    children: /* @__PURE__ */ jsx(Animated.View, { style: [styles.clip, heightStyle], children: /* @__PURE__ */ jsxs(
+                      View,
+                      {
+                        style: styles.measure,
+                        onLayout: onContentLayout,
+                        testID: "tray-content-measure",
+                        children: [
+                          /* @__PURE__ */ jsx(View, { style: styles.handleArea, children: /* @__PURE__ */ jsx(View, { style: [styles.handle, { backgroundColor: palette.handle }] }) }),
+                          children
+                        ]
+                      }
+                    ) })
                   }
                 ) })
               }
-            ) })
-          }
-        )
-      ] })
+            )
+          ] })
+        }
+      ) })
     }
-  ) }) });
+  );
 };
 var TrayView = ({
   children,
   id,
   style
 }) => {
-  const { view, direction, reduceMotion, motion } = useTrayContext("Tray.View");
+  const { view, direction, canGoBack, reduceMotion, motion } = useTrayContext("Tray.View");
   const active = view === id;
   const [rendered, setRendered] = useState3(active);
-  const progress = useSharedValue(active ? 1 : 0);
-  const slideFrom = useSharedValue(0);
-  useEffect(() => {
+  const progress = useSharedValue(active && (!canGoBack || reduceMotion) ? 1 : 0);
+  const slideFrom = useSharedValue(direction);
+  useLayoutEffect(() => {
     if (active) {
       setRendered(true);
       slideFrom.value = direction;
       progress.value = reduceMotion ? 1 : withSpring(1, motion.viewInSpring);
       return;
     }
-    if (progress.value === 0) return;
     slideFrom.value = -direction;
-    if (reduceMotion) {
+    if (reduceMotion || progress.value === 0) {
       progress.value = 0;
       setRendered(false);
       return;
@@ -673,6 +683,7 @@ var TrayView = ({
   return /* @__PURE__ */ jsx(
     Animated.View,
     {
+      importantForAccessibility: active ? "auto" : "no-hide-descendants",
       pointerEvents: active ? "auto" : "none",
       style: [active ? styles.activeLayer : styles.idleLayer, layerStyle, style],
       children
@@ -804,12 +815,6 @@ var styles = StyleSheet.create({
     flex: 1,
     justifyContent: "flex-end"
   },
-  backdrop: {
-    ...StyleSheet.absoluteFillObject
-  },
-  backdropFill: {
-    ...StyleSheet.absoluteFillObject
-  },
   wrap: {
     paddingHorizontal: 10
   },
@@ -830,10 +835,7 @@ var styles = StyleSheet.create({
     justifyContent: "flex-end"
   },
   measure: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0
+    flexShrink: 0
   },
   handleArea: {
     alignItems: "center",
@@ -875,7 +877,7 @@ var styles = StyleSheet.create({
   },
   glyph: { fontSize: 18, fontWeight: "600" }
 });
-var Tray = createCompoundComponent("Tray", memo(TrayRoot), {
+var Tray = createCompoundComponent("Tray", TrayRoot, {
   Trigger: createCompoundComponent("Tray.Trigger", TrayTrigger),
   Content: createCompoundComponent("Tray.Content", TrayContent),
   View: createCompoundComponent("Tray.View", TrayView),

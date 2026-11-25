@@ -5,7 +5,7 @@ import {
   catalogModeBarBottomInset,
   catalogModeBarHorizontalInset,
 } from "../src/presentation/layouts/catalogModeBarGeometry";
-import { renderWorkspaceTabs } from "./fixtures/WorkspaceTabsRouter";
+import { renderWorkspaceTabs, testWorkspaceInsets } from "./fixtures/WorkspaceTabsRouter";
 
 let mockDesktop = false;
 let mockViewportWidth = 400;
@@ -69,6 +69,10 @@ it("keeps both native-screen tab descriptors mounted without collapsing retained
     importantForAccessibility: "auto",
     pointerEvents: "auto",
   });
+  const threadsBar = within(threads).getByTestId("floating-catalog-mode-bar");
+  const pullsBar = within(pulls).getByTestId("floating-catalog-mode-bar", {
+    includeHiddenElements: true,
+  });
   expect(threads).toHaveStyle({ flex: 1 });
   expect(threads).not.toHaveStyle({ display: "none" });
   expect(pulls.props).toMatchObject({
@@ -88,6 +92,10 @@ it("keeps both native-screen tab descriptors mounted without collapsing retained
     view.getByTestId("workspace-tab-scene-(threads)", { includeHiddenElements: true }),
   ).not.toHaveStyle({ display: "none" });
   expect(view.getByTestId("workspace-tab-scene-(pull-requests)")).toHaveStyle({ flex: 1 });
+  expect(within(pulls).getByTestId("floating-catalog-mode-bar")).toBe(pullsBar);
+  expect(
+    within(threads).getByTestId("floating-catalog-mode-bar", { includeHiddenElements: true }),
+  ).toBe(threadsBar);
 });
 
 it("keeps the active native-screen tab visible beneath a transparent root route", () => {
@@ -125,7 +133,7 @@ it.each([
     ),
   ).toBe(bar);
   expect(bar).toHaveStyle({
-    bottom: catalogModeBarBottomInset,
+    bottom: catalogModeBarBottomInset + testWorkspaceInsets.bottom,
     left: catalogModeBarHorizontalInset,
     position: "absolute",
     right: catalogModeBarHorizontalInset,

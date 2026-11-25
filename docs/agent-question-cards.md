@@ -1,19 +1,19 @@
 # Agent question cards
 
-The first proposal in `work/question-card-design/design.md` is superseded by the compact question dock. V1 renders questions only in a single editor above the composer for both `item/tool/requestUserInput` and Astra `agentMessage` items with `delivery: "async"` and structured `questions`.
+V1 shows the current structured question at the end of the scrollable conversation.
 
 ## Ownership and behavior
 
-- `features/requests/questions` validates question DTOs and owns the editor resource. Suggestions, descriptions, custom text, page navigation and explicit skip share one retained session. The main composer draft is independent.
+- `features/requests/questions` validates question DTOs and owns the editor resource. Suggestions, descriptions, custom text, page navigation and explicit skip share one retained session. Freeform answers use the chat composer, including its dictation and attachment tray. Quick answers leave the composer draft intact.
 - Nonsecret drafts use the local UI cache through `questionDraftStorage`. Secret draft values remain in editor memory and are excluded from stored drafts and summaries; submission uses the existing native response transport.
 - Old history windows cannot establish a current async question: the dock requires the latest history range or the matching active turn.
-- The dock is outside the virtualized timeline, follows the existing keyboard-sticky composer and caps its scrollable height at 40% of the window. It does not scroll to historical messages or register question geometry. Normal timeline behavior remains independent.
+- Full-width option rows wrap with the pane. Tapping a row answers the current page. Holding a row inserts its label at the current composer selection for editing. The final page submits the collected answers.
 - Async answers use the ordinary durable text-command authority with bounded Codex question framing. An active turn receives a steer; an idle conversation receives a start. A command id derived from thread/item identity is reused for retries and across CodeWide devices.
 - Native admission means queued, not delivered. A matching authoritative user-message `clientId` confirms delivery. Accepted answers retire the dock; the ordinary user message is the visible answer. A later accepted user message or a newer turn retires the old input opportunity without claiming delivery. Any terminal turn status or normal final answer retires all unanswered questions immediately, without submitting a default answer. Late item replay cannot restore attention for the closed turn.
 - RPC answers preserve the original request id and question-id answer map. RPC identity includes its lifecycle creation time so reused server request numbers cannot restore an earlier form. Rollout evidence matched by `itemId`/`call_id` retires the live form even if pending-request removal arrives later. No historical question card is rendered inside the agent bubble.
 - Summary history retains async questions separately from the final agent response. This metadata supports lifecycle reconciliation only; neither historical questions nor answer-status summaries are added to the agent bubble. Async replies remain ordinary user messages. Started/completed replay deduplicates the question by item id, and cached summary projection version 6 rebuilds older projections.
 
-The card uses compact numbered options, a neutral selected row, an always-visible custom response and small Skip/Send actions. Selection never submits by itself. Skip failures preserve the draft and expose a retryable error.
+The ordinary composer sends text and uploaded attachments to the active question. For a text-only input RPC, Companion resolves scoped file references and includes their readable paths in the corresponding answer. Secret forms use their dedicated masked editor. Skip failures preserve the draft.
 
 ## Deliberate limits
 
@@ -35,6 +35,6 @@ Application Babel and all three render-test configurations share React Compiler 
 
 ## Validation
 
-The focused render tests cover page and custom-draft preservation, explicit submission, duplicate-send admission, retry, masked-value persistence, canonical RPC responses, Astra steering, authoritative receipt correlation, turn completion and the single docked editor. Compiler-enabled tests cover sequential typing, choice changes, and independent timeline keyboard behavior. Companion replay tests cover an async question surviving a persisted summary checkpoint and a later final answer, and RPC question/answer pairing across checkpoint reopen, repeated replay, partial results, cancellation, malformed output and secret redaction. UI tests cover dock retirement from rollout metadata, including another client’s answer, without rendering a historical question or answer summary.
+The focused render tests cover page and custom-draft preservation, tap and long-press actions, duplicate-send admission, retry, masked-value persistence, canonical RPC responses, Astra steering, authoritative receipt correlation, turn completion and the single transcript question. Compiler-enabled tests cover sequential typing, choice changes, and independent timeline keyboard behavior. Companion replay tests cover an async question surviving a persisted summary checkpoint and a later final answer, and RPC question/answer pairing across checkpoint reopen, repeated replay, partial results, cancellation, malformed output and secret redaction. UI tests cover question retirement from rollout metadata, including another client’s answer, without rendering a historical question or answer summary.
 
 Physical-device keyboard geometry, accessibility focus, reconnect/offline delivery and two-device interaction still require device validation. No APK/OTA/Companion release is part of this change.

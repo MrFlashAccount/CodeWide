@@ -1,6 +1,7 @@
 import type { FC, ReactNode } from "react";
 import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 
+
 export type TMaskedTabBarTheme = "dark" | "light";
 
 export interface IMaskedTabBarPalette {
@@ -17,6 +18,8 @@ export interface IMaskedTabIconState {
 }
 
 export interface IMaskedTabBarRoot {
+  /** Only the visible control reconciles a shared indicator against its measured boxes. */
+  readonly active?: boolean;
   readonly children: ReactNode;
   readonly defaultValue?: string;
   readonly draggable?: boolean;
@@ -67,6 +70,7 @@ interface MaskedTabBarCompound extends FC<IMaskedTabBarRoot> {
   readonly Trigger: FC<IMaskedTabBarTrigger>;
 }
 
+export const MaskedTabBarMotionProvider: FC<{ readonly children: ReactNode }>;
 export const MaskedTabBar: MaskedTabBarCompound;
 export const MaskedTabBarRoot: FC<IMaskedTabBarRoot>;
 export const MaskedTabBarList: FC<IMaskedTabBarList>;

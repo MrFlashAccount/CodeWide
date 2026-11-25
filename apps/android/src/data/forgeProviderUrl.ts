@@ -1,4 +1,4 @@
-import type { PullRequestOverview } from "./forgePullRequestContract";
+import type { CheckItem, PullRequestOverview } from "./forgePullRequestContract";
 
 function credentialFreeHttpsUrl(uri: string): URL | null {
   try {
@@ -30,4 +30,13 @@ export function safeProviderUrl(uri: string, host: string): string | null {
     parsed.hostname.toLowerCase() === host.toLowerCase()
     ? parsed.toString()
     : null;
+}
+
+/** A Companion-verified job viewer may use a declared CI host. Legacy links stay on the PR host. */
+export function checkViewerUrl(check: CheckItem, host: string): string | null {
+  if (typeof check.viewerUrl === "string") {
+    const url = credentialFreeHttpsUrl(check.viewerUrl);
+    return url !== null && url.port === "" ? url.href : null;
+  }
+  return check.detailsUrl === null ? null : safeProviderUrl(check.detailsUrl, host);
 }

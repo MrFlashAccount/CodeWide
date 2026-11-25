@@ -78,6 +78,7 @@ export type QueuedPrompt = {
   text: string;
 };
 
+import type { PullRequestKey } from "./forgeContract";
 import type { ThreadSettings } from "./turn-controls-types";
 export type SendMode =
   | { type: "start" }
@@ -85,6 +86,7 @@ export type SendMode =
   | { expectedTurnId: string; type: "steer" };
 export type TurnSendOptions = ThreadSettings & {
   attachments?: RemoteFileAttachment[];
+  reviewPullRequest?: PullRequestKey;
   skills?: Array<{ name: string; path: string }>;
   workspaceRequestId?: string;
 };

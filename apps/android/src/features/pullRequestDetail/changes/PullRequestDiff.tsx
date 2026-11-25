@@ -12,12 +12,7 @@ import {
   type CodeReviewDocument,
   type CodeReviewFileItem,
 } from "../../review/editor/editorBridge";
-import {
-  draftEditorComments,
-  fileDocument,
-  wholeFileDocument,
-  type DiffContent,
-} from "./changesPresentation";
+import { draftEditorComments, fileDocument } from "./changesPresentation";
 
 const BYTES_PER_MEGABYTE = 1_048_576;
 /** Keeps a short diff usable when the drafts list below it is long. */
@@ -45,34 +40,31 @@ const TREE_STATUS: Readonly<Record<PullRequestFile["status"], CodeReviewFileItem
 /**
  * The PR's files in the Pierre review editor: its file tree (type icons,
  * change status, line statistics and draft count) beside or instead of the
- * selected file's diff. When the whole head file was read and lines up with the
- * patch, the diff is that whole file with the changes inline; otherwise it is
- * the recorded patch. `content` is already decided, so the editor receives one
- * document per file; while it is pending the editor shows its own loading
- * state rather than a patch it would later replace. Drafts show inline, new
+ * selected file's diff. An explicit expansion supplies an aligned whole-file
+ * document; otherwise the recorded patch is immediately available. Drafts show inline, new
  * ones at once while they are saved; a line tap opens the one native line
  * composer and the line stays highlighted as its anchor. Files without a
  * patch say why.
  */
 export function PullRequestDiff({
   composerLine,
-  content,
   display,
   draftPuts,
   drafts,
+  expandedDocument,
   onCommentPress,
   onLinePress,
   reveal,
   selected,
   tree,
 }: {
-  readonly composerLine: LineCommentTarget | null;
-  /** What the selected file's diff shows. */
-  readonly content: DiffContent;
   /** The line whose composer is open, or `null`. */
+  readonly composerLine: LineCommentTarget | null;
   readonly display: DiffDisplay;
   readonly draftPuts: readonly DraftPut[];
   readonly drafts: readonly DraftComment[];
+  /** The explicitly expanded file with inline changes. */
+  readonly expandedDocument?: CodeReviewDocument | undefined;
   readonly onCommentPress?: (id: string) => void;
   readonly onLinePress: (reference: CodeReviewLineReference) => void;
   readonly reveal: CodeReviewLineReference | null;
@@ -80,7 +72,7 @@ export function PullRequestDiff({
   /** The PR's file tree; `null` shows the one file alone (guide stops). */
   readonly tree: DiffTree | null;
 }): React.JSX.Element {
-  const document = content.state === "pending" ? null : selectedDocument(selected, content);
+  const document = expandedDocument ?? selectedDocument(selected);
   const navigation = tree ?? {
     besideDiff: false,
     complete: true,
@@ -99,7 +91,7 @@ export function PullRequestDiff({
         files={items}
         filesComplete={navigation.complete}
         loadError={null}
-        loading={content.state === "pending"}
+        loading={false}
         mode={display.mode}
         onCommentPress={onCommentPress}
         onFileSelect={navigation.onSelect}
@@ -117,9 +109,8 @@ export function PullRequestDiff({
   );
 }
 
-function selectedDocument(file: PullRequestFile, content: DiffContent): CodeReviewDocument {
+function selectedDocument(file: PullRequestFile): CodeReviewDocument {
   return (
-    (content.state === "wholeFile" ? wholeFileDocument(file, content.content) : null) ??
     fileDocument(file) ?? {
       detail: missingPatchReason(file),
       displayState: "unsupported" as const,

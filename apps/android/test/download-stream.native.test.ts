@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   discardPartialDownload,
+  findDownloadedFile,
   pickDownloadDirectory,
   startPreviewDownload,
 } from "../src/native/file-transfer.native";
@@ -163,6 +164,49 @@ describe("SAF streamed downloads", () => {
     ]);
     expect(storage.writes).toBe(served.requests.length);
     expect(storage.open).not.toHaveBeenCalled();
+  });
+
+  it("verifies an existing file without fetching ranges or writing a partial", async () => {
+    const bytes = new Uint8Array([1, 3, 5]);
+    const served = serve(bytes);
+    const uri = `content://downloads/${filename}`;
+    const directory = await pickDownloadDirectory();
+    const source = { kind: "path", path: `/${filename}` } as const;
+    storage.files.set(uri, bytes);
+    await expect(
+      findDownloadedFile(directory, { source, knownUris: new Set() }, getAccess),
+    ).resolves.toMatchObject({
+      uri,
+      bytes: 3,
+    });
+    storage.files.set(uri, new Uint8Array([1, 3, 4]));
+    await expect(
+      findDownloadedFile(directory, { source, knownUris: new Set() }, getAccess),
+    ).rejects.toThrow("already exists");
+    expect(served.requests).toEqual([]);
+    expect(storage.writes).toBe(0);
+    expect([...storage.files.keys()]).toEqual([uri]);
+    storage.files.delete(uri);
+    await expect(
+      findDownloadedFile(directory, { source, knownUris: new Set() }, getAccess),
+    ).resolves.toBeNull();
+  });
+
+  it("reuses a renamed file only while the provider URI and remote bytes still match", async () => {
+    const bytes = new Uint8Array([2, 4, 8]);
+    const served = serve(bytes);
+    const directory = await pickDownloadDirectory();
+    const source = { kind: "path", path: "/original.txt" } as const;
+    const uri = "content://downloads/renamed.txt";
+    storage.files.set(uri, bytes);
+    await expect(
+      findDownloadedFile(directory, { source, knownUris: new Set() }, getAccess),
+    ).resolves.toBeNull();
+    const lookup = { source, knownUris: new Set([uri]) };
+    await expect(findDownloadedFile(directory, lookup, getAccess)).resolves.toMatchObject({ uri });
+    storage.files.set(uri, new Uint8Array([2, 4, 7]));
+    await expect(findDownloadedFile(directory, lookup, getAccess)).resolves.toBeNull();
+    expect(served.requests).toEqual([]);
   });
 
   it("replaces characters that storage providers reject in downloaded names", async () => {

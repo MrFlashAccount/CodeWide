@@ -4,7 +4,7 @@
  * The notifications carry only a scope; no forge content passes through here.
  */
 import { pullRequestKey, type PullRequestKey } from "./forgeContract";
-import { decodeOrNull, oneOf, record } from "./forgeWire";
+import { decodeOrNull, list, oneOf, record } from "./forgeWire";
 import { diffSource, type DiffSource } from "./reviewContract";
 
 const FORGE_INVALIDATED_METHOD = "companion/forge/invalidated";
@@ -42,6 +42,23 @@ function parse(method: unknown, params: unknown): ForgeInvalidation | null {
   });
 }
 
+/** An account-scoped PR view and the catalog entry share changes. Only Companion interprets their keys. */
+function* affectedViews(
+  invalidation: ForgeInvalidation,
+  params: unknown,
+): Iterable<ForgeInvalidation> {
+  yield invalidation;
+  if (invalidation.scope !== "pullRequest" && invalidation.scope !== "scenarios") {
+    return;
+  }
+  const aliases = decodeOrNull(() =>
+    list(record(params, "params").aliases ?? [], "aliases", pullRequestKey),
+  );
+  for (const alias of aliases ?? []) {
+    yield { pullRequest: alias, scope: invalidation.scope };
+  }
+}
+
 /** Process-lifetime invalidation channel shared by the projection and forge resources. */
 export const forgeInvalidationBus = {
   /**
@@ -53,8 +70,10 @@ export const forgeInvalidationBus = {
     if (invalidation === null) {
       return false;
     }
-    for (const listener of listeners) {
-      listener(connectionId, invalidation);
+    for (const affected of affectedViews(invalidation, params)) {
+      for (const listener of listeners) {
+        listener(connectionId, affected);
+      }
     }
     return true;
   },

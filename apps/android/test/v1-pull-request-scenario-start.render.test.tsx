@@ -1,3 +1,4 @@
+import { AppNoticeProvider } from "../src/ui/AppNotice";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 
 import { parseActionCatalog } from "../src/data/forgeActionCatalog";
@@ -31,14 +32,14 @@ function catalog() {
         },
         {
           actionId: "codewide.scenario.fixCi",
-          anchor: { checkId: "check-lint", kind: "checks" },
+          anchor: { kind: "checksSection" },
           availability: { state: "enabled" },
           confirm: "none",
           group: "agent",
           input: null,
           isDefault: true,
           kind: "fixCi",
-          label: "Fix in agent",
+          label: "Address all checks",
           order: 100,
           placement: "secondary",
           toggle: null,
@@ -78,21 +79,23 @@ function renderActions(
   }
   const onOpenThread = jest.fn<undefined, [ThreadId]>();
   const model = createPullRequestScreenModel();
-  const hook = renderHook(() =>
-    usePullRequestActions({
-      capabilities,
-      model,
-      onDeferScenario: deferScenario,
-      onOpenThread,
-      onRefresh: () => undefined,
-      scenarioViews: new Map(),
-      target: {
-        connectionId: "server",
-        headRevision,
-        host: "github.com",
-        pullRequest,
-      },
-    }),
+  const hook = renderHook(
+    () =>
+      usePullRequestActions({
+        capabilities,
+        model,
+        onDeferScenario: deferScenario,
+        onOpenThread,
+        onRefresh: () => undefined,
+        scenarioViews: new Map(),
+        target: {
+          connectionId: "server",
+          headRevision,
+          host: "github.com",
+          pullRequest,
+        },
+      }),
+    { wrapper: AppNoticeProvider },
   );
   return { actions, hook, model, onOpenThread };
 }
@@ -131,7 +134,7 @@ it("starts every agent scenario in the PR review chat and opens the thread the c
     startScenario.mock.calls.map(([, request]) => [request.scenario, request.checkId]),
   ).toEqual([
     ["reviewPr", null],
-    ["fixCi", "check-lint"],
+    ["fixCi", null],
   ]);
   expect(onOpenThread.mock.calls).toEqual([[canonicalThread], [canonicalThread]]);
   expect(getAppDialogRequest()).toBeNull();

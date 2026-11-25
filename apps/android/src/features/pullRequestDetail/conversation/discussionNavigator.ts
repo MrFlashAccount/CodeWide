@@ -45,12 +45,35 @@ export function createDiscussionNavigator(target: RevealTarget): DiscussionNavig
   const views = new Map<ReviewThreadId, View>();
   // A thread without a choice reads `undefined`: Legend answers an absent key that way.
   const choices = observable(new Map<ReviewThreadId, boolean | undefined>());
+  let pending: ReviewThreadId | null = null;
+  function scrollToThread(view: View): void {
+    const content = target.content.current;
+    const scroll = target.scroll.current;
+    if (content === null || scroll === null) {
+      return;
+    }
+    // The thread's top does not move when it expands: only content below it grows.
+    view.measureLayout(
+      content,
+      (_x, y) => {
+        scroll.scrollTo({
+          animated: true,
+          y: Math.max(0, target.contentOffset + y - REVEAL_INSET),
+        });
+      },
+      noop,
+    );
+  }
   return {
     attach: (threadId, view) => {
       if (view === null) {
         return noop;
       }
       views.set(threadId, view);
+      if (pending === threadId) {
+        pending = null;
+        scrollToThread(view);
+      }
       return () => {
         if (views.get(threadId) === view) {
           views.delete(threadId);
@@ -61,22 +84,10 @@ export function createDiscussionNavigator(target: RevealTarget): DiscussionNavig
     reveal: (threadId) => {
       choices.set(threadId, true);
       const view = views.get(threadId);
-      const content = target.content.current;
-      const scroll = target.scroll.current;
-      if (view === undefined || content === null || scroll === null) {
-        return;
+      pending = view === undefined ? threadId : null;
+      if (view !== undefined) {
+        scrollToThread(view);
       }
-      // The thread's top does not move when it expands: only content below it grows.
-      view.measureLayout(
-        content,
-        (_x, y) => {
-          scroll.scrollTo({
-            animated: true,
-            y: Math.max(0, target.contentOffset + y - REVEAL_INSET),
-          });
-        },
-        noop,
-      );
     },
     setExpanded: (threadId, expanded) => {
       choices.set(threadId, expanded);

@@ -1,4 +1,6 @@
-import { Pressable, StyleSheet, View } from "react-native";
+import type { Observable } from "@legendapp/state";
+import { useSelector } from "@legendapp/state/react";
+import { Pressable, StyleSheet, View, type LayoutChangeEvent } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import type { ReviewThreadId } from "../../../data/forgeConversationContract";
@@ -6,6 +8,7 @@ import { DirectImageSourcesProvider } from "../../../rendering/directImageSource
 import { colors, controlSize, spacing, typeScale, typeWeight } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 import { SectionBand } from "../sections/SectionBand";
+import { conversationImageSources } from "./conversationImages";
 import { DiscussionTimeline, type TimelineContext } from "./DiscussionTimeline";
 import type { Discussion } from "./discussionModel";
 import type { DiscussionNavigator } from "./discussionNavigator";
@@ -24,7 +27,9 @@ export type ConversationSectionProps = {
   readonly nowMs: number;
   readonly onAddressThread: (threadId: ReviewThreadId) => void;
   readonly onRun: (action: ActionDescriptor) => void;
+  readonly onSectionLayout: (event: LayoutChangeEvent) => void;
   readonly pending: Readonly<Record<string, true>>;
+  readonly visibleCount: Observable<number>;
   readonly writes: ConversationWrites;
 };
 
@@ -38,9 +43,16 @@ const LOADING_PLACEHOLDER_HEIGHT = 104;
  * renderer.
  */
 export function ConversationSection(props: ConversationSectionProps): React.JSX.Element {
-  const { discussion } = props;
+  const { conversation, discussion } = props;
+  const loading = conversation.status === "loading";
   return (
-    <View testID="pull-request-conversation">
+    // The loaded Issues and Reviews rows above can move the discussion. Measure its settled
+    // position even when the heading itself has the same dimensions as the loading band.
+    <View
+      key={loading ? "loading" : "settled"}
+      onLayout={loading ? undefined : props.onSectionLayout}
+      testID="pull-request-conversation"
+    >
       <SectionBand
         count={discussion === null ? null : String(discussion.commentCount)}
         testID="pull-request-discussion-heading"
@@ -52,8 +64,22 @@ export function ConversationSection(props: ConversationSectionProps): React.JSX.
   );
 }
 
-function ConversationBody(props: ConversationSectionProps): React.JSX.Element {
+function ConversationBody(props: ConversationSectionProps): React.JSX.Element | null {
   const { conversation, discussion } = props;
+  const visibleCount = useSelector(() => props.visibleCount.get());
+  if (conversation.status === "loading") {
+    return (
+      <View
+        accessibilityLabel="Conversation is loading"
+        accessibilityState={{ busy: true }}
+        style={styles.placeholder}
+        testID="pull-request-conversation-loading"
+      />
+    );
+  }
+  if (visibleCount === 0) {
+    return null;
+  }
   if (conversation.status === "failed") {
     return (
       <View style={styles.note}>
@@ -69,15 +95,8 @@ function ConversationBody(props: ConversationSectionProps): React.JSX.Element {
       </View>
     );
   }
-  if (conversation.status === "loading" || discussion === null) {
-    return (
-      <View
-        accessibilityLabel="Conversation is loading"
-        accessibilityState={{ busy: true }}
-        style={styles.placeholder}
-        testID="pull-request-conversation-loading"
-      />
-    );
+  if (discussion === null) {
+    return null;
   }
   const context: TimelineContext = {
     addressing: props.addressing,
@@ -93,14 +112,20 @@ function ConversationBody(props: ConversationSectionProps): React.JSX.Element {
     writes: props.writes,
   };
   return (
-    <DirectImageSourcesProvider sources={conversation.images}>
+    <DirectImageSourcesProvider
+      sources={conversationImageSources(conversation.page, conversation.imageOwner)}
+    >
       {discussion.timeline.length === 0 ? (
         <View style={styles.note}>
           <Text style={styles.noteText}>No conversation yet.</Text>
         </View>
       ) : null}
-      <DiscussionTimeline context={context} items={discussion.timeline} />
-      {conversation.loadMore === null ? null : (
+      <DiscussionTimeline
+        context={context}
+        items={discussion.timeline}
+        visibleCount={visibleCount}
+      />
+      {conversation.loadMore === null || visibleCount < discussion.timeline.length ? null : (
         <Pressable
           accessibilityRole="button"
           onPress={conversation.loadMore}

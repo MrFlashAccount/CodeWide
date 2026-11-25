@@ -351,7 +351,7 @@ it("creates the chat in the chosen project on the first send, delivers the messa
     "created",
     "Please look at the flaky test",
     { type: "start" },
-    { model: "gpt-5" },
+    { model: "gpt-5", reviewPullRequest: "fpr1.github-91" },
   );
   expect(view.queryByTestId("pull-request-chat-draft")).toBeNull();
 });

@@ -1,3 +1,4 @@
+import { useReviewChatPlacement, reviewChatRouteOptions } from "./reviewChatPlacement";
 import { useIsFocused, useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 
@@ -31,8 +32,11 @@ export function PullRequestRoute({
   readonly tab: PullRequestTab;
 }): React.JSX.Element | null {
   const params = useLocalSearchParams<{
+    catalogPullRequestKey?: string;
     composeReview?: string;
     connectionId?: string;
+    fromChat?: string;
+    link?: string;
     pullRequestKey?: string;
     view?: string;
   }>();
@@ -43,9 +47,12 @@ export function PullRequestRoute({
   }
   return (
     <PullRequestRouteContent
-      composeReview={params.composeReview === "1"}
+      catalogPullRequest={parsePullRequestKeyParam(params.catalogPullRequestKey)}
+      composeReview={params.composeReview ?? ""}
       connectionId={connectionId}
+      fromChat={params.fromChat === "1"}
       key={`${connectionId}:${pullRequest}`}
+      link={typeof params.link === "string" ? params.link : null}
       pullRequest={pullRequest}
       tab={tab}
       view={params.view === "guide" ? "guide" : "files"}
@@ -58,14 +65,20 @@ export function PullRequestRoute({
  * The shared pane layout owns their placement, radii, fullscreen and chrome.
  */
 function PullRequestRouteContent({
+  catalogPullRequest,
   composeReview,
   connectionId,
+  fromChat,
+  link,
   pullRequest,
   tab,
   view,
 }: {
-  readonly composeReview: boolean;
+  readonly catalogPullRequest: PullRequestKey | null;
+  readonly composeReview: string;
   readonly connectionId: string;
+  readonly fromChat: boolean;
+  readonly link: string | null;
   readonly pullRequest: PullRequestKey;
   readonly tab: PullRequestTab;
   /** What the Changes route opens on; from its `view` search param. */
@@ -76,7 +89,7 @@ function PullRequestRouteContent({
   const { desktop, list, runtime } = useWorkspaceRouteResources();
   const describeLinkedThread = useLinkedThreadDescriptions(list.loadedThreadSummaries);
   const reviewChat = usePullRequestReviewChat({
-    composeReview,
+    ...reviewChatRouteOptions(composeReview, { connectionId, pullRequest }),
     connectionId,
     desktop,
     ensureReviewChat: workspaceFeatures.pullRequestDetail.ensureReviewChat,
@@ -85,13 +98,33 @@ function PullRequestRouteContent({
     routeActive,
     sendText: workspaceFeatures.composer.sendText,
   });
+  const placement = useReviewChatPlacement({
+    active: routeActive,
+    connectionId,
+    fromChat,
+    link,
+    openChat: reviewChat.openReviewChat,
+    openDraft: reviewChat.openAttachedDraft,
+    prepareThread: list.prepareThreadLink,
+    pullRequest,
+    servers: list.settingsConnections,
+  });
   const back = useEvent((): void => {
-    router.dismissTo("/pulls");
+    if (fromChat && router.canGoBack()) {
+      router.back();
+    } else {
+      router.dismissTo("/pulls");
+    }
   });
   // Changes is a nested route pushed over Details, so Back returns to Details.
+  const prParams = {
+    ...(catalogPullRequest === null ? {} : { catalogPullRequestKey: catalogPullRequest }),
+    connectionId,
+    pullRequestKey: pullRequest,
+  };
   const pushChanges = useEvent((nextView: ChangesView): void => {
     router.push({
-      params: { connectionId, pullRequestKey: pullRequest, view: nextView },
+      params: { ...prParams, view: nextView },
       pathname: "/pulls/[connectionId]/[pullRequestKey]/changes",
     });
   });
@@ -102,7 +135,7 @@ function PullRequestRouteContent({
     }
     // A deep link opened Changes alone; Details takes its place.
     router.replace({
-      params: { connectionId, pullRequestKey: pullRequest },
+      params: prParams,
       pathname: "/pulls/[connectionId]/[pullRequestKey]",
     });
   });
@@ -129,12 +162,11 @@ function PullRequestRouteContent({
                 connectionId,
               )}
               navigation={{
-                // A wide PR sits beside its catalog, so Details has nothing behind it.
-                back: desktop ? null : back,
+                back,
                 closeChanges: changes.close,
                 deferReviewChatScenario: reviewChat.deferScenario,
                 openChanges: changes.open,
-                openReviewChat: reviewChat.openReviewChat,
+                openReviewChat: placement.open,
                 openThread: reviewChat.openThread,
               }}
               openAttachedDraft={reviewChat.openAttachedDraft}
@@ -159,6 +191,7 @@ function PullRequestRouteContent({
                     chat={chat}
                     connectionId={connectionId}
                     draft={reviewChat.draft}
+                    pullRequest={pullRequest}
                   />
                 ),
                 label: "review chat",
@@ -172,6 +205,7 @@ function PullRequestRouteContent({
         }
         testID="pull-request-workspace"
       />
+      {placement.picker}
     </RecoverableRenderBoundary>
   );
 }

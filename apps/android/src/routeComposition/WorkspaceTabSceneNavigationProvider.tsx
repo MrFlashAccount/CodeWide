@@ -1,14 +1,17 @@
 import type { BottomTabBarProps } from "expo-router/js-tabs";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+import { useSharedValue } from "react-native-reanimated";
 
 import type { CatalogMode } from "../features/pullRequests/CatalogModeBar";
 import { useEvent } from "../react/useEvent";
 import { activateWorkspaceTab } from "./workspaceTabActivation";
+import { workspaceTabState } from "./workspaceTabNavigation";
 import {
-  useWorkspaceTabsNavigation,
+  WorkspaceTabLayerContext,
   WorkspaceTabsNavigationContext,
-  WorkspaceTabSceneNavigationContext,
 } from "./workspaceTabSceneNavigation";
+
+const TAB_LAYER_IDLE_MS = 1500;
 
 type WorkspaceTabsNavigation = BottomTabBarProps["navigation"];
 
@@ -22,6 +25,7 @@ export function WorkspaceTabsNavigationProvider({
   readonly navigation: WorkspaceTabsNavigation;
   readonly state: BottomTabBarProps["state"];
 }): React.JSX.Element {
+  const { layerActive, retainLayer } = useTabSwitchLayer();
   const activate = useEvent((mode: CatalogMode): void => {
     activateWorkspaceTab(state, mode, {
       emitTabPress: (routeKey) =>
@@ -31,33 +35,44 @@ export function WorkspaceTabsNavigationProvider({
           type: "tabPress",
         }).defaultPrevented,
       navigate: (routeName, params) => {
+        retainLayer();
         navigateWorkspaceTab(navigation, routeName, params);
       },
     });
   });
+  const tab = workspaceTabState(state);
+  const activeMode = tab.status === "ready" ? tab.activeMode : null;
   return (
-    <WorkspaceTabsNavigationContext.Provider value={{ activate }}>
-      {children}
+    <WorkspaceTabsNavigationContext.Provider value={{ activate, activeMode }}>
+      <WorkspaceTabLayerContext.Provider value={layerActive}>
+        {children}
+      </WorkspaceTabLayerContext.Provider>
     </WorkspaceTabsNavigationContext.Provider>
   );
 }
 
-/** Adds only this retained scene's active flag to the parent activation capability. */
-export function WorkspaceTabSceneNavigationProvider({
-  active,
-  children,
-}: {
-  readonly active: boolean;
-  readonly children: ReactNode;
-}): React.JSX.Element {
-  const parent = useWorkspaceTabsNavigation();
-  return (
-    <WorkspaceTabSceneNavigationContext.Provider
-      value={{ activate: parent.activate, tabActive: active }}
-    >
-      {children}
-    </WorkspaceTabSceneNavigationContext.Provider>
-  );
+// Adjacent taps reuse the texture. Allocating and releasing it for every spring stalls frames.
+function useTabSwitchLayer() {
+  const layerActive = useSharedValue(false);
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearIdle = useEvent(() => {
+    if (idleTimer.current !== null) {
+      clearTimeout(idleTimer.current);
+    }
+    idleTimer.current = null;
+  });
+  const release = useEvent(() => {
+    layerActive.set(false);
+    idleTimer.current = null;
+  });
+  const retainLayer = useEvent(() => {
+    clearIdle();
+    layerActive.set(true);
+    idleTimer.current = setTimeout(release, TAB_LAYER_IDLE_MS);
+  });
+  // The navigator owns the pending idle timer.
+  useEffect(() => clearIdle, [clearIdle]);
+  return { layerActive, retainLayer };
 }
 
 function navigateWorkspaceTab(

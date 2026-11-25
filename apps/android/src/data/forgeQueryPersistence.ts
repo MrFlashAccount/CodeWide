@@ -14,7 +14,12 @@ import {
 import { appLogger } from "../observability/logger";
 import { parseForgeMutationEnvelope } from "./forgeMutationEnvelope";
 
-const BEFORE_FILE_DRAFTS = "forge-query-cache-7ea41d187db7";
+const COMPATIBLE_MUTATION_ENVELOPES: ReadonlySet<string> = new Set([
+  "forge-query-cache-7ea41d187db7", // Before whole-file draft anchors.
+  "forge-query-cache-62c395d04b03", // Before classified checks and validated job viewers.
+  "forge-query-cache-b1531dad2ecc", // Before providers declared PR link hosts.
+  "forge-query-cache-49531d97bcc1", // Before verdict actions recorded quickSubmit.
+]);
 const CACHE_MAX_AGE_MS = 604_800_000;
 
 /**
@@ -32,9 +37,11 @@ const CACHE_MAX_AGE_MS = 604_800_000;
  * History: v1 → v2 added the required PR attention discriminant. v2 → this
  * value covers decoded shapes changed without a bump: conversation events
  * gained `commits`, review threads gained `excerpt` and issue resolutions
- * `viewerCanToggle`, and conversation pages became newest-first. The current signature includes whole-file draft anchors.
+ * `viewerCanToggle`, and conversation pages became newest-first. Later signatures
+ * added whole-file draft anchors, classified checks and validated job viewers.
+ * Later versions record quickSubmit on verdict descriptors and link hosts on providers.
  */
-const FORGE_QUERY_CACHE_BUSTER = "forge-query-cache-62c395d04b03";
+const FORGE_QUERY_CACHE_BUSTER = "forge-query-cache-29a18dfe6d99";
 
 /**
  * The only `[owner, kind]` query families restored from disk. An allowlist, so
@@ -77,14 +84,14 @@ function isDurableForgeMutation(mutation: Mutation): boolean {
   );
 }
 
-/** The previous version wrote compatible mutation envelopes. Preserve offline edits when discarding its decoded queries. */
+/** These previous versions wrote compatible mutation envelopes. Preserve offline edits when discarding its decoded queries. */
 function preserveQueuedEdits(persister: Persister): Persister {
   return {
     persistClient: (snapshot) => persister.persistClient(snapshot),
     removeClient: () => persister.removeClient(),
     async restoreClient() {
       const saved = await persister.restoreClient();
-      if (saved?.buster !== BEFORE_FILE_DRAFTS) {
+      if (saved === undefined || !COMPATIBLE_MUTATION_ENVELOPES.has(saved.buster)) {
         return saved;
       }
       return {

@@ -1,9 +1,10 @@
+import { useQuestionReply } from "../src/features/requests/questionReplyContext";
 import {
   QuestionConversationProvider,
   RpcQuestionCard,
-  QuestionDock,
+  TimelineQuestion,
 } from "../src/features/requests/QuestionFeature";
-import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, waitFor, within, userEvent } from "@testing-library/react-native";
 import { QuestionCard } from "../src/features/requests/questions/QuestionCard";
 import {
   answerText,
@@ -14,7 +15,7 @@ import {
 import { loadQuestionSession } from "../src/features/requests/questions/questionSession";
 import { readQuestionDraft, writeQuestionDraft } from "../src/data/questionDraftStorage";
 import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 import { ConversationBottomChrome } from "../src/features/conversation/ConversationBottomChrome";
 import { projectTimelineTurns } from "../src/features/conversation/timeline/timelineProjection";
 import { selectTurnRenderWindow } from "../src/rendering/thread-render-window";
@@ -180,11 +181,11 @@ it("routes Astra answers as a steer and hides the dock after the conversation mo
   };
   const screen = render(
     <QuestionConversationProvider value={value}>
-      <QuestionDock />
+      <TimelineQuestion />
     </QuestionConversationProvider>,
   );
   await screen.findByText("Сохранить");
-  fireEvent.press(screen.getByRole("button", { name: "Ответить" }));
+  fireEvent.press(screen.getByRole("button", { name: "Сохранить" }));
   await waitFor(() => expect(sendAnswer).toHaveBeenCalledTimes(1));
   const command = sendAnswer.mock.calls[0]?.[0];
   expect(command).toMatchObject({
@@ -215,7 +216,7 @@ it("routes Astra answers as a steer and hides the dock after the conversation mo
         ],
       }}
     >
-      <QuestionDock />
+      <TimelineQuestion />
     </QuestionConversationProvider>,
   );
   expect(screen.queryByText("Ответ доставлен")).toBeNull();
@@ -233,7 +234,7 @@ it("routes Astra answers as a steer and hides the dock after the conversation mo
         ],
       }}
     >
-      <QuestionDock />
+      <TimelineQuestion />
     </QuestionConversationProvider>,
   );
   expect(screen.queryByText(/Ответ записан/)).toBeNull();
@@ -274,16 +275,19 @@ it("keeps an active-turn question visible when older activity is collapsed", asy
   const thread = createV1TestThread("busy-thread", null, 1, [turn]);
   const timeline = projectTimelineTurns([turn], "scope", "server", thread.id);
   const chrome = (
-    <ConversationBottomChrome
-      composerContent={<View />}
-      currentOutcome={null}
-      failureNotice={null}
-      readOnly={false}
-      reportBottomChromeHeight={jest.fn()}
-      remoteThread={thread}
-      requestPrompt={null}
-      timeline={timeline}
-    />
+    <>
+      <TimelineQuestion />
+      <ConversationBottomChrome
+        composerContent={<View />}
+        currentOutcome={null}
+        failureNotice={null}
+        readOnly={false}
+        reportBottomChromeHeight={jest.fn()}
+        remoteThread={thread}
+        requestPrompt={null}
+        timeline={timeline}
+      />
+    </>
   );
   const value = {
     latestHistoryPresent: true,
@@ -299,7 +303,9 @@ it("keeps an active-turn question visible when older activity is collapsed", asy
     <QuestionConversationProvider value={value}>{chrome}</QuestionConversationProvider>,
   );
   expect(await screen.findByText("Куда продолжить?")).toBeOnTheScreen();
-  expect(screen.getByTestId("question-dock")).toBeOnTheScreen();
+  expect(
+    within(screen.getByTestId("conversation-bottom-chrome")).queryByTestId("question-card"),
+  ).toBeNull();
 
   const request = {
     connectionId: "server",
@@ -433,7 +439,7 @@ it("retires the live RPC form from rollout evidence even while its pending reque
   };
   const screen = render(
     <QuestionConversationProvider value={value}>
-      <QuestionDock />
+      <TimelineQuestion />
     </QuestionConversationProvider>,
   );
   await screen.findByText("Куда записать?");
@@ -442,7 +448,7 @@ it("retires the live RPC form from rollout evidence even while its pending reque
   const closed = { ...turn, status: "completed" as const };
   screen.rerender(
     <QuestionConversationProvider value={{ ...value, entries: [{ kind: "turn", turn: closed }] }}>
-      <QuestionDock />
+      <TimelineQuestion />
     </QuestionConversationProvider>,
   );
   expect(screen.queryByTestId("question-card")).toBeNull();
@@ -465,7 +471,7 @@ it("retires the live RPC form from rollout evidence even while its pending reque
   };
   screen.rerender(
     <QuestionConversationProvider value={{ ...value, entries: [{ kind: "turn", turn: answered }] }}>
-      <QuestionDock />
+      <TimelineQuestion />
     </QuestionConversationProvider>,
   );
   expect(screen.queryByTestId("question-card")).toBeNull();
@@ -476,10 +482,10 @@ it("retires the live RPC form from rollout evidence even while its pending reque
   screen.unmount();
   const restored = render(
     <QuestionConversationProvider value={{ ...value, entries: [{ kind: "turn", turn: answered }] }}>
-      <QuestionDock />
+      <TimelineQuestion />
     </QuestionConversationProvider>,
   );
-  expect(restored.queryByTestId("question-dock")).toBeNull();
+  expect(restored.queryByTestId("question-card")).toBeNull();
   expect(restored.queryByText("Ответ с другого устройства")).toBeNull();
 });
 
@@ -515,10 +521,10 @@ it("does not show a question dock for interrupted rollout history", () => {
   };
   const screen = render(
     <QuestionConversationProvider value={value}>
-      <QuestionDock />
+      <TimelineQuestion />
     </QuestionConversationProvider>,
   );
-  expect(screen.queryByTestId("question-dock")).toBeNull();
+  expect(screen.queryByTestId("question-card")).toBeNull();
   expect(screen.queryByText(/Вопрос в истории/)).toBeNull();
   expect(screen.queryByText("Ответ доставлен")).toBeNull();
   expect(screen.queryByRole("button", { name: "Ответить" })).toBeNull();
@@ -555,18 +561,18 @@ it("retires an unanswered old message when the conversation moves on without mar
     onRespond: undefined,
     sendAnswer: jest.fn(async () => undefined),
   };
-  const content = <QuestionDock />;
+  const content = <TimelineQuestion />;
   const screen = render(
     <QuestionConversationProvider value={value}>{content}</QuestionConversationProvider>,
   );
-  expect(await screen.findByRole("radio", { name: /Здесь/ })).toBeOnTheScreen();
+  expect(await screen.findByRole("button", { name: /Здесь/ })).toBeOnTheScreen();
   expect(screen.getAllByTestId("question-card")).toHaveLength(1);
   screen.rerender(
     <QuestionConversationProvider value={{ ...value, latestHistoryPresent: false }}>
       {content}
     </QuestionConversationProvider>,
   );
-  expect(screen.queryByTestId("question-dock")).toBeNull();
+  expect(screen.queryByTestId("question-card")).toBeNull();
   const next = { ...turn, id: "newer-turn", items: [] };
   screen.rerender(
     <QuestionConversationProvider
@@ -575,7 +581,7 @@ it("retires an unanswered old message when the conversation moves on without mar
       {content}
     </QuestionConversationProvider>,
   );
-  expect(screen.queryByTestId("question-dock")).toBeNull();
+  expect(screen.queryByTestId("question-card")).toBeNull();
   expect(screen.queryByText(/Вопрос в истории/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Ответить" })).toBeNull();
   expect(value.sendAnswer).not.toHaveBeenCalled();
@@ -628,16 +634,16 @@ it("keeps a pending submission bound to its original RPC when the dock switches 
   };
   const screen = render(
     <QuestionConversationProvider value={value}>
-      <QuestionDock />
+      <TimelineQuestion />
     </QuestionConversationProvider>,
   );
   await screen.findByText("Первый вопрос");
   const persistence = Promise.withResolvers<void>();
   jest.mocked(writeQuestionDraft).mockImplementationOnce(() => persistence.promise);
-  fireEvent.press(screen.getByRole("button", { name: "Ответить" }));
+  fireEvent.press(screen.getByRole("button", { name: "Первый ответ" }));
   screen.rerender(
     <QuestionConversationProvider value={{ ...value, pendingRequest: second }}>
-      <QuestionDock />
+      <TimelineQuestion />
     </QuestionConversationProvider>,
   );
   await screen.findByText("Второй вопрос");
@@ -685,7 +691,7 @@ it.each(["completed", "final-message"])(
     };
     const view = render(
       <QuestionConversationProvider value={value}>
-        <QuestionDock />
+        <TimelineQuestion />
       </QuestionConversationProvider>,
     );
     await view.findByText("Still needed?");
@@ -711,20 +717,20 @@ it.each(["completed", "final-message"])(
       <QuestionConversationProvider
         value={{ ...value, entries: [{ kind: "turn", turn: completed }] }}
       >
-        <QuestionDock />
+        <TimelineQuestion />
       </QuestionConversationProvider>,
     );
-    expect(view.queryByTestId("question-dock")).toBeNull();
+    expect(view.queryByTestId("question-card")).toBeNull();
     expect(sendAnswer).not.toHaveBeenCalled();
     view.unmount();
     const restored = render(
       <QuestionConversationProvider
         value={{ ...value, activeTurnId: null, entries: [{ kind: "turn", turn: completed }] }}
       >
-        <QuestionDock />
+        <TimelineQuestion />
       </QuestionConversationProvider>,
     );
-    expect(restored.queryByTestId("question-dock")).toBeNull();
+    expect(restored.queryByTestId("question-card")).toBeNull();
   },
 );
 
@@ -809,4 +815,75 @@ it("cannot submit a selected answer while dismissal is pending or already comple
   await pending;
   await session.submit(send);
   expect(send).not.toHaveBeenCalled();
+});
+
+it("holds a suggested answer to edit, then submits only the edited answer and its attachment", async () => {
+  const label = "Сначала показать все упавшие проверки";
+  const request = {
+    connectionId: "editing-server",
+    createdAt: 1,
+    requestId: "hold",
+    requestKey: "hold",
+    state: "pending" as const,
+    method: "item/tool/requestUserInput",
+    params: {
+      questions: [
+        {
+          id: "checks",
+          question: "Как расположить проверки?",
+          options: [{ label, description: "Подробнее о порядке" }],
+        },
+      ],
+    },
+  };
+  const file = {
+    id: "image",
+    kind: "image" as const,
+    name: "checks.png",
+    path: "sessions/one/checks.png",
+    rootId: "attachments",
+  };
+  const edited = label + ", сначала сборку.";
+  const respond = jest.fn(async () => undefined);
+  const insertOption = jest.fn();
+  function Send() {
+    const reply = useQuestionReply();
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Send edited"
+        onPress={() => void reply?.(edited, { attachments: [file] })}
+      />
+    );
+  }
+  const screen = render(
+    <QuestionConversationProvider
+      value={{
+        activeTurnId: null,
+        connectionId: "editing-server",
+        entries: [],
+        latestHistoryPresent: true,
+        onRespond: respond,
+        pendingRequest: request,
+        threadId: "thread",
+        sendAnswer: undefined,
+        insertOption,
+      }}
+    >
+      <TimelineQuestion />
+      <Send />
+    </QuestionConversationProvider>,
+  );
+  const option = await screen.findByRole("button", { name: label });
+  await userEvent.setup().longPress(option);
+  expect(insertOption).toHaveBeenCalledTimes(1);
+  expect(insertOption).toHaveBeenCalledWith(label);
+  expect(respond).not.toHaveBeenCalled();
+  expect(option).toBeOnTheScreen();
+  fireEvent.press(screen.getByLabelText("Send edited"));
+  await waitFor(() =>
+    expect(respond).toHaveBeenCalledWith(request, {
+      answers: { checks: { answers: [{ text: edited, files: [file] }] } },
+    }),
+  );
 });

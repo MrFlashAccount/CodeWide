@@ -96,9 +96,9 @@ function ThreadTimelineListInner<ItemT>(
 ): ReactElement {
   const internalRef = useRef<LegendListRef>(null);
   const diagnosticHandlers = useTimelineListDiagnostics(diagnostics, internalRef, props);
-  const onScrollDiagnostic = useEvent((input: unknown) => {
+  const onScrollDiagnostic = (input: unknown) => {
     observeLegendScrollDiagnostic(diagnostics, input);
-  });
+  };
   const invalidateMeasurements = useEvent(() => {
     diagnostics?.record({ kind: "layout", sizePx: 0, source: "measurement-invalidation" });
     internalRef.current?.clearCaches({ mode: "sizes" });

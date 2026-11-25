@@ -1,3 +1,4 @@
+import { AppNoticeProvider } from "../src/ui/AppNotice";
 import { act, fireEvent, render, type RenderResult } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 import { StyleSheet, Text, View } from "react-native";
@@ -7,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { MessageFoldedBody } from "../src/features/messageContent/MessageFoldedBody";
 import type { PullRequestTab } from "../src/features/pullRequestDetail/pullRequestScreenModel";
 import { PullRequestDetailPane } from "../src/routeComposition/PullRequestDetailPane";
+import { WorkspacePaneFrame } from "../src/routeComposition/WorkspacePaneFrame";
 import { WorkspaceCenterLayout } from "../src/routeComposition/WorkspaceCenterLayout";
 import type { WorkspacePaneCapabilities } from "../src/routeComposition/workspacePanes";
 import { colors } from "../src/theme";
@@ -88,6 +90,7 @@ type Navigation = {
 function renderPane(
   placement: "center" | "center+chat" | "right",
   tab: PullRequestTab = "overview",
+  desktop = false,
 ) {
   if (PULL_REQUEST === null) {
     throw new Error("the pull request key fixture must parse");
@@ -107,7 +110,7 @@ function renderPane(
     <PullRequestDetailPane
       connectionId="server"
       describeThread={() => null}
-      desktop={false}
+      desktop={desktop}
       initialChangesView="files"
       isThreadUnread={() => false}
       navigation={{
@@ -139,6 +142,14 @@ function renderPane(
     shows: { connectionId: "server", kind: "pullRequest", pullRequest: PULL_REQUEST },
     testID: "detail-pane",
   } as const;
+  const destination = (
+    <WorkspaceCenterLayout
+        active
+        center={placement === "right" ? conversation : pane}
+        right={placement === "right" ? pane : placement === "center+chat" ? conversation : null}
+        testID="destination"
+      />
+  );
   const view = render(
     <SafeAreaProvider
       initialMetrics={{
@@ -146,13 +157,12 @@ function renderPane(
         insets: { bottom: 0, left: 0, right: 0, top: 0 },
       }}
     >
-      <WorkspaceCenterLayout
-        active
-        center={placement === "right" ? conversation : pane}
-        right={placement === "right" ? pane : placement === "center+chat" ? conversation : null}
-        testID="destination"
-      />
+      {desktop ? (
+        <WorkspacePaneFrame catalog={<Text>Catalog</Text>} catalogFocused={false} catalogStatus="present"
+          desktop detail={destination} presentation={{ kind: "wide" }} viewportWidth={900} />
+      ) : destination}
     </SafeAreaProvider>,
+    { wrapper: AppNoticeProvider },
   );
   mounted.push(view);
   return { navigation, view };
@@ -234,6 +244,19 @@ it("offers the linked-chat button when no conversation is beside the PR", async 
   const { view } = renderPane("center");
   await view.findByTestId("pull-request-screen");
   expect(view.getByTestId("pull-request-linked-chat")).toBeOnTheScreen();
+});
+
+it("uses the catalog edge at the wide PR root even when the route supplies Back", async () => {
+  const { view } = renderPane("center", "overview", true);
+  await view.findByTestId("pull-request-screen");
+  expect(view.queryByLabelText("Back")).toBeNull();
+  expect(view.getByLabelText("Resize panels")).toBeVisible();
+});
+
+it("keeps nested Back to Details inside a wide PR", async () => {
+  const { view, navigation } = renderPane("center", "changes", true);
+  fireEvent.press(await view.findByLabelText("Back"));
+  expect(navigation.closeChanges).toHaveBeenCalledTimes(1);
 });
 
 it("keeps the route's Back and shows no × in the center", async () => {

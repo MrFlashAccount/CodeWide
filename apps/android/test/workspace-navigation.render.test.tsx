@@ -177,6 +177,38 @@ function registerV1NavigationRoutes(): void {
   registerMockRoute("/threads/[connectionId]/[threadId]", V1ThreadRoute);
 }
 
+it("uses the mounted workspace width even when Android still reports the cover display", () => {
+  holdInitialDeepLink();
+  registerV1NavigationRoutes();
+  setWindowSize(411, 800);
+  resetMockRouter("/");
+  act(() => {
+    router.push({
+      params: { connectionId: "server", threadId: "selected" },
+      pathname: "/threads/[connectionId]/[threadId]",
+    });
+  });
+  const view = render(<V1RouteTree />);
+  const shell = view.getByTestId("v1-workspace-shell");
+  const route = mockRouterHistory();
+  const resizeWorkspace = (width: number) => {
+    fireEvent(shell, "layout", { nativeEvent: { layout: { x: 0, y: 0, width, height: 800 } } });
+  };
+  const hasSidebar = () => view.queryByLabelText("Search threads and messages") !== null;
+  expect(hasSidebar()).toBe(false);
+  resizeWorkspace(841);
+  expect(hasSidebar()).toBe(true);
+  // A late cover event or a hidden root must not undo the measured wide layout.
+  setWindowSize(400, 800);
+  resizeWorkspace(0);
+  expect(hasSidebar()).toBe(true);
+  resizeWorkspace(411);
+  expect(hasSidebar()).toBe(false);
+  expect(mockRouterHistory()).toEqual(route);
+  expect(view.getByTestId("v1-workspace-shell")).toBe(shell);
+  view.unmount();
+});
+
 it("presents an asynchronous Global Voice failure through the application notice", async () => {
   holdInitialDeepLink();
   const previous = workspaceFeatures.globalSupervisor.render$.peek();

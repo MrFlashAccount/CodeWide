@@ -91,7 +91,6 @@ export function PullRequestGuide({
           return file === undefined || first === undefined ? null : (
             <PullRequestDiff
               composerLine={composerLine}
-              content={{ state: "patch" }}
               display={display}
               draftPuts={draftPuts}
               drafts={drafts}

@@ -11,9 +11,12 @@ const ACTION_ICONS: Readonly<Record<ActionKind, ActionMenuIconName>> = {
   close: "close-circle-outline",
   extension: "extension-puzzle-outline",
   fixCi: "build-outline",
+  manualTrigger: "play-outline",
   merge: "git-merge-outline",
   rebase: "git-branch-outline",
+  restartCheck: "refresh-outline",
   reviewPr: "reader-outline",
+  setCheckRequired: "checkbox-outline",
   updateBranch: "sync-outline",
   verdict: "checkbox-outline",
 };

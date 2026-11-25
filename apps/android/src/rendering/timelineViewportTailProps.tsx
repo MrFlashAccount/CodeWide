@@ -1,13 +1,6 @@
 import type { LegendListProps } from "@legendapp/list/react-native";
-import { Platform, requireNativeComponent, StyleSheet, View, type ViewProps } from "react-native";
-import Animated from "react-native-reanimated";
-
-const ScrollHost =
-  Platform.OS === "android"
-    ? requireNativeComponent<ViewProps & { endThresholdRatio: number }>(
-        "CodeWideTimelineScrollHost",
-      )
-    : View;
+import { StyleSheet } from "react-native";
+import { TimelineScrollViewport } from "./TimelineScrollViewport";
 
 type ResizeProps = Pick<
   LegendListProps<unknown>,
@@ -37,9 +30,7 @@ export function timelineViewportTailProps({
     contentContainerStyle: [contentContainerStyle, styles.content],
     maintainScrollAtEnd: { on: { dataChange: true, footerLayout: true, itemLayout: true } },
     renderScrollComponent: (props) => (
-      <ScrollHost endThresholdRatio={maintainScrollAtEndThreshold} style={styles.viewport}>
-        <Animated.ScrollView {...props} />
-      </ScrollHost>
+      <TimelineScrollViewport scrollProps={props} threshold={maintainScrollAtEndThreshold} />
     ),
   };
 }
@@ -48,8 +39,5 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     minHeight: 0,
-  },
-  viewport: {
-    flex: 1,
   },
 });

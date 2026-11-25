@@ -1,202 +1,201 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Linking, Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
+import { observable } from "@legendapp/state";
+import { useSelector } from "@legendapp/state/react";
+import { Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import type { CheckItem } from "../../../data/forgePullRequestContract";
-import { safeProviderUrl } from "../../../data/forgeProviderUrl";
-import {
-  colors,
-  controlHitSlop,
-  controlSize,
-  iconSize,
-  spacing,
-  typeScale,
-  typeWeight,
-} from "../../../theme";
+import { searchFieldLayout } from "../../../presentation/input/searchLayout";
+import { useConstant } from "../../../react/useConstant";
+import { useEvent } from "../../../react/useEvent";
+import { colors, controlSize, iconSize, spacing, typeScale } from "../../../theme";
+import { AppList } from "../../../ui/AppList";
 import { AppSheet, AppSheetScrollView } from "../../../ui/AppSheet";
-import { AppText as Text } from "../../../ui/Typography";
-import { AgentIconActionButton } from "../actions/AgentIconActionButton";
-import { CatalogActionButton } from "../actions/CatalogActionButton";
-import { CHECK_STATE_GLYPHS } from "./checkPresentation";
-import { checkOutcome } from "./mergeBox";
+import { InlineIcon } from "../../../ui/InlineIcon";
+import { AppText as Text, AppTextInput } from "../../../ui/Typography";
+import { AddressChecksButton } from "./AddressChecksButton";
+import { TriggerDiscoveryNotice } from "./ManualTriggerControls";
+import { ChecksSheetHeader } from "./ChecksSheetHeader";
+import { CheckJobRow } from "./CheckJobRow";
+import { checksSheetRows } from "./checksSheetRows";
 
-/** The sheet grows with its checks up to this share of the window, then scrolls. */
-const SHEET_MAX_HEIGHT_RATIO = 0.7;
+const SHEET_HEIGHT_SHARE = 0.72;
+const SECTION_TITLES = {
+  other: "Other checks",
+  required: "Required",
+  unspecified: "Requirement unknown",
+} as const;
 
-/**
- * Every check of the PR with its outcome, its anchored actions (a failed
- * check's agent (sparkles) Fix in agent icon) and its forge details page. Running an
- * action closes the sheet first, so a confirmation or the linked chat never
- * opens beneath it.
- */
-export function ChecksSheet({
-  actionsFor,
-  checks,
-  host,
-  onDismiss,
-  onRun,
-  pending,
-  summary,
-}: {
+type Props = {
   readonly actionsFor: (checkId: string) => readonly ActionDescriptor[];
+  readonly addressAction: ActionDescriptor | null;
   readonly checks: readonly CheckItem[];
   readonly host: string;
   readonly onDismiss: () => void;
   readonly onRun: (action: ActionDescriptor) => void;
   readonly pending: Readonly<Record<string, true>>;
-  readonly summary: string;
-}): React.JSX.Element {
-  const window = useWindowDimensions();
-  return (
-    <AppSheet
-      contentProps={{ dismissLabel: "Close checks" }}
-      isOpen
-      onOpenChange={(open) => {
-        if (!open) {
-          onDismiss();
-        }
-      }}
-    >
-      <View style={styles.header}>
-        <Text accessibilityRole="header" style={styles.title}>
-          Checks
-        </Text>
-        <Text numberOfLines={1} style={styles.summary}>
-          {summary}
+  readonly pendingToggles: Readonly<Record<string, boolean>>;
+};
+
+/** Search and requirement disclosure affect the list only; the footer always addresses the entire PR. */
+export function ChecksSheet(props: Props): React.JSX.Element {
+  const { addressAction, checks, host, onDismiss, onRun, pending, pendingToggles } = props;
+  const { height } = useWindowDimensions();
+  const state = useConstant(() => observable({ expanded: false, query: "", searchExpanded: true }));
+  const query = useSelector(state.query);
+  const searching = query.trim().length > 0;
+  const expanded = useSelector(() =>
+    searching ? state.searchExpanded.get() : state.expanded.get(),
+  );
+  const change = useEvent((next: string) => {
+    state.searchExpanded.set(true);
+    state.query.set(next);
+  });
+  const toggle = useEvent(() => {
+    (searching ? state.searchExpanded : state.expanded).toggle();
+  });
+  const close = useEvent((open: boolean) => {
+    if (!open) {
+      onDismiss();
+    }
+  });
+  const address = useEvent((action: ActionDescriptor) => {
+    onDismiss();
+    onRun(action);
+  });
+  const rows = checksSheetRows(checks, query, expanded);
+  const renderItem = ({ item }: { readonly item: (typeof rows)[number] }) => {
+    if (item.kind === "job") {
+      return (
+        <CheckJobRow
+          actions={props.actionsFor(item.check.checkId)}
+          check={item.check}
+          host={host}
+          onRun={onRun}
+          pending={pending}
+          pendingToggles={pendingToggles}
+        />
+      );
+    }
+    const label = `${SECTION_TITLES[item.kind]} · ${String(item.count)}`;
+    if (item.kind === "other") {
+      return (
+        <Pressable
+          accessibilityLabel={label}
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          onPress={toggle}
+          style={styles.section}
+          testID="pull-request-checks-other"
+        >
+          <Text style={styles.group}>{label}</Text>
+          <Ionicons
+            color={colors.textMuted}
+            name={expanded ? "chevron-up" : "chevron-down"}
+            size={iconSize.inline}
+          />
+        </Pressable>
+      );
+    }
+    return (
+      <View style={styles.section}>
+        <Text accessibilityRole="header" style={styles.group}>
+          {label}
         </Text>
       </View>
-      <AppSheetScrollView
-        style={{ maxHeight: window.height * SHEET_MAX_HEIGHT_RATIO }}
+    );
+  };
+  return (
+    <AppSheet
+      contentProps={{
+        dismissLabel: "Close checks",
+        style: { height: height * SHEET_HEIGHT_SHARE },
+      }}
+      isOpen
+      onOpenChange={close}
+    >
+      <ChecksSheetHeader title="Checks" />
+      <View style={styles.search}>
+        <InlineIcon color={colors.textMuted} name="search-outline" />
+        <AppTextInput
+          accessibilityLabel="Search checks"
+          autoCapitalize="none"
+          autoCorrect={false}
+          compact
+          onChangeText={change}
+          placeholder="Search checks"
+          placeholderTextColor={colors.textDim}
+          returnKeyType="search"
+          style={styles.input}
+          testID="pull-request-checks-search"
+          value={query}
+          voiceInput={false}
+        />
+      </View>
+      <TriggerDiscoveryNotice />
+      <AppList
+        data={rows}
+        empty={<Text style={styles.empty}>No matching checks</Text>}
+        extraData={{ actionsFor: props.actionsFor, expanded, host, pending, pendingToggles }}
+        keyboardShouldPersistTaps="handled"
+        keyExtractor={(row) => (row.kind === "job" ? `job:${row.check.checkId}` : row.kind)}
+        nestedScrollEnabled
+        renderItem={renderItem}
+        scrollComponent={AppSheetScrollView}
         testID="pull-request-checks-sheet"
-      >
-        {checks.map((check) => (
-          <CheckRow
-            actions={actionsFor(check.checkId)}
-            check={check}
-            detailsUrl={check.detailsUrl === null ? null : safeProviderUrl(check.detailsUrl, host)}
-            key={check.checkId}
-            onRun={(action) => {
-              onDismiss();
-              onRun(action);
-            }}
-            pending={pending}
+        virtualized
+      />
+      {addressAction === null ? null : (
+        <View style={styles.footer}>
+          <AddressChecksButton
+            accessibilityLabel="Address all checks"
+            action={addressAction}
+            onPress={address}
+            pending={pending[addressAction.actionId] === true}
           />
-        ))}
-      </AppSheetScrollView>
+        </View>
+      )}
     </AppSheet>
   );
 }
 
-function CheckRow({
-  actions,
-  check,
-  detailsUrl,
-  onRun,
-  pending,
-}: {
-  readonly actions: readonly ActionDescriptor[];
-  readonly check: CheckItem;
-  readonly detailsUrl: string | null;
-  readonly onRun: (action: ActionDescriptor) => void;
-  readonly pending: Readonly<Record<string, true>>;
-}): React.JSX.Element {
-  const glyph = CHECK_STATE_GLYPHS[check.state];
-  const outcome = checkOutcome(check);
-  return (
-    <View style={styles.row}>
-      <Ionicons color={glyph.color} name={glyph.icon} size={iconSize.action} />
-      <View accessibilityLabel={`${check.name}, ${outcome}`} accessible style={styles.body}>
-        <Text numberOfLines={1} style={styles.name}>
-          {check.name}
-        </Text>
-        <Text numberOfLines={1} style={styles.outcome}>
-          {outcome}
-        </Text>
-      </View>
-      {actions.map((action) =>
-        action.kind === "fixCi" ? (
-          <AgentIconActionButton
-            accessibilityLabel={`Fix ${check.name} in agent`}
-            action={action}
-            key={action.actionId}
-            onPress={onRun}
-            pending={pending[action.actionId] === true}
-          />
-        ) : (
-          <CatalogActionButton
-            action={action}
-            key={action.actionId}
-            onPress={onRun}
-            pending={pending[action.actionId] === true}
-            variant="raised"
-          />
-        ),
-      )}
-      {detailsUrl === null ? null : <DetailsLink name={check.name} url={detailsUrl} />}
-    </View>
-  );
-}
-
-function DetailsLink({ name, url }: { readonly name: string; readonly url: string }) {
-  return (
-    <Pressable
-      accessibilityLabel={`Open ${name} details`}
-      accessibilityRole="link"
-      hitSlop={controlHitSlop.compact}
-      onPress={() => {
-        // Without a browser the check stays readable here.
-        Linking.openURL(url).catch(() => undefined);
-      }}
-      style={styles.link}
-    >
-      <Ionicons color={colors.textMuted} name="open-outline" size={iconSize.inline} />
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
-  body: {
-    flex: 1,
-    minWidth: 0,
+  empty: {
+    ...typeScale.body,
+    color: colors.textMuted,
+    paddingVertical: spacing.md,
+    textAlign: "center",
   },
-  header: {
+  footer: {
+    borderTopColor: colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: spacing.xs,
+  },
+  group: {
+    ...typeScale.label,
+    color: colors.textMuted,
+    flex: 1,
+  },
+  input: {
+    color: colors.text,
+    flex: 1,
+    fontSize: typeScale.body.fontSize,
+    height: controlSize.regular,
+    includeFontPadding: false,
+    minWidth: 0,
+    padding: 0,
+    textAlignVertical: "center",
+  },
+  search: {
+    ...searchFieldLayout,
+    backgroundColor: colors.surfaceContainerHigh,
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  section: {
     alignItems: "center",
     columnGap: spacing.xs,
     flexDirection: "row",
-    justifyContent: "space-between",
-    minHeight: controlSize.touch,
-  },
-  link: {
-    alignItems: "center",
-    height: controlSize.compact,
-    justifyContent: "center",
-    width: controlSize.compact,
-  },
-  name: {
-    ...typeScale.body,
-    color: colors.text,
-    fontWeight: typeWeight.medium,
-  },
-  outcome: {
-    ...typeScale.label,
-    color: colors.textMuted,
-  },
-  row: {
-    alignItems: "center",
-    borderTopColor: colors.border,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    columnGap: spacing.sm,
-    flexDirection: "row",
-    minHeight: controlSize.touch + spacing.xs,
-    paddingVertical: spacing.xs,
-  },
-  summary: {
-    ...typeScale.label,
-    color: colors.textMuted,
-    flexShrink: 1,
-  },
-  title: {
-    ...typeScale.title,
-    color: colors.text,
+    minHeight: controlSize.regular,
   },
 });

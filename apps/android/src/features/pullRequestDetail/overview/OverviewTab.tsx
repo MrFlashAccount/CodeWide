@@ -1,4 +1,4 @@
-import { PaneBody } from "../../../ui/PaneBody";
+import type { Observable } from "@legendapp/state";
 import { useRef } from "react";
 import { RefreshControl, ScrollView, StyleSheet, View, type LayoutChangeEvent } from "react-native";
 
@@ -13,6 +13,7 @@ import type {
 import { useConstant } from "../../../react/useConstant";
 import { useEvent } from "../../../react/useEvent";
 import { colors, controlSize, spacing } from "../../../theme";
+import { PaneBody } from "../../../ui/PaneBody";
 import type { ActionSlots } from "../actions/actionSlotting";
 import { ConversationSection } from "../conversation/ConversationSection";
 import { projectDiscussion, type Discussion } from "../conversation/discussionModel";
@@ -20,14 +21,15 @@ import {
   createDiscussionNavigator,
   type DiscussionNavigator,
 } from "../conversation/discussionNavigator";
+import { useDiscussionRange } from "../conversation/useDiscussionRange";
 import type { ConversationWrites } from "../conversation/useConversationWrites";
 import type { PullRequestConversation } from "../conversation/usePullRequestConversation";
-import type { ActionNotice, ChangesView } from "../pullRequestScreenModel";
+import type { ChangesView } from "../pullRequestScreenModel";
 import { StatusSection } from "../sections/StatusSection";
-import { ActionNoticeBanner } from "./ActionNoticeBanner";
 import { ActionRow } from "./ActionRow";
 import { ActivitySection } from "./ActivitySection";
 import { AgentSection } from "./AgentSection";
+import { ConflictNotice } from "./ConflictNotice";
 import { DescriptionSection } from "./DescriptionSection";
 import { DetailsReview, type DetailsReviewProps } from "./DetailsReview";
 import { ReviewLinks } from "./ReviewLinks";
@@ -46,7 +48,6 @@ export type OverviewTabProps = {
   readonly host: string;
   /** The PR's row from a loaded list; `null` on a cold deep link. */
   readonly listRow: PullRequestRow | null;
-  readonly notice: ActionNotice | null;
   readonly nowMs: number;
   readonly onActionRowWidth: (width: number) => void;
   readonly onAddressThread: (threadId: ReviewThreadId) => void;
@@ -82,7 +83,7 @@ const READING_MAX_WIDTH = 760;
  */
 export function OverviewTab(props: OverviewTabProps): React.JSX.Element {
   return (
-    <PaneBody keepScrollEnd>
+    <PaneBody keepScrollEnd key={props.overview.pullRequest}>
       <OverviewReadingColumn {...props} />
     </PaneBody>
   );
@@ -96,9 +97,17 @@ function OverviewReadingColumn(props: OverviewTabProps): React.JSX.Element {
   );
   const discussion =
     props.conversation.status === "ready" ? projectDiscussion(props.conversation.page) : null;
+  const range = useDiscussionRange(discussion, PAGE_TOP);
+  const reveal = useEvent((id: ReviewThreadId) => {
+    range.includeThread(id);
+    navigator.reveal(id);
+  });
   return (
     <ScrollView
       contentContainerStyle={styles.content}
+      onContentSizeChange={range.onContentSizeChange}
+      onLayout={range.onLayout}
+      onScroll={range.onScroll}
       ref={scroll}
       refreshControl={
         <RefreshControl
@@ -109,6 +118,7 @@ function OverviewReadingColumn(props: OverviewTabProps): React.JSX.Element {
           testID="pull-request-overview-refresh"
         />
       }
+      scrollEventThrottle={80}
       testID="pull-request-overview"
     >
       <View ref={content} style={styles.page}>
@@ -125,14 +135,20 @@ function OverviewReadingColumn(props: OverviewTabProps): React.JSX.Element {
           host={props.host}
           nowMs={props.nowMs}
           onAddressThread={props.onAddressThread}
-          onReveal={navigator.reveal}
+          onReveal={reveal}
           onRun={props.onRun}
           overview={props.overview}
           pending={props.pending}
           pendingToggles={props.pendingToggles}
           slots={props.slots}
         />
-        <Activity {...props} discussion={discussion} navigator={navigator} />
+        <Activity
+          {...props}
+          discussion={discussion}
+          navigator={navigator}
+          onSectionLayout={range.onSectionLayout}
+          visibleCount={range.count}
+        />
       </View>
     </ScrollView>
   );
@@ -150,14 +166,14 @@ function Description({ description }: { readonly description: string }): React.J
   );
 }
 
-/** Status, the verdict button, the forge action row, the Agent section and the action notices. */
+/** Status, the verdict button, the forge action row, the Agent section. */
 function WorkHeader(props: OverviewTabProps): React.JSX.Element {
   const onLayout = useEvent((event: LayoutChangeEvent) => {
     props.onActionRowWidth(event.nativeEvent.layout.width);
   });
-  const run = (action: ActionDescriptor): void => {
+  const run = useEvent((action: ActionDescriptor): void => {
     props.onRun(action, null);
-  };
+  });
   return (
     <View
       onLayout={onLayout}
@@ -168,11 +184,18 @@ function WorkHeader(props: OverviewTabProps): React.JSX.Element {
         {props.review.choice.kind === "prominent" ? (
           <VerdictSplitButton
             lead={props.review.choice.lead}
-            onOpenReview={props.review.onOpen}
+            onSelect={props.review.onSelect}
+            pending={props.review.pending}
             verdicts={props.review.choice.verdicts}
           />
         ) : null}
       </StatusHeader>
+      <ConflictNotice
+        actions={props.slots.anchored.conflict}
+        onRun={run}
+        overview={props.overview}
+        pending={props.pending}
+      />
       <DetailsReview {...props.review} />
       <ActionRow onRun={run} pending={props.pending} slots={props.slots} />
       <AgentSection
@@ -182,7 +205,6 @@ function WorkHeader(props: OverviewTabProps): React.JSX.Element {
         onRun={run}
         pending={props.pending}
       />
-      <ActionNoticeBanner host={props.host} notice={props.notice} />
     </View>
   );
 }
@@ -191,6 +213,8 @@ function Activity(
   props: OverviewTabProps & {
     readonly discussion: Discussion | null;
     readonly navigator: DiscussionNavigator;
+    readonly onSectionLayout: (event: LayoutChangeEvent) => void;
+    readonly visibleCount: Observable<number>;
   },
 ): React.JSX.Element {
   const runAnchored = (action: ActionDescriptor): void => {
@@ -207,7 +231,9 @@ function Activity(
         nowMs={props.nowMs}
         onAddressThread={props.onAddressThread}
         onRun={runAnchored}
+        onSectionLayout={props.onSectionLayout}
         pending={props.pending}
+        visibleCount={props.visibleCount}
         writes={props.writes}
       />
     );

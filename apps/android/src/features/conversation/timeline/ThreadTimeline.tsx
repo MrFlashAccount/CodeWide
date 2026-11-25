@@ -30,7 +30,11 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
   const renderTimelineItem = ({ item: timelineRow }: LegendListRenderItemProps<TimelineRow>) => {
     if (timelineRow.kind === "historyBeginning") {
       return (
-        <Text style={styles.historyBeginning} testID="history-beginning">
+        <Text
+          nativeID="codewide-reading-row:history-start"
+          style={styles.historyBeginning}
+          testID="history-beginning"
+        >
           You’re at the beginning of this conversation
         </Text>
       );
@@ -91,7 +95,7 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
             : null
         }
       >
-        <View style={styles.timelineRow}>
+        <View nativeID={`codewide-reading-row:${boundaryKey}`} style={styles.timelineRow}>
           {dateLabel === null ? null : <TimelineDateSeparator label={dateLabel} />}
           <RecoverableRenderBoundary
             context={boundaryContext}

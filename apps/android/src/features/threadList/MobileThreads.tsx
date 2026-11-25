@@ -1,3 +1,8 @@
+import { useContext } from "react";
+import {
+  CatalogNavigationInsetContext,
+  catalogModeBarContentInset,
+} from "../../presentation/layouts/catalogModeBarGeometry";
 import type { MobileThreadsProps } from "./MobileThreadsContract";
 import { MobileThreadsHeader } from "./MobileThreadsHeader";
 import { useThreadListViewportPaging } from "./threadListViewportPaging";
@@ -95,6 +100,7 @@ export function MobileThreads(props: MobileThreadsProps) {
     project === null ? onLoadMore : projectSource.loadMore,
   );
   const pullSearch = useThreadListPullGesture(props.onOpenSearch, initialOffset, listKey);
+  const bottom = useContext(CatalogNavigationInsetContext);
   const fabModel = useThreadListFabModel();
   const attachFabScroll = useThreadListFabScroll(fabModel);
   const handleListScroll = useEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -115,7 +121,7 @@ export function MobileThreads(props: MobileThreadsProps) {
             ) : (
               <Reanimated.View style={styles.threadListSuspended}>
                 <LegendList
-                  contentContainerStyle={styles.floatingBarContent}
+                  contentContainerStyle={{ paddingBottom: catalogModeBarContentInset + bottom }}
                   data={scroll.rows}
                   dataKey={`mobile-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
                   drawDistance={320}

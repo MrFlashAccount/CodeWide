@@ -86,6 +86,7 @@ export const githubProvider = {
   enabled: true,
   forgeName: "GitHub",
   icon: GITHUB_ICON,
+  linkHosts: ["github.com"],
   pluginId: "github",
 };
 

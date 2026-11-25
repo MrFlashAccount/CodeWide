@@ -32,6 +32,7 @@ export function ComposerMarkdownInput({
   const largePasteId = useId();
   const lastPlainText = useRef(externalValue);
   const lastMarkdown = useRef(externalValue);
+  const explicitInsertion = useRef<string | null>(null);
   const discardNextMarkdown = useRef(false);
   // Android emits text first for typing, but Markdown first for paste.
   const textBeforeMarkdown = useRef(false);
@@ -78,7 +79,10 @@ export function ComposerMarkdownInput({
       }),
       insertCode: (block) => editor.current?.insertCode(block),
       insertLinkedText: (text, url) => editor.current?.insertLink(text, url),
-      insertText: (text) => editor.current?.insertText(text),
+      insertText: (text) => {
+        explicitInsertion.current = text;
+        editor.current?.insertText(text);
+      },
       startMention: (indicator) => editor.current?.startMention(indicator),
       toggleOrderedList: () => editor.current?.toggleOrderedList(),
       toggleUnorderedList: () => editor.current?.toggleUnorderedList(),
@@ -102,14 +106,16 @@ export function ComposerMarkdownInput({
   });
   const changeText = useEvent((next: string) => {
     const previous = lastPlainText.current;
+    const insertion = explicitInsertion.current;
+    explicitInsertion.current = null;
     const threshold = props.largePasteThreshold;
     const onLargePaste = props.onLargePaste;
-    const paste =
-      threshold === undefined || onLargePaste === undefined ? null : insertedText(previous, next);
+    const paste = threshold === undefined ? null : insertedText(previous, next);
     if (
       paste !== null &&
       threshold !== undefined &&
       onLargePaste !== undefined &&
+      paste.text !== insertion &&
       paste.text.length > threshold
     ) {
       discardNextMarkdown.current = true;

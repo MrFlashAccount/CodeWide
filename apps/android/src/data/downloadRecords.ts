@@ -10,6 +10,19 @@ export type DownloadSource =
   | { readonly kind: "path"; readonly path: string }
   | { readonly kind: "scoped"; readonly path: string; readonly rootId: string };
 
+/** Saved local identities that may still contain the requested source after a rename. */
+export interface DownloadLookup {
+  readonly knownUris: ReadonlySet<string>;
+  readonly source: DownloadSource;
+}
+
+/** A verified file in the device's selected download folder. */
+export type SavedDownload = {
+  readonly bytes: number;
+  readonly mimeType: string | null;
+  readonly uri: string;
+};
+
 /** Byte counters of an unfinished download; `totalBytes` is unknown until the host answers. */
 type DownloadBytes = { readonly totalBytes: number | null; readonly transferredBytes: number };
 
@@ -19,13 +32,7 @@ export type DownloadState =
       readonly status: "running";
     })
   | (DownloadBytes & { readonly status: "paused" })
-  | {
-      readonly bytes: number;
-      readonly completedAt: number;
-      readonly mimeType: string | null;
-      readonly status: "completed";
-      readonly uri: string;
-    }
+  | (SavedDownload & { readonly completedAt: number; readonly status: "completed" })
   | { readonly error: string; readonly status: "failed" }
   | { readonly status: "cancelled" }
   /** Unfinished when the app process ended; this process holds no access to continue it. */

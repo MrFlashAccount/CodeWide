@@ -26,6 +26,7 @@ const reactContentProps = [
   "trailingAction",
   "trailingIcon",
   "selected",
+  "onLongPress",
   // The text shimmer decorates a React Native title.
   "shimmering",
 ] as const;

@@ -5,7 +5,7 @@ import { WorkspaceCatalogMaster } from "../src/routeComposition/WorkspaceCatalog
 import { WorkspacePaneFrame } from "../src/routeComposition/WorkspacePaneFrame";
 import type { WorkspaceTwoPanePresentation } from "../src/routeComposition/WorkspaceTwoPaneLayout";
 import { colors } from "../src/theme";
-import { RESTING_SIDEBAR } from "./fixtures/paneRestLayout";
+import { restingSidebar } from "./fixtures/paneRestLayout";
 
 jest.mock("react-native-reanimated/mock", () => {
   const mock = jest.requireActual("./mocks/Reanimated");
@@ -69,14 +69,14 @@ it("bounds the bar to the wide master and restores that master after expansion",
   const master = view.getByTestId("workspace-catalog-master-pullRequests");
   const detail = view.getByTestId("master-detail");
   expect(within(master).getByTestId("master-catalog-mode-bar")).toBeVisible();
-  expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle(RESTING_SIDEBAR);
+  expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle(restingSidebar(34));
 
   view.rerender(frame({ kind: "wideDetailExpanded" }, { catalogFocused: false, desktop: true }));
   expect(view.queryByTestId("master-catalog-mode-bar")).toBeNull();
   // The detail slides over the catalog, which keeps its width and dims beneath it.
   expect(view.getByTestId("workspace-catalog-pane", { includeHiddenElements: true })).toHaveStyle({
     opacity: 0,
-    ...RESTING_SIDEBAR,
+    ...restingSidebar(34),
   });
 
   view.rerender(frame(wide, { catalogFocused: false, desktop: true }));

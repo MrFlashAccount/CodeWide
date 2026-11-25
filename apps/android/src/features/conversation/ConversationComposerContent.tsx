@@ -104,6 +104,7 @@ export function createConversationComposerContent({
       openQuickControlMenu={composerCommands.composerControlActionsBinding.openQuickControlMenu}
       pastedAttachmentPending={composerStateBinding.largePasteStateBinding.pastedAttachmentPending}
       pendingVoiceSelection={composerStateBinding.composerVoiceStateBinding.pendingVoiceSelection}
+      questionReplyActive={composerDelivery.questionReplyActive}
       queuedComposerEdit={composerStateBinding.queueEditStateBinding.queuedComposerEdit}
       queuedComposerEditBusy={composerStateBinding.queueEditStateBinding.queuedComposerEditBusy}
       queuedComposerEditError={composerStateBinding.queueEditStateBinding.queuedComposerEditError}

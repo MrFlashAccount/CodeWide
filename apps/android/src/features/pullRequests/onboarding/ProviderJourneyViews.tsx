@@ -12,10 +12,10 @@ import { useEvent } from "../../../react/useEvent";
 import { colors, iconSize } from "../../../theme";
 import { Tray, useTray } from "../../../vendor/reacticx/tray";
 import type { PullRequestsWorkspaceCapabilities } from "../workspaceCapabilities";
-import { connectActionKey, methodsPlan, type ConnectAction } from "./cardPlan";
+import { connectActionKey, type ConnectAction } from "./cardPlan";
 import type { ConnectHandlers } from "./ConnectActions";
 import { onboardingStyles as styles } from "./onboarding.styles";
-import { InteractionError, ProviderAuthenticationPanel } from "./ProviderAuthenticationPanel";
+import { ProviderAuthenticationPanel } from "./ProviderAuthenticationPanel";
 import {
   AUTHENTICATION_STEP,
   METHOD_STEP,
@@ -27,11 +27,9 @@ import {
   providerSuccessView,
 } from "./providerTrayNavigation";
 import { ProviderTrayHeader, TrayTrust } from "./ProviderTrayChrome";
-import { providerExplanation } from "./providerPresentation";
-import { TrayConnectMethods } from "./TrayConnectMethods";
+import { ProviderMethodsContent } from "./ProviderMethodsContent";
 import {
   authenticationTitle,
-  linkedProviderLogins,
   useProviderJourney,
   type ProviderJourney,
 } from "./useProviderJourney";
@@ -80,6 +78,8 @@ export function ProviderJourneyViews({
     <>
       <ProviderMethodsTrayView
         accounts={snapshot.accounts}
+        capabilities={capabilities}
+        connectionId={connectionId}
         error={journey.error}
         handlers={journey.handlers}
         provider={provider}
@@ -101,11 +101,15 @@ export function ProviderJourneyViews({
 
 function ProviderMethodsTrayView({
   accounts,
+  capabilities,
+  connectionId,
   error,
   handlers,
   provider,
 }: {
   readonly accounts: readonly AccountState[];
+  readonly capabilities: PullRequestsWorkspaceCapabilities;
+  readonly connectionId: string;
   readonly error: string | null;
   readonly handlers: ConnectHandlers;
   readonly provider: ForgeProvider;
@@ -113,40 +117,18 @@ function ProviderMethodsTrayView({
   return (
     <Tray.View id={providerMethodsView(provider.pluginId)}>
       <ProviderTrayHeader back step={METHOD_STEP} title={`Connect ${provider.forgeName}`} />
-      <Tray.Body>
-        <ProviderMethodsBody
+      <Tray.ScrollView contentContainerStyle={[styles.providerList, styles.stepContent]}>
+        <ProviderMethodsContent
           accounts={accounts}
+          capabilities={capabilities}
+          connectionId={connectionId}
           error={error}
           handlers={handlers}
           provider={provider}
         />
-      </Tray.Body>
+        <TrayTrust />
+      </Tray.ScrollView>
     </Tray.View>
-  );
-}
-
-function ProviderMethodsBody({
-  accounts,
-  error,
-  handlers,
-  provider,
-}: {
-  readonly accounts: readonly AccountState[];
-  readonly error: string | null;
-  readonly handlers: ConnectHandlers;
-  readonly provider: ForgeProvider;
-}): React.JSX.Element {
-  return (
-    <View style={styles.providerPanel} testID={`forge-provider-card-${provider.pluginId}`}>
-      <ProductText style={styles.trayIntro}>{providerExplanation(provider)}</ProductText>
-      <TrayConnectMethods
-        handlers={handlers}
-        plan={methodsPlan(provider, linkedProviderLogins(accounts, provider))}
-        provider={provider}
-      />
-      <InteractionError error={error} />
-      <TrayTrust />
-    </View>
   );
 }
 
@@ -166,7 +148,7 @@ function ProviderAuthenticationTrayView({
         step={AUTHENTICATION_STEP}
         title={authenticationTitle(provider, journey)}
       />
-      <Tray.Body>
+      <Tray.Body style={styles.stepContent}>
         <ProviderAuthenticationPanel journey={journey} provider={provider} />
       </Tray.Body>
     </Tray.View>
@@ -185,7 +167,7 @@ function ProviderSuccessTrayView({
   return (
     <Tray.View id={providerSuccessView(provider.pluginId)}>
       <ProviderTrayHeader step={SUCCESS_STEP} title="Connected" />
-      <Tray.Body>
+      <Tray.Body style={styles.stepContent}>
         <ProviderSuccessPanel onConnectAnother={onConnectAnother} onDone={onDone} />
       </Tray.Body>
     </Tray.View>

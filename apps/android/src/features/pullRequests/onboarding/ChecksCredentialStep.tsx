@@ -6,6 +6,7 @@ import type { ForgeProvider } from "../../../data/forgeContract";
 import { ProductText } from "../../../presentation/text/ProductText";
 import { useEvent } from "../../../react/useEvent";
 import type { PullRequestsWorkspaceCapabilities } from "../workspaceCapabilities";
+import { providerInstalled } from "../accounts/accountPresentation";
 import { checksActions, connectActionKey, type ConnectAction } from "./cardPlan";
 import { OtherWays } from "./ConnectActions";
 import { onboardingStyles as styles } from "./onboarding.styles";
@@ -22,6 +23,31 @@ import {
  * the plugin's reason; its actions stay quiet.
  */
 export function ChecksCredentialStep({
+  capabilities,
+  connectionId,
+  provider,
+}: {
+  readonly capabilities: PullRequestsWorkspaceCapabilities;
+  readonly connectionId: string;
+  readonly provider: ForgeProvider | undefined;
+}): React.JSX.Element | null {
+  if (
+    provider === undefined ||
+    !providerInstalled(provider) ||
+    provider.checksCredential !== "missing"
+  ) {
+    return null;
+  }
+  return (
+    <MissingChecksCredential
+      capabilities={capabilities}
+      connectionId={connectionId}
+      provider={provider}
+    />
+  );
+}
+
+function MissingChecksCredential({
   capabilities,
   connectionId,
   provider,
@@ -59,7 +85,7 @@ export function ChecksCredentialStep({
     }
   });
   const actions = checksActions(provider);
-  if (provider.checksCredential !== "missing" || actions.length === 0) {
+  if (actions.length === 0) {
     return null;
   }
   return (

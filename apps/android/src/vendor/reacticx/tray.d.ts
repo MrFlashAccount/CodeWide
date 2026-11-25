@@ -69,6 +69,7 @@ export interface ITrayTrigger {
 }
 
 export interface ITrayContent {
+  readonly backBehavior?: "dismiss" | "previousView";
   readonly children: ReactNode;
   readonly style?: StyleProp<ViewStyle>;
 }

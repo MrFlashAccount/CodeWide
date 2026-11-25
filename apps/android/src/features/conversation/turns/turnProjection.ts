@@ -253,7 +253,10 @@ import {
   projectCachedLiveMarkdown,
   type LiveMarkdownProjection,
 } from "../../../rendering/live-text-stream";
-import { richMarkdownLayout } from "../../../rendering/rich-markdown-layout";
+import {
+  completeMarkdownLayout,
+  richMarkdownLayout,
+} from "../../../rendering/rich-markdown-layout";
 import { isAgentMessageStillStreaming } from "../../../rendering/thread-render-window";
 import { activeTurnSequence } from "../../../rendering/turn-sequence";
 
@@ -444,13 +447,15 @@ function prepareTurnPresentation(turn: TurnRow) {
         (block) => block.kind === "collabAgentToolCall" || block.kind === "subAgentActivity",
       ),
   );
+  const responseLayout =
+    rawTurn.status === "inProgress" ? richMarkdownLayout : completeMarkdownLayout;
   const agentBubbleFill =
     hasQuestions ||
     artifacts.length > 0 ||
     hasDisclosedBubbleActivity ||
     hasSubagentRows ||
     (latestAgentTextReference?.byteLength ?? 0) > 0 ||
-    (hasGeneratedAgentResponse && richMarkdownLayout(latestAgentBlock?.body ?? "") === "fill");
+    (hasGeneratedAgentResponse && responseLayout(copyText) === "fill");
   const hasAgentContent =
     hasQuestions ||
     (rawTurn.status !== "inProgress"

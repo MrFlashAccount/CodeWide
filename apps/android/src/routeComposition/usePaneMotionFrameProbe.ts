@@ -5,7 +5,7 @@ import { operationalDiagnosticsEnabled, recordDiagnosticTiming } from "../data/o
 import { useEvent } from "../react/useEvent";
 import { PaneMotionContext } from "./paneMotion";
 
-/** Frames kept per rearrangement: a 460 ms spring at 120 Hz takes about 56. */
+/** Bounds the diagnostic sample buffer, including interrupted rearrangements. */
 const MAX_FRAMES = 128;
 
 /**

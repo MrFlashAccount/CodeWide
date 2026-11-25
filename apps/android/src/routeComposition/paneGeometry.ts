@@ -18,7 +18,9 @@ import { sidebarWidth } from "../ui/sidebarDimensions";
  * the destination spans the frame and center and right split its whole width.
  */
 export type PaneArrangement = {
+  readonly catalogPercent?: number | null;
   readonly centerLeftRadius: number;
+  readonly centerPercent?: number;
   readonly centerRightRadius: number;
   readonly left: "alone" | "beside" | "covered" | "under";
   readonly right: "beside" | "cover" | "offscreen";
@@ -27,11 +29,8 @@ export type PaneArrangement = {
 };
 
 /**
- * Pane geometry in frame coordinates. Layout widths size each pane's content box and change at
- * most twice per rearrangement (they hold the larger of both ends while panes move); positions,
- * the center clip, radii, the catalog opacity and every visible width move every frame without
- * relayout of content. A visible width is the width the pane shows now; pane chrome (headers,
- * bottom bars) follows it, while the rest of the content keeps the layout width.
+ * Layout and visible bounds in frame coordinates. They coincide for an open split. A pane
+ * covered by its neighbour or parked offscreen can retain a wider layout than its visible area.
  */
 export type PaneGeometry = {
   readonly catalogOpacity: number;
@@ -66,7 +65,8 @@ export type PaneGeometry = {
 export type PaneBox = "catalog" | "center" | "destination" | "right";
 
 /** Center and right split the destination into this many equal shares. */
-const CENTER_RIGHT_SHARES = 2;
+const DEFAULT_CENTER_PERCENT = 50;
+const FULL_PERCENT = 100;
 
 type LeftPaneGeometry = Pick<
   PaneGeometry,
@@ -112,21 +112,38 @@ function leftPaneGeometry(
 }
 
 // Worklets capture helper values during module initialization, so dependencies must come first.
+function catalogLayoutWidth(
+  { catalogPercent = null, sidebar }: PaneArrangement,
+  frameWidth: number,
+): number {
+  "worklet";
+  if (!sidebar) {
+    return 0;
+  }
+  return catalogPercent === null
+    ? sidebarWidth(frameWidth)
+    : (frameWidth * catalogPercent) / FULL_PERCENT;
+}
+
 /**
  * The settled geometry of `arrangement` in a frame `frameWidth` wide: exactly what Yoga lays out
  * at rest from the frame's relative pane styles, in pixels for a motion's ends.
  */
 export function paneGeometry(arrangement: PaneArrangement, frameWidth: number): PaneGeometry {
   "worklet";
-  const sidebar = arrangement.sidebar ? sidebarWidth(frameWidth) : 0;
-  const left = leftPaneGeometry(arrangement.left, sidebar, frameWidth);
+  const left = leftPaneGeometry(
+    arrangement.left,
+    catalogLayoutWidth(arrangement, frameWidth),
+    frameWidth,
+  );
   // The two dividers partition the visible frame. A pane can keep its reading layout
   // under a neighbour or offscreen even when neither of its edges is visible.
   const detailVisibleWidth = Math.max(0, frameWidth - left.detailX);
   const beside = arrangement.right === "beside";
   const covered = arrangement.right === "cover";
-  const share = left.detailWidth / CENTER_RIGHT_SHARES;
-  const rightWidth = covered ? left.detailWidth : share;
+  const share =
+    (left.detailWidth * (arrangement.centerPercent ?? DEFAULT_CENTER_PERCENT)) / FULL_PERCENT;
+  const rightWidth = covered ? left.detailWidth : left.detailWidth - share;
   const rightVisibleWidth =
     arrangement.right === "offscreen" ? 0 : Math.min(detailVisibleWidth, rightWidth);
   const centerClipWidth = detailVisibleWidth - rightVisibleWidth;
@@ -153,9 +170,7 @@ function mix(from: number, to: number, progress: number): number {
 }
 
 /**
- * The geometry `progress` of the way from `from` to `to`. Positions, clip, visible widths, radii
- * and opacity interpolate; layout widths hold the larger end so moving content is clipped, never
- * reflowed or exposed. Every pane derives its frame from this one function of one progress.
+ * Every box follows the same spring from its actual starting bounds to its destination.
  */
 export function interpolatePaneGeometry(
   from: PaneGeometry,
@@ -168,22 +183,22 @@ export function interpolatePaneGeometry(
   return {
     catalogOpacity: mix(from.catalogOpacity, to.catalogOpacity, fraction),
     catalogVisibleWidth: mix(from.catalogVisibleWidth, to.catalogVisibleWidth, fraction),
-    catalogWidth: Math.max(from.catalogWidth, to.catalogWidth),
+    catalogWidth: mix(from.catalogWidth, to.catalogWidth, fraction),
     centerClipWidth: mix(from.centerClipWidth, to.centerClipWidth, fraction),
     centerLeftRadius: mix(from.centerLeftRadius, to.centerLeftRadius, fraction),
     centerRightRadius: mix(from.centerRightRadius, to.centerRightRadius, fraction),
-    centerWidth: Math.max(from.centerWidth, to.centerWidth),
+    centerWidth: mix(from.centerWidth, to.centerWidth, fraction),
     detailVisibleWidth: mix(from.detailVisibleWidth, to.detailVisibleWidth, fraction),
-    detailWidth: Math.max(from.detailWidth, to.detailWidth),
+    detailWidth: mix(from.detailWidth, to.detailWidth, fraction),
     detailX: mix(from.detailX, to.detailX, fraction),
     rightVisibleWidth: mix(from.rightVisibleWidth, to.rightVisibleWidth, fraction),
-    rightWidth: Math.max(from.rightWidth, to.rightWidth),
+    rightWidth: mix(from.rightWidth, to.rightWidth, fraction),
     rightX: mix(from.rightX, to.rightX, fraction),
   };
 }
 
 /** Width allocated to the mounted content even when the pane is covered or offscreen. */
-function paneLayoutWidth(pane: PaneGeometry, box: PaneBox): number {
+export function paneLayoutWidth(pane: PaneGeometry, box: PaneBox): number {
   "worklet";
   switch (box) {
     case "catalog":
@@ -218,14 +233,4 @@ function paneVisibleWidth(pane: PaneGeometry, box: PaneBox): number {
 export function paneChromeInset(pane: PaneGeometry, box: PaneBox): number {
   "worklet";
   return Math.max(0, paneLayoutWidth(pane, box) - paneVisibleWidth(pane, box));
-}
-
-/** Signed trailing inset that lays the body out at its target width inside the moving viewport. */
-export function snapshotBodyMargin(
-  current: PaneGeometry,
-  target: PaneGeometry,
-  box: PaneBox,
-): number {
-  "worklet";
-  return paneVisibleWidth(current, box) - paneLayoutWidth(target, box);
 }

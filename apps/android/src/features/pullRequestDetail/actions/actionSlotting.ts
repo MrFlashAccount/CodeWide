@@ -192,7 +192,8 @@ export function slotActions(
     verdicts: [],
   };
   for (const action of ordered) {
-    if (action !== autoMerge) {
+    // Manual CI choices can only be submitted through the job-scoped picker.
+    if (action !== autoMerge && action.kind !== "manualTrigger") {
       place(action, targets, slots);
     }
   }

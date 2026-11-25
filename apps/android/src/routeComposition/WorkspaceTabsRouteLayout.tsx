@@ -3,31 +3,27 @@ import type { ComponentProps, ReactElement } from "react";
 import { StyleSheet, View } from "react-native";
 import { screensEnabled } from "react-native-screens";
 
-import {
-  WorkspaceTabsNavigationProvider,
-  WorkspaceTabSceneNavigationProvider,
-} from "./WorkspaceTabSceneNavigationProvider";
+import { MaskedTabBarMotionProvider } from "../vendor/reacticx/masked-tab-bar";
+import { WorkspaceTabsNavigationProvider } from "./WorkspaceTabSceneNavigationProvider";
 
 type LayoutProps = Parameters<NonNullable<ComponentProps<typeof Tabs>["layout"]>>[0];
-type ScreenLayoutProps = Parameters<NonNullable<ComponentProps<typeof Tabs>["screenLayout"]>>[0];
 
-/** Owns standard tab history and retained scene isolation without a sibling visual tab bar. */
+/** Keeps tab history in TabRouter and both nested native stacks in stable host views. */
 export function WorkspaceTabsRouteLayout(): React.JSX.Element {
   return (
-    <Tabs
-      backBehavior="history"
-      layout={renderWorkspaceTabsNavigation}
-      screenLayout={renderWorkspaceTabScene}
-      screenOptions={{ animation: "none", headerShown: false, lazy: false }}
-      tabBar={renderNoVisualTabBar}
-    >
-      <Tabs.Screen name="(threads)" />
-      <Tabs.Screen name="(pull-requests)" />
-    </Tabs>
+    <MaskedTabBarMotionProvider>
+      <Tabs backBehavior="history" layout={renderWorkspaceTabsNavigation}>
+        <Tabs.Screen name="(threads)" />
+        <Tabs.Screen name="(pull-requests)" />
+      </Tabs>
+    </MaskedTabBarMotionProvider>
   );
 }
 
-/** Keeps a retained tab's layout stable while the native navigator owns scene visibility. */
+/**
+ * Keeps Fabric from reparenting the stack when opacity and accessibility change its
+ * stacking context. Reparenting destroys TextureView surfaces inside the retained chat.
+ */
 export function WorkspaceTabSceneIsolation({
   active,
   children,
@@ -37,14 +33,14 @@ export function WorkspaceTabSceneIsolation({
   readonly children: ReactElement;
   readonly routeName: string;
 }): React.JSX.Element {
-  const nativeSceneOwnsVisibility = screensEnabled();
   return (
     <View
       accessibilityElementsHidden={!active}
       aria-hidden={!active}
+      collapsable={false}
       importantForAccessibility={active ? "auto" : "no-hide-descendants"}
       pointerEvents={active ? "auto" : "none"}
-      style={active || nativeSceneOwnsVisibility ? styles.scene : styles.fallbackInactiveScene}
+      style={[styles.scene, !active && (screensEnabled() ? styles.inactive : styles.hidden)]}
       testID={`workspace-tab-scene-${routeName}`}
     >
       {children}
@@ -52,36 +48,38 @@ export function WorkspaceTabSceneIsolation({
   );
 }
 
-function renderWorkspaceTabScene(props: ScreenLayoutProps): React.JSX.Element {
-  const state = props.navigation.getState();
-  const active = state.routes[state.index]?.key === props.route.key;
+function renderWorkspaceTabsNavigation({
+  descriptors,
+  navigation,
+  state,
+}: LayoutProps): React.JSX.Element {
+  const activeKey = state.routes[state.index]?.key;
   return (
-    <WorkspaceTabSceneIsolation active={active} routeName={props.route.name}>
-      <WorkspaceTabSceneNavigationProvider active={active}>
-        {props.children}
-      </WorkspaceTabSceneNavigationProvider>
-    </WorkspaceTabSceneIsolation>
-  );
-}
-
-function renderWorkspaceTabsNavigation(props: LayoutProps): React.JSX.Element {
-  return (
-    <WorkspaceTabsNavigationProvider navigation={props.navigation} state={props.state}>
-      {props.children}
+    <WorkspaceTabsNavigationProvider navigation={navigation} state={state}>
+      <View style={styles.container}>
+        {state.routes.map((route) => {
+          const descriptor = descriptors[route.key];
+          return descriptor === undefined ? null : (
+            <WorkspaceTabSceneIsolation
+              active={route.key === activeKey}
+              key={route.key}
+              routeName={route.name}
+            >
+              {descriptor.render()}
+            </WorkspaceTabSceneIsolation>
+          );
+        })}
+      </View>
     </WorkspaceTabsNavigationProvider>
   );
 }
 
-function renderNoVisualTabBar(): null {
-  return null;
-}
-
 const styles = StyleSheet.create({
-  fallbackInactiveScene: {
-    display: "none",
-    flex: 1,
-  },
+  container: { flex: 1 },
+  hidden: { display: "none" },
+  inactive: { opacity: 0 },
   scene: {
+    ...StyleSheet.absoluteFill,
     flex: 1,
   },
 });

@@ -225,8 +225,9 @@ it("opens the linked pull request beside the chat without leaving the thread", (
     "no-hide-descendants",
   );
   expect(view.getByTestId("composer-pull-request-label")).toHaveTextContent("#120");
-  // Beside the chat the pane can close and go fullscreen.
-  expect(view.getByLabelText("Open pull request fullscreen")).toBeOnTheScreen();
+  // The divider owns fullscreen.
+  expect(view.queryByLabelText("Open pull request fullscreen")).toBeNull();
+  expect(view.getByLabelText("Resize panels")).toBeOnTheScreen();
   fireEvent.press(view.getByLabelText("Close pull request"));
   expect(view.queryByTestId("thread-pull-request-pane")).toBeNull();
   expect(currentRoute()?.params).toEqual({ connectionId: "server", threadId: "linked" });
@@ -302,7 +303,7 @@ it("closes the pane for this thread's review chat and navigates to another chat"
   fireEvent.press(view.getByLabelText("Open other chat"));
   expect(mockPrepareThreadLink).toHaveBeenCalledTimes(1);
   expect(currentRoute()).toEqual({
-    params: { connectionId: "server", threadId: "other" },
+    params: { connectionId: "server", threadId: "other", reviewPullRequest: "fpr1.github-91" },
     pathname: THREAD_PATH,
   });
   view.unmount();

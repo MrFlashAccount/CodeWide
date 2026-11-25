@@ -3,6 +3,7 @@ import { useSelector } from "@legendapp/state/react";
 import { createContext, useContext } from "react";
 
 import { useEvent } from "../react/useEvent";
+import type { PanePair } from "../ui/paneSplitSizes";
 import { radii } from "../theme";
 import type { ThreePanelsChrome, ThreePanelsPane, ThreePanelsVariant } from "../ui/threePanels";
 import type { PaneArrangement } from "./paneGeometry";
@@ -43,18 +44,42 @@ export type WorkspacePaneCapabilities = {
   readonly fullscreen?: true;
 };
 
+type RightPaneRegistration = { readonly key: number; readonly split: PanePair };
+
 /** One frame's three-pane state; the frame creates it once and both pane levels feed it. */
 export type WorkspacePaneOwner = {
   readonly fullscreen$: Observable<WorkspacePane | null>;
-  /** The key of the destination whose right pane is mounted and active. */
-  readonly right$: Observable<number | null>;
+  /** Registration and selected split for the active destination. */
+  readonly right$: Observable<RightPaneRegistration | null>;
 };
 
 export function createWorkspacePaneOwner(): WorkspacePaneOwner {
   return {
     fullscreen$: observable<WorkspacePane | null>(null),
-    right$: observable<number | null>(null),
+    right$: observable<RightPaneRegistration | null>(null),
   };
+}
+
+/** Chooses which neighbour is visible while retaining the registered right pane. */
+export function selectWorkspaceSplit(owner: WorkspacePaneOwner, split: PanePair): void {
+  const registered = owner.right$.peek();
+  if (registered !== null && registered.split !== split) {
+    owner.right$.set({ key: registered.key, split });
+  }
+}
+
+/** Restores a retained right pane on explicit navigation to it. */
+export function useRevealParkedRightPane(): () => void {
+  const layout = useContext(WorkspacePanesContext);
+  const rearrange = usePaneRearrangement();
+  return useEvent(() => {
+    if (layout !== null && layout.owner.right$.peek()?.split === "left+center") {
+      rearrange(() => {
+        selectWorkspaceSplit(layout.owner, "center+right");
+        layout.owner.fullscreen$.set(null);
+      });
+    }
+  });
 }
 
 let nextRightPaneKey = 0;
@@ -66,30 +91,29 @@ export function createRightPaneKey(): number {
 }
 
 /**
- * Resolves the published visibility; a fullscreen request for an absent pane yields a split. A
- * multi-pane frame always has its catalog, so a split shows the right pane instead of the left
- * one whenever the right pane is present.
+ * Resolves the panes for this frame. The registered side pane survives selecting the catalog
+ * split or folding the screen. Fullscreen requests only apply to a present pane.
  */
 export function resolveWorkspacePaneVisibility({
   fullscreen,
   multiPane,
-  rightPresent,
+  rightSplit,
 }: {
   readonly fullscreen: WorkspacePane | null;
   readonly multiPane: boolean;
-  readonly rightPresent: boolean;
+  readonly rightSplit: PanePair | null;
 }): WorkspacePaneVisibility {
   if (!multiPane) {
-    return { kind: "stacked" };
+    return rightSplit === "left+center" ? { kind: "stacked", stashedRight: true } : STACKED;
   }
   if (
     fullscreen === "center" ||
     fullscreen === "left" ||
-    (fullscreen === "right" && rightPresent)
+    (fullscreen === "right" && rightSplit !== null)
   ) {
     return { kind: "fullscreen", pane: fullscreen };
   }
-  return { kind: "split", panes: rightPresent ? "center+right" : "left+center" };
+  return { kind: "split", panes: rightSplit ?? "left+center" };
 }
 
 /**
@@ -138,7 +162,7 @@ export type RightPanePlacement = "beside" | "cover" | "stashed";
  */
 export function rightPanePlacement(visibility: WorkspacePaneVisibility): RightPanePlacement {
   if (visibility.kind === "stacked") {
-    return "cover";
+    return visibility.stashedRight === true ? "stashed" : "cover";
   }
   if (visibility.kind === "fullscreen") {
     return visibility.pane === "right" ? "cover" : "stashed";
@@ -198,6 +222,12 @@ export const WorkspacePanesContext = createContext<{
   readonly owner: WorkspacePaneOwner;
   readonly visibility: WorkspacePaneVisibility;
 } | null>(null);
+
+/** A retained side pane handles navigation only while its content is visible. */
+export function useRightPaneVisible(mounted: boolean): boolean {
+  const layout = useContext(WorkspacePanesContext);
+  return mounted && rightPanePlacement(layout?.visibility ?? STACKED) !== "stashed";
+}
 
 /**
  * A pane's declared actions resolved against the current visibility; the pane provider publishes
@@ -294,9 +324,9 @@ function closePane({
 /** Subscribes the frame to its owner's fullscreen request and right-pane presence. */
 export function useWorkspacePaneOwnerState(owner: WorkspacePaneOwner): {
   readonly fullscreen: WorkspacePane | null;
-  readonly rightPresent: boolean;
+  readonly rightSplit: PanePair | null;
 } {
   const fullscreen = useSelector(() => owner.fullscreen$.get());
-  const rightPresent = useSelector(() => owner.right$.get() !== null);
-  return { fullscreen, rightPresent };
+  const rightSplit = useSelector(() => owner.right$.get()?.split ?? null);
+  return { fullscreen, rightSplit };
 }

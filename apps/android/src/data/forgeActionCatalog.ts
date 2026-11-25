@@ -27,6 +27,9 @@ const KNOWN_KINDS = [
   "updateBranch",
   "close",
   "fixCi",
+  "manualTrigger",
+  "restartCheck",
+  "setCheckRequired",
   "rebase",
   "addressComments",
   "reviewPr",
@@ -77,6 +80,8 @@ export type ActionDescriptor = {
   readonly label: string;
   readonly order: number;
   readonly placement: ActionPlacement;
+  /** The provider accepts a standalone verdict without a summary, drafts or confirmation. */
+  readonly quickSubmit: boolean;
   readonly toggle: { readonly on: boolean } | null;
 };
 
@@ -185,6 +190,20 @@ function toggle(value: unknown, path: string): { readonly on: boolean } | null {
     : { on: flag(record(value, path).on, `${path}.on`) };
 }
 
+/** Older providers and verdicts that require input or confirmation use the review composer. */
+function standaloneVerdict(
+  entry: Readonly<Record<string, unknown>>,
+  confirm: ConfirmLevel,
+  declaredInput: ActionInput | null,
+): boolean {
+  return (
+    entry.kind === "verdict" &&
+    entry.quickSubmit === true &&
+    confirm === "none" &&
+    declaredInput === null
+  );
+}
+
 /** Decodes one descriptor, or returns `null` when the contract says to drop it. */
 function descriptor(value: unknown, path: string): ActionDescriptor | null {
   const entry = record(value, path);
@@ -207,6 +226,7 @@ function descriptor(value: unknown, path: string): ActionDescriptor | null {
     label: nonEmptyText(entry.label, `${path}.label`),
     order: count(entry.order, `${path}.order`),
     placement: placement(entry.placement, parsedAnchor !== undefined),
+    quickSubmit: standaloneVerdict(entry, confirm, declaredInput),
     toggle: toggle(entry.toggle, `${path}.toggle`),
   };
 }

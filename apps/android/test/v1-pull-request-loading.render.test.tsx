@@ -36,8 +36,8 @@ import { createMemoryQueryPersister } from "./fixtures/queryPersister";
 jest.mock("../src/rendering/RichMarkdown", () => {
   const { Text } = jest.requireActual("react-native");
   return {
-    RichMarkdown: ({ source }: { readonly source: string }) => (
-      <Text testID="rich-markdown">{source}</Text>
+    RichMarkdown: (props: React.ComponentProps<typeof import("../src/rendering/RichMarkdown").RichMarkdown>) => (
+      <Text testID="rich-markdown">{props.segment === undefined ? props.source : props.segment.source}</Text>
     ),
   };
 });
@@ -112,6 +112,7 @@ it("opens pull-request search in the shared overlay without the sort action", ()
         connectionId="server"
         forge={forge}
         onOpenPullRequest={() => undefined}
+        onOpenSettings={jest.fn()}
       />
     </SafeAreaProvider>,
   );
@@ -357,7 +358,7 @@ it("renders a stable pull-request detail skeleton from the first route frame", (
 });
 
 it("renders stale-while-revalidate progress to the right of the catalog title", () => {
-  const view = render(<PullRequestsHeader refreshing />);
+  const view = render(<PullRequestsHeader onAddAccount={null} onOpenSettings={jest.fn()} refreshing />);
 
   expect(view.getByTestId("pull-requests-refresh-indicator")).toBeVisible();
   expect(view.getByRole("header", { name: "Pull requests" })).toBeVisible();

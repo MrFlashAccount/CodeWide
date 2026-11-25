@@ -5,6 +5,7 @@ import { Text } from "react-native";
 import type { EnrichedMarkdownTextInputProps } from "react-native-enriched-markdown";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { AppNoticeProvider } from "../src/ui/AppNotice";
 import { parsePullRequestKeyParam } from "../src/data/forgeContract";
 import { createForgeResources } from "../src/data/forgeResources";
 import { createReviewResources } from "../src/data/reviewResources";
@@ -267,30 +268,32 @@ async function renderChanges(
         insets: { bottom: bottomInset, left: 0, right: 0, top: 0 },
       }}
     >
-      <Suspense fallback={<Text>Loading pull request</Text>}>
-        <PullRequestScreen
-          capabilities={capabilities()}
-          connectionId="server"
-          describeThread={() => null}
-          forge={server.forge}
-          initialChangesView="files"
-          isThreadUnread={() => false}
-          navigation={{
-            back: () => undefined,
-            closeChanges: () => undefined,
-            deferReviewChatScenario: async () => Promise.resolve(null),
-            openChanges: () => undefined,
-            openReviewChat: () => undefined,
-            openThread: () => undefined,
-          }}
-          pullRequest={PULL_REQUEST}
-          review={server.review}
-          reviewCapabilities={server.reviewTarget}
-          tab="changes"
-          tablet={false}
-          voiceRuntime={voiceRuntime()}
-        />
-      </Suspense>
+      <AppNoticeProvider>
+        <Suspense fallback={<Text>Loading pull request</Text>}>
+          <PullRequestScreen
+            capabilities={capabilities()}
+            connectionId="server"
+            describeThread={() => null}
+            forge={server.forge}
+            initialChangesView="files"
+            isThreadUnread={() => false}
+            navigation={{
+              back: () => undefined,
+              closeChanges: () => undefined,
+              deferReviewChatScenario: async () => Promise.resolve(null),
+              openChanges: () => undefined,
+              openReviewChat: () => undefined,
+              openThread: () => undefined,
+            }}
+            pullRequest={PULL_REQUEST}
+            review={server.review}
+            reviewCapabilities={server.reviewTarget}
+            tab="changes"
+            tablet={false}
+            voiceRuntime={voiceRuntime()}
+          />
+        </Suspense>
+      </AppNoticeProvider>
     </SafeAreaProvider>,
   );
   mounted.push({ clear: () => server.forge.queryClient.clear(), unmount: view.unmount });

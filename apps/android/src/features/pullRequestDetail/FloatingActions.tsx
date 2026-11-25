@@ -1,5 +1,6 @@
 import { StyleSheet } from "react-native";
 
+import type { CommentAttachment } from "../../data/forgeCommentAttachment";
 import type { ThreadUnreadReader } from "../../data/project-unread-model";
 import { spacing } from "../../theme";
 import { PaneChrome } from "../../ui/PaneChrome";
@@ -16,9 +17,11 @@ type FloatingActionsProps = {
   readonly conversation: PullRequestConversation;
   /** Details shows the Comment pill; Changes does not. */
   readonly details: boolean;
+  readonly draftKey: string;
   readonly isThreadUnread: ThreadUnreadReader;
   readonly onComment: (markdown: string) => Promise<MessageSendResult>;
   readonly onOpenChat: () => void;
+  readonly onUpload: ((file: CommentAttachment) => Promise<string>) | null;
   readonly review?: React.ReactNode;
 };
 
@@ -38,7 +41,9 @@ export function FloatingActions(props: FloatingActionsProps): React.JSX.Element 
   }
   return (
     <PaneChrome pointerEvents="box-none" style={styles.floating}>
-      {comment ? <NewCommentButton onSend={props.onComment} /> : null}
+      {comment ? (
+        <NewCommentButton key={props.draftKey} onSend={props.onComment} onUpload={props.onUpload} />
+      ) : null}
       {chatBeside ? null : <ChatButton {...props} />}
       {props.review}
     </PaneChrome>

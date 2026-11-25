@@ -1,9 +1,9 @@
 // @ts-check
 import React, {
   createContext,
-  memo,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -177,8 +177,13 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
     measured.current = next;
     travel.value = next + insets.bottom + motion.travelPadding;
 
-    if (first || reduceMotion) sheetHeight.value = next;
-    else sheetHeight.value = withSpring(next, motion.heightSpring);
+    // An initial page may report another layout while it is still moving onscreen.
+    // Use its actual size throughout that entrance; reserve the height spring for later changes.
+    if (first || reduceMotion || (!navigation.canGoBack && present.value < 1)) {
+      sheetHeight.value = next;
+    } else {
+      sheetHeight.value = withSpring(next, motion.heightSpring);
+    }
 
     if (presented.current) return;
     presented.current = true;
@@ -392,11 +397,14 @@ const TrayTrigger: React.FC<ITrayTrigger> & React.FunctionComponent<ITrayTrigger
 };
 
 const TrayContent: React.FC<ITrayContent> & React.FunctionComponent<ITrayContent> = ({
+  backBehavior = "dismiss",
   children,
   style,
 }: ITrayContent): React.JSX.Element | null => {
   const {
     visible,
+    canGoBack,
+    goBack,
     close,
     height,
     present,
@@ -412,6 +420,8 @@ const TrayContent: React.FC<ITrayContent> & React.FunctionComponent<ITrayContent
   const dismissOnBackdropPress = useContext(TrayDismissContext);
 
   const transformStyle = useAnimatedStyle(() => ({
+    // Hide the border and elevation along with the page until presentation starts.
+    opacity: present.value > 0 ? 1 : 0,
     transform: [
       { translateY: (1 - present.value) * travel.value + dragY.value },
       {
@@ -421,8 +431,8 @@ const TrayContent: React.FC<ITrayContent> & React.FunctionComponent<ITrayContent
   }));
 
   const heightStyle = useAnimatedStyle(() => ({
-    height: height.value,
-    opacity: height.value === 0 ? 0 : 1,
+    // Use the page's natural height on the first Fabric layout.
+    height: height.value > 0 ? height.value : undefined,
   }));
 
   const backdropStyle = useAnimatedStyle(() => ({
@@ -439,7 +449,13 @@ const TrayContent: React.FC<ITrayContent> & React.FunctionComponent<ITrayContent
   if (!visible) return null;
 
   return (
-    <Modal transparent statusBarTranslucent visible animationType="none" onRequestClose={close}>
+    <Modal
+      transparent
+      statusBarTranslucent
+      visible
+      animationType="none"
+      onRequestClose={backBehavior === "previousView" && canGoBack ? goBack : close}
+    >
       <GestureHandlerRootView style={styles.fill} unstable_forceActive>
         <KeyboardAvoidingView
           behavior="padding"
@@ -453,12 +469,12 @@ const TrayContent: React.FC<ITrayContent> & React.FunctionComponent<ITrayContent
               accessibilityRole="button"
               onPress={dismissOnBackdropPress ? close : undefined}
               pointerEvents={dismissOnBackdropPress ? "auto" : "none"}
-              style={styles.backdrop}
+              style={StyleSheet.absoluteFill}
               testID="tray-backdrop"
             >
               <Animated.View
                 pointerEvents="none"
-                style={[styles.backdropFill, { backgroundColor: palette.backdrop }, backdropStyle]}
+                style={[StyleSheet.absoluteFill, { backgroundColor: palette.backdrop }, backdropStyle]}
               />
             </Pressable>
 
@@ -506,23 +522,23 @@ const TrayView: React.FC<ITrayView> & React.FunctionComponent<ITrayView> = ({
   id,
   style,
 }: ITrayView): React.JSX.Element | null => {
-  const { view, direction, reduceMotion, motion } = useTrayContext("Tray.View");
+  const { view, direction, canGoBack, reduceMotion, motion } = useTrayContext("Tray.View");
   const active = view === id;
 
   const [rendered, setRendered] = useState<boolean>(active);
-  const progress = useSharedValue<number>(active ? 1 : 0);
-  const slideFrom = useSharedValue<number>(0);
+  // A lazily created destination can already be active on its first render.
+  const progress = useSharedValue<number>(active && (!canGoBack || reduceMotion) ? 1 : 0);
+  const slideFrom = useSharedValue<number>(direction);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (active) {
       setRendered(true);
       slideFrom.value = direction;
       progress.value = reduceMotion ? 1 : withSpring(1, motion.viewInSpring);
       return;
     }
-    if (progress.value === 0) return;
     slideFrom.value = -direction;
-    if (reduceMotion) {
+    if (reduceMotion || progress.value === 0) {
       progress.value = 0;
       setRendered(false);
       return;
@@ -552,6 +568,7 @@ const TrayView: React.FC<ITrayView> & React.FunctionComponent<ITrayView> = ({
 
   return (
     <Animated.View
+      importantForAccessibility={active ? "auto" : "no-hide-descendants"}
       pointerEvents={active ? "auto" : "none"}
       style={[active ? styles.activeLayer : styles.idleLayer, layerStyle, style]}
     >
@@ -708,12 +725,6 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "flex-end",
   },
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  backdropFill: {
-    ...StyleSheet.absoluteFillObject,
-  },
   wrap: {
     paddingHorizontal: 10,
   },
@@ -735,10 +746,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   measure: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
+    flexShrink: 0,
   },
   handleArea: {
     alignItems: "center",
@@ -781,7 +789,8 @@ const styles = StyleSheet.create({
   glyph: { fontSize: 18, fontWeight: "600" },
 });
 
-const Tray = createCompoundComponent("Tray", memo(TrayRoot), {
+// Fabric 0.86 skips Effect Event updates on simple memo fibers. Layout and Back must see the current open state.
+const Tray = createCompoundComponent("Tray", TrayRoot, {
   Trigger: createCompoundComponent("Tray.Trigger", TrayTrigger),
   Content: createCompoundComponent("Tray.Content", TrayContent),
   View: createCompoundComponent("Tray.View", TrayView),

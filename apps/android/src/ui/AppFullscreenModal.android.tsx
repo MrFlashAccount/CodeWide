@@ -19,6 +19,8 @@ import { FullscreenWindowReadyProvider } from "./FullscreenWindowReady";
 import { OverlaySurfaceProvider } from "./OverlaySurfaceContext";
 import { RecoverableRenderBoundary } from "./RecoverableRenderBoundary";
 
+import { SystemBarShades } from "./SystemBarShades";
+
 interface FullscreenModalProps {
   children: ReactNode;
   isOpen: boolean;
@@ -127,6 +129,7 @@ function VisibleFullscreenModal(props: FullscreenModalProps) {
                 </FullscreenWindowReadyProvider>
               </RecoverableRenderBoundary>
             </SafeAreaView>
+            <SystemBarShades />
           </SafeAreaProvider>
         </RNHostView>
       </BasicAlertDialog>

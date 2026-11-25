@@ -133,6 +133,7 @@ export function SubagentConversation({
     },
   );
   const { openThreadDocumentLink } = useDocumentNavigation(
+    connectionId,
     thread.cwd,
     getTransferAccess,
     getStableTransferAccess,

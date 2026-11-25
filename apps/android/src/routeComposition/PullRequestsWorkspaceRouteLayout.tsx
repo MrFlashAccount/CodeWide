@@ -5,6 +5,7 @@ import { parsePullRequestKeyParam, type PullRequestKey } from "../data/forgeCont
 import { SelectedPullRequestContext } from "../features/pullRequests/list/selectedPullRequest";
 import { useReducedMotionPreference } from "../rendering/reduced-motion-store";
 import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
+import { WorkspaceSafeContent } from "./WorkspaceSafeContent";
 import { PullRequestsPreviewRoute } from "./PullRequestsCatalogRoute";
 import { WorkspaceCatalogMaster } from "./WorkspaceCatalogMaster";
 import { WorkspacePaneFrame } from "./WorkspacePaneFrame";
@@ -84,14 +85,26 @@ function PullRequestsCatalogPlacement({
   readonly children: ReactElement;
 }): React.JSX.Element | null {
   const destination = useContext(PullRequestsDestinationPlacement);
-  return destination ? <PullRequestsPreviewRoute /> : children;
+  return destination ? (
+    <WorkspaceSafeContent>
+      <PullRequestsPreviewRoute />
+    </WorkspaceSafeContent>
+  ) : (
+    children
+  );
 }
 
 /** The pull request a focused destination route shows, from its `pullRequestKey` param. */
 function shownPullRequest(params: unknown): PullRequestKey | null {
-  return typeof params === "object" && params !== null && "pullRequestKey" in params
-    ? parsePullRequestKeyParam(params.pullRequestKey)
-    : null;
+  if (typeof params !== "object" || params === null || !("pullRequestKey" in params)) {
+    return null;
+  }
+  // The catalog groups accounts by canonical PR. The detail route uses the selected account's key.
+  const canonical =
+    "catalogPullRequestKey" in params
+      ? parsePullRequestKeyParam(params.catalogPullRequestKey)
+      : null;
+  return canonical ?? parsePullRequestKeyParam(params.pullRequestKey);
 }
 
 function pullRequestsCatalogPresentation(props: PaneLayoutProps) {

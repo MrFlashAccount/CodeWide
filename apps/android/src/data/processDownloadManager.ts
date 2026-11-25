@@ -1,5 +1,7 @@
+import { renameDownload } from "../native/downloadActions";
 import {
   deleteDownloadedFile,
+  findDownloadedFile,
   discardPartialDownload,
   pickDownloadDirectory,
   restoreDownloadDirectory,
@@ -23,6 +25,7 @@ export function getProcessDownloadManager(): DownloadManager {
   manager = new DownloadManager(createDownloadHistoryStorage(), {
     deleteFile: deleteDownloadedFile,
     discardPartial: discardPartialDownload,
+    findSaved: findDownloadedFile,
     isPickerCancellation: (error) =>
       error instanceof Error && /cancel(?:led|ed)?/iu.test(error.message),
     now: Date.now,
@@ -31,6 +34,7 @@ export function getProcessDownloadManager(): DownloadManager {
       await preferences.ready;
       return preferences.collection.get(DOWNLOAD_FOLDER_PREFERENCE_ID)?.value ?? null;
     },
+    renameFile: renameDownload,
     restoreDirectory: restoreDownloadDirectory,
     start: ({ directory, getAccess, onProgress, source }) =>
       source.kind === "scoped"

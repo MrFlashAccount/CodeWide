@@ -1,4 +1,3 @@
-import { QuestionDock } from "../requests/QuestionFeature";
 import { View, type LayoutChangeEvent } from "react-native";
 import { PaneChrome } from "../../ui/PaneChrome";
 import { ThreadErrorBanner } from "../../ui/ThreadErrorBanner";
@@ -45,7 +44,6 @@ export function ConversationBottomChrome({
               message={failureNotice.message}
             />
           )}
-        {!readOnly && <QuestionDock />}
         {composerContent}
         {/* It takes the editor's place under the read-only composer's context chips. */}
         {openElsewhere && openElsewhereActions !== null && (

@@ -1,7 +1,13 @@
-import { useEffect, type ReactElement } from "react";
+import { FULL_PERCENT, HALF_PERCENT, MIN_PANE_PERCENT, type PanePair } from "../ui/paneSplitSizes";
+import { useSelector } from "@legendapp/state/react";
+import { paneSplitPreferences$ } from "../data/paneSplitPreferences";
+import { sidebarWidth } from "../ui/sidebarDimensions";
+import { PaneDivider } from "./PaneDivider";
+import { useContext, useEffect, type ReactElement } from "react";
 import type { LayoutChangeEvent, View } from "react-native";
 import { useAnimatedRef } from "react-native-reanimated";
 
+import { WorkspaceTabLayerContext } from "./workspaceTabSceneNavigation";
 import { workspaceCatalogDiagnostics } from "../data/workspaceCatalogDiagnostics";
 import { useConstant } from "../react/useConstant";
 import { useEvent } from "../react/useEvent";
@@ -69,7 +75,7 @@ function WorkspacePaneFrameContent({
   presentation,
   viewportWidth,
 }: WorkspacePaneFrameProps): React.JSX.Element {
-  const { owner, rightPresent, visibility } = useWorkspacePaneModel(desktop, presentation);
+  const { owner, rightPresent, split, visibility } = useWorkspacePaneModel(desktop, presentation);
   const onCatalogLayout = useEvent((event: LayoutChangeEvent): void => {
     const { height, width } = event.nativeEvent.layout;
     workspaceCatalogDiagnostics.record({ height, surface: "pane", type: "layout", width });
@@ -84,60 +90,82 @@ function WorkspacePaneFrameContent({
     });
   }, [catalogFocused, catalogStatus, desktop, viewportWidth]);
   const placed = placeFramePresentation(presentation, visibility);
+  const tabSwitchLayer = useContext(WorkspaceTabLayerContext);
   const frameRef = useAnimatedRef<View>();
-  const arrangement = resolvePaneArrangement({ presentation: placed, rightPresent, visibility });
+  const { catalogPercent, centerPercent } = usePaneShares(viewportWidth);
+  const arrangement = {
+    ...resolvePaneArrangement({ presentation: placed, rightPresent, visibility }),
+    catalogPercent,
+    centerPercent,
+  };
   const geometry = usePaneMotionState(arrangement, frameRef);
   const target = paneGeometry(arrangement, viewportWidth);
   usePaneMotionFrameProbe(geometry.moving);
   const catalogAccessible = isCatalogAccessible(placed, desktop, catalogFocused);
   const centerHidden = placed.kind === "wideCatalogExpanded";
+  const renderFrame = (divider: ReactElement | null) => (
+    <WorkspaceTwoPaneLayout
+      cacheDetailDuring={tabSwitchLayer}
+      catalog={
+        <ThreePanelsPane
+          box="catalog"
+          capabilities={leftCapabilities ?? NO_CAPABILITIES}
+          label="catalog"
+          neighbour={null}
+          pane="left"
+        >
+          {catalog}
+        </ThreePanelsPane>
+      }
+      catalogViewProps={{
+        accessibilityElementsHidden: !catalogAccessible,
+        "aria-hidden": !catalogAccessible,
+        importantForAccessibility: catalogAccessible ? "auto" : "no-hide-descendants",
+        onLayout: onCatalogLayout,
+        pointerEvents: catalogAccessible ? "auto" : "none",
+        testID: "workspace-catalog-pane",
+      }}
+      detail={
+        // A destination that declares its own panes publishes them through WorkspaceCenterLayout.
+        <ThreePanelsPane
+          box="destination"
+          capabilities={NO_CAPABILITIES}
+          label="destination"
+          neighbour={null}
+          pane="center"
+        >
+          {detail}
+        </ThreePanelsPane>
+      }
+      detailStyle={desktop ? v1WorkspaceShellStyles.destination : undefined}
+      detailViewProps={destinationViewProps(desktop, catalogFocused, centerHidden)}
+      divider={divider}
+      frameRef={frameRef}
+      frameStyle={v1WorkspaceShellStyles.paneFrame}
+      geometry={geometry}
+      insetDetail={visibility.kind === "split"}
+      presentation={placed}
+      resizeTarget={{
+        catalog: placed.kind === "detailOnly" ? 0 : target.catalogWidth,
+        destination: placed.kind === "catalogOnly" ? 0 : target.detailWidth,
+        left: target.detailX,
+        window: viewportWidth,
+      }}
+      testID="v1-workspace-pane-frame"
+    />
+  );
   return (
     <WorkspacePanesContext.Provider value={{ geometry, owner, visibility }}>
-      <WorkspaceTwoPaneLayout
-        catalog={
-          <ThreePanelsPane
-            box="catalog"
-            capabilities={leftCapabilities ?? NO_CAPABILITIES}
-            label="catalog"
-            neighbour={null}
-            pane="left"
-          >
-            {catalog}
-          </ThreePanelsPane>
-        }
-        catalogViewProps={{
-          accessibilityElementsHidden: !catalogAccessible,
-          "aria-hidden": !catalogAccessible,
-          importantForAccessibility: catalogAccessible ? "auto" : "no-hide-descendants",
-          onLayout: onCatalogLayout,
-          pointerEvents: catalogAccessible ? "auto" : "none",
-          testID: "workspace-catalog-pane",
-        }}
-        detail={
-          // A destination that declares its own panes publishes them through WorkspaceCenterLayout.
-          <ThreePanelsPane
-            box="destination"
-            capabilities={NO_CAPABILITIES}
-            label="destination"
-            neighbour={null}
-            pane="center"
-          >
-            {detail}
-          </ThreePanelsPane>
-        }
-        detailStyle={desktop ? v1WorkspaceShellStyles.destination : undefined}
-        detailViewProps={destinationViewProps(desktop, catalogFocused, centerHidden)}
-        frameRef={frameRef}
-        frameStyle={v1WorkspaceShellStyles.paneFrame}
+      <FrameDivider
+        catalogPercent={catalogPercent}
+        centerPercent={centerPercent}
         geometry={geometry}
-        presentation={placed}
-        resizeTarget={{
-          catalog: placed.kind === "detailOnly" ? 0 : target.catalogWidth,
-          destination: placed.kind === "catalogOnly" ? 0 : target.detailWidth,
-          left: target.detailX,
-          window: viewportWidth,
-        }}
-        testID="v1-workspace-pane-frame"
+        owner={owner}
+        pair={split}
+        renderFrame={renderFrame}
+        rightPresent={rightPresent}
+        visibility={visibility}
+        width={viewportWidth}
       />
     </WorkspacePanesContext.Provider>
   );
@@ -153,6 +181,7 @@ function useWorkspacePaneModel(
 ): {
   readonly owner: WorkspacePaneOwner;
   readonly rightPresent: boolean;
+  readonly split: PanePair;
   readonly visibility: WorkspacePaneVisibility;
 } {
   const owner = useConstant(createWorkspacePaneOwner);
@@ -161,7 +190,7 @@ function useWorkspacePaneModel(
   const visibility = resolveWorkspacePaneVisibility({
     fullscreen: ownerState.fullscreen,
     multiPane: desktop && presentation.kind === "wide",
-    rightPresent: ownerState.rightPresent,
+    rightSplit: ownerState.rightSplit,
   });
   const exitFullscreen = useEvent((): void => {
     rearrange(() => {
@@ -169,7 +198,12 @@ function useWorkspacePaneModel(
     });
   });
   useAndroidBackHandler(visibility.kind === "fullscreen", exitFullscreen);
-  return { owner, rightPresent: ownerState.rightPresent, visibility };
+  return {
+    owner,
+    rightPresent: ownerState.rightSplit !== null,
+    split: ownerState.rightSplit ?? "left+center",
+    visibility,
+  };
 }
 
 function destinationViewProps(desktop: boolean, catalogFocused: boolean, centerHidden: boolean) {
@@ -201,4 +235,56 @@ function isDetailInteractive(
   centerHidden: boolean,
 ): boolean {
   return !centerHidden && (desktop || !catalogFocused);
+}
+
+function usePaneShares(viewportWidth: number) {
+  const preferredCatalog = useSelector(() => paneSplitPreferences$["left+center"].get());
+  const preferredCenter = useSelector(() => paneSplitPreferences$["center+right"].get());
+  const catalogPercent =
+    preferredCatalog ??
+    Math.min(
+      HALF_PERCENT,
+      Math.max(
+        MIN_PANE_PERCENT,
+        (sidebarWidth(viewportWidth) / Math.max(1, viewportWidth)) * FULL_PERCENT,
+      ),
+    );
+  const centerPercent = preferredCenter ?? HALF_PERCENT;
+  return { catalogPercent, centerPercent };
+}
+
+function FrameDivider({
+  catalogPercent,
+  centerPercent,
+  geometry,
+  owner,
+  pair,
+  renderFrame,
+  rightPresent,
+  visibility,
+  width,
+}: {
+  readonly catalogPercent: number;
+  readonly centerPercent: number;
+  readonly geometry: ReturnType<typeof usePaneMotionState>;
+  readonly owner: WorkspacePaneOwner;
+  readonly pair: PanePair;
+  readonly renderFrame: (divider: ReactElement | null) => ReactElement;
+  readonly rightPresent: boolean;
+  readonly visibility: WorkspacePaneVisibility;
+  readonly width: number;
+}): React.JSX.Element | null {
+  return (
+    <PaneDivider
+      bothEdges={rightPresent && visibility.kind === "fullscreen" && visibility.pane === "center"}
+      enabled={visibility.kind !== "stacked"}
+      fullscreen={visibility.kind === "fullscreen" ? visibility.pane : null}
+      geometry={geometry}
+      owner={owner}
+      pair={pair}
+      renderFrame={renderFrame}
+      shares={{ "center+right": centerPercent, "left+center": catalogPercent }}
+      width={width}
+    />
+  );
 }

@@ -14,8 +14,10 @@ export type DetailsReviewProps = {
   readonly onClose: () => void;
   /** Opens (or switches) the Submit sheet with one verdict, by its `actionId`. */
   readonly onOpen: (actionId: string) => void;
+  readonly onSelect: (actionId: string) => void;
   /** The verdict the sheet is open with; `null` while it is closed. */
   readonly openVerdictId: string | null;
+  readonly pending: boolean;
   readonly result: SubmitResult | null;
   readonly submit: (
     verdict: ActionDescriptor,
@@ -27,7 +29,7 @@ export type DetailsReviewProps = {
 
 /**
  * The last Submit outcome and the sheet opened from the Details verdict button or menu.
- * The sheet stays the only trigger that publishes a verdict.
+ * The composer publishes a review with drafts. Standalone verdicts report their outcome here too.
  */
 export function DetailsReview(props: DetailsReviewProps): React.JSX.Element | null {
   const verdict = props.verdicts.find((item) => item.actionId === props.openVerdictId) ?? null;

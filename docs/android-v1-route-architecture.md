@@ -35,7 +35,7 @@ The persistent shell is split by cohesive responsibility; helper modules below l
 - `WorkspaceShell.tsx` owns the persistent providers and root `Stack`; it registers `(tabs)` and
   root surfaces without interpreting a catalog or mirroring tab selection.
 - `WorkspaceTabsRouteLayout.tsx` owns the standard parent Tabs policy, retained descriptors,
-  inactive-scene isolation, one shared floating bar and its presentation claim.
+  inactive-scene isolation and the spring shared by the two catalog controls.
 - `ThreadsWorkspaceRouteLayout.tsx` and `PullRequestsWorkspaceRouteLayout.tsx` each compose one
   nested Stack, its real catalog descriptor and detail slot around `WorkspaceTwoPaneLayout`.
 - `WorkspaceTwoPaneLayout.tsx` owns responsive width, placement and animation only. It owns no
@@ -355,13 +355,10 @@ supplies catalog/detail slots to `WorkspaceTwoPaneLayout`. The shared layout onl
 responsive placement and animation; changing width does not mutate Router state or remount a second
 catalog. Child layouts may both import this geometry primitive, but they must not import each other.
 
-`WorkspaceTabSceneIsolation` is authoritative in both BottomTabView paths. Active scenes use
-`display: "flex"`, `pointerEvents="auto"`, `accessibilityElementsHidden={false}`,
-`importantForAccessibility="auto"` and `aria-hidden={false}`. Inactive scenes remain mounted but
-use `display: "none"`, `pointerEvents="none"`, `accessibilityElementsHidden`,
-`importantForAccessibility="no-hide-descendants"` and `aria-hidden`. Native
-`Screen(activityState=0)` is not sufficient because the bundled plain-`View` fallback does not use
-that state. `unmountOnBlur` and `popToTopOnBlur` are not set.
+`WorkspaceTabSceneIsolation` keeps each keyed nested stack in a non-collapsible, full-size
+host at a fixed sibling position. Android retains the inactive host at zero opacity. The
+plain-view fallback hides it with `display: "none"`. Only the active scene accepts input
+and exposes its accessibility descendants.
 
 The native catalog entry remains in its nested Stack history. Back pops only the active Stack before
 TabRouter consumes deduplicated tab history; after tab history is exhausted, Back bubbles to the
@@ -382,12 +379,11 @@ deepest route to its parents, and validates the first `globalSearchSessionId`. T
 that lease; explicit Search close and workspace teardown can. Existing route-session capacity,
 expiry and overflow-only-while-mounted policy does not change.
 
-The one `CatalogModeBarHost` remains an absolute overlay in the parent Tabs content box. Its
-geometry is binding: `left = catalogModeBarHorizontalInset`,
-`bottom = catalogModeBarBottomInset`,
-`width = (desktop ? desktopThreadSidebarWidth(viewportWidth) : viewportWidth) - 2 * catalogModeBarHorizontalInset`,
-and `zIndex = 20`. Existing `catalogModeBarContentInset` and `catalogModeBarFabBottom` continue to
-protect lists and FABs. The geometry component knows no route names.
+Each catalog retains its measured `CatalogModeBarHost` inside its own pane, anchored with
+`catalogModeBarHorizontalInset` and `catalogModeBarBottomInset`. The controls use one indicator
+position, width and selection spring. The active catalog reconciles that motion against its
+measured targets, including when Fold changes width. The scene switch preserves the touch-driven
+motion in progress. Lists and FABs use `catalogModeBarContentInset` and `catalogModeBarFabBottom`.
 
 Reacticx provenance is explicit. `vendor/reacticx/src/components/organisms/masked-tab-bar/**` is the
 source of truth and records the selected-activation patch in `vendor/reacticx/UPSTREAM.md`.

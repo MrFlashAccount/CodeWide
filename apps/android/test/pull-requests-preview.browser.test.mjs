@@ -190,7 +190,7 @@ test("the welcome action opens the server-declared provider tray", async () => {
   }
 });
 
-test("a stale head writes once, shows the banner and keeps the screen", async () => {
+test("a stale head writes once and reports the error above the PR", async () => {
   const { errors, page } = await open("pr", 360);
   try {
     const menu = page.getByRole("button", { name: "Pull request menu", exact: true });
@@ -202,7 +202,8 @@ test("a stale head writes once, shows the banner and keeps the screen", async ()
     assert.deepEqual(await page.evaluate(() => window.previewWrites), []);
     // The web confirmation sheet animates over the PR menu.
     await page.getByText("Update branch", { exact: true }).last().dispatchEvent("click");
-    await page.getByText("PR changed since this screen loaded", { exact: false }).waitFor();
+    const notices = page.getByTestId("app-notice-stack");
+    await notices.getByText("PR changed since this screen loaded", { exact: true }).waitFor();
     const writes = await page.evaluate(() => window.previewWrites);
     assert.equal(writes.length, 1);
     assert.match(writes[0], /"confirmation":"confirm".*"headRevision":"3fa9e12"/u);

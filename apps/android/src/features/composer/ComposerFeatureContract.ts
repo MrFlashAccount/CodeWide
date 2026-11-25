@@ -78,6 +78,7 @@ export type ComposerFeatureProps = {
   openQuickControlMenu: (_scope: "model-menu" | "permissions-menu") => void;
   pastedAttachmentPending: boolean;
   pendingVoiceSelection: { end: number; start: number } | null;
+  questionReplyActive?: boolean;
   queuedComposerEdit: QueuedComposerEdit | null;
   queuedComposerEditBusy: boolean;
   queuedComposerEditError: string | null;

@@ -118,21 +118,24 @@ class CompletedFooterView(
   private fun relayout() {
     requestLayout()
     if (width > 0 && height > 0) {
-      measureChildrenForRow()
+      measureChildrenForRow(height)
       layoutChildren(width, height)
     }
   }
 
-  private fun measureChildrenForRow() {
+  private fun measureChildrenForRow(rowHeight: Int) {
     val unbounded = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+    // TextView centers its line using its measured height, including after a content-only update.
+    val heightSpec = MeasureSpec.makeMeasureSpec(rowHeight, MeasureSpec.EXACTLY)
     for (v in labels) {
-      v.measure(unbounded, unbounded)
+      v.measure(unbounded, heightSpec)
     }
   }
 
   override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-    measureChildrenForRow()
-    setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), MeasureSpec.getSize(heightMeasureSpec))
+    val rowHeight = MeasureSpec.getSize(heightMeasureSpec)
+    measureChildrenForRow(rowHeight)
+    setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), rowHeight)
   }
 
   override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) = layoutChildren(r - l, b - t)

@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, StyleSheet, View } from "react-native";
+import { useRef } from "react";
+import { Pressable, StyleSheet, View, type Text as NativeText } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import {
@@ -13,6 +14,7 @@ import {
   typeWeight,
 } from "../../../theme";
 import { ActionMenu } from "../../../ui/ActionMenu";
+import { TextShimmer } from "../../../ui/TextShimmer";
 import { AppText as Text } from "../../../ui/Typography";
 
 const MENU_TRIGGER_SIZE = { height: controlSize.compact, width: controlSize.compact - spacing.xs };
@@ -20,22 +22,19 @@ const PRESSED_OPACITY = 0.72;
 /** The segment divider on the filled button: a hint of the label color, not a second outline. */
 const FILLED_DIVIDER_OPACITY = 0.24;
 
-/**
- * The Details verdict split button, `Ship | ▾`: the main segment opens Submit review with the lead
- * verdict, the ▾ menu lists every verdict of the plugin's group (a disabled one with its reason,
- * a destructive one such as Block marked destructive) and opens Submit review with the chosen
- * one. It never publishes by itself: the Submit sheet is the verdict's only trigger. A
- * destructive lead drops the fill and keeps a red label, never a red fill.
- */
+/** The primary verdict and its alternatives. The provider opts standalone approvals into one-tap submission. */
 export function VerdictSplitButton({
   lead,
-  onOpenReview,
+  onSelect,
+  pending,
   verdicts,
 }: {
   readonly lead: ActionDescriptor;
-  readonly onOpenReview: (actionId: string) => void;
+  readonly onSelect: (actionId: string) => void;
+  readonly pending: boolean;
   readonly verdicts: readonly ActionDescriptor[];
 }): React.JSX.Element {
+  const labelRef = useRef<NativeText>(null);
   const destructive = lead.confirm === "destructive";
   return (
     <View
@@ -43,29 +42,40 @@ export function VerdictSplitButton({
       testID="pull-request-verdict"
     >
       <Pressable
-        accessibilityHint="Opens Submit review"
+        accessibilityHint={lead.quickSubmit ? "Submits this verdict" : "Opens Submit review"}
         accessibilityLabel={`Review: ${lead.label}`}
         accessibilityRole="button"
+        accessibilityState={{ busy: pending, disabled: pending }}
+        disabled={pending}
         hitSlop={controlHitSlop.compact}
         onPress={() => {
-          onOpenReview(lead.actionId);
+          onSelect(lead.actionId);
         }}
         style={({ pressed }) => [styles.main, pressed && styles.pressed]}
         testID="pull-request-verdict-main"
       >
         <Text
           numberOfLines={1}
+          ref={labelRef}
           style={[styles.label, destructive ? styles.labelDanger : styles.labelFilled]}
         >
           {lead.label}
         </Text>
+        <TextShimmer shimmering={pending} target={labelRef} />
       </Pressable>
-      <View style={[styles.divider, destructive ? styles.dividerQuiet : styles.dividerFilled]} />
-      <VerdictMenu
-        iconColor={destructive ? colors.textMuted : colors.onPrimary}
-        onSelect={onOpenReview}
-        verdicts={verdicts}
-      />
+      {verdicts.length > 1 ? (
+        <>
+          <View
+            style={[styles.divider, destructive ? styles.dividerQuiet : styles.dividerFilled]}
+          />
+          <VerdictMenu
+            iconColor={destructive ? colors.textMuted : colors.onPrimary}
+            onSelect={onSelect}
+            pending={pending}
+            verdicts={verdicts}
+          />
+        </>
+      ) : null}
     </View>
   );
 }
@@ -74,10 +84,12 @@ export function VerdictSplitButton({
 function VerdictMenu({
   iconColor,
   onSelect,
+  pending,
   verdicts,
 }: {
   readonly iconColor: string;
   readonly onSelect: (actionId: string) => void;
+  readonly pending: boolean;
   readonly verdicts: readonly ActionDescriptor[];
 }): React.JSX.Element {
   return (
@@ -97,6 +109,8 @@ function VerdictMenu({
       <Pressable
         accessibilityLabel="Verdict"
         accessibilityRole="button"
+        accessibilityState={{ disabled: pending }}
+        disabled={pending}
         hitSlop={controlHitSlop.compact}
         style={({ pressed }) => [styles.toggle, pressed && styles.pressed]}
         testID="pull-request-verdict-menu"

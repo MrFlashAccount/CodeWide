@@ -3,40 +3,26 @@ import { randomUUID } from "expo-crypto";
 import { Linking } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
-import { classifyForgeError, type ForgeFailure } from "../../../data/forgeErrors";
+import { classifyForgeError } from "../../../data/forgeErrors";
 import { useConstant } from "../../../react/useConstant";
 import { useEvent } from "../../../react/useEvent";
 import { useAppDialog } from "../../../ui/AppDialog";
-import type { ActionNotice, PullRequestScreenState } from "../pullRequestScreenModel";
+import type { PullRequestScreenState } from "../pullRequestScreenModel";
 import type {
   PullRequestDetailWorkspaceCapabilities,
   PullRequestTarget,
 } from "../workspaceCapabilities";
 import { confirmationCopy } from "./confirmationCopy";
+import { usePullRequestFeedback } from "./usePullRequestFeedback";
 import { effectiveConfirmation } from "./confirmationPolicy";
 import { createIdempotencyKeys } from "./idempotencyKeys";
-
-/** The screen notice a failed run leaves: stale head, unknown outcome, or the forge's refusal. */
-function failureNotice(action: ActionDescriptor, failure: ForgeFailure): ActionNotice {
-  if (failure.kind === "staleHead") {
-    return { kind: "stale" };
-  }
-  if (failure.kind === "outcomeUnknown") {
-    return { kind: "outcomeUnknown" };
-  }
-  return {
-    actionId: action.actionId,
-    kind: "refused",
-    reason: failure.message,
-  };
-}
 
 /**
  * Runs one catalog action: confirmation at the effective level, an
  * idempotency key per user intent (kept across a retry after a transport
  * failure), pending state in the screen model, the forge page a run asks to
  * finish on, and typed recovery — a moved
- * head shows the stale banner and refreshes, a forge refusal restores the
+ * head shows a notice and refreshes, a forge refusal restores the
  * previous state and shows its reason.
  */
 export function useActionRunner({
@@ -51,6 +37,7 @@ export function useActionRunner({
   readonly target: PullRequestTarget & { readonly host: string };
 }): (action: ActionDescriptor, input: boolean | string | null) => void {
   const dialog = useAppDialog();
+  const feedback = usePullRequestFeedback();
   const keys = useConstant(() => createIdempotencyKeys(randomUUID));
   const settle = useEvent((action: ActionDescriptor): void => {
     model.pending[action.actionId]?.delete();
@@ -62,7 +49,6 @@ export function useActionRunner({
     if (action.toggle !== null) {
       model.pendingToggles[action.actionId]?.set(!action.toggle.on);
     }
-    model.notice.set(null);
     capabilities
       .runAction(target, {
         actionId: action.actionId,
@@ -73,9 +59,9 @@ export function useActionRunner({
       .then(
         (result) => {
           keys.settle(action.actionId, null);
-          model.notice.set(
-            result.message === null ? null : { kind: "message", text: result.message },
-          );
+          if (result.message !== null && (action.kind !== "autoMerge" || result.openUrl !== null)) {
+            feedback.message(result.message);
+          }
           // The forge accepts this action only on its web page: the person finishes it there.
           if (result.openUrl !== null) {
             Linking.openURL(result.openUrl).catch(() => undefined);
@@ -84,7 +70,7 @@ export function useActionRunner({
         (error: unknown) => {
           const failure = classifyForgeError(error);
           keys.settle(action.actionId, failure);
-          model.notice.set(failureNotice(action, failure));
+          feedback.writeFailure(action.label, failure);
           onRefresh();
         },
       )

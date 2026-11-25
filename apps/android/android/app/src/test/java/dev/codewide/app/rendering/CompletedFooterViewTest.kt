@@ -17,6 +17,33 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [34], manifest = Config.NONE)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class CompletedFooterViewTest {
+  @Test fun visibleLabelsCenterOnTheStatusDotAtEveryRowHeight() {
+    val footer = CompletedFooterView(RuntimeEnvironment.getApplication()) { _, _ -> }
+    footer.applyTheme(JavaOnlyMap.of("font", "sans-serif", "textSize", 10.0,
+      "dotSize", 7.0, "dotGap", 4.0, "inset", 12.0, "separatorGap", 8.0, "touchPadding", 5.0))
+    fun content(duration: String) = JavaOnlyMap.of("status", "Completed", "duration", duration,
+      "time", "01:05", "price", "≈$0.02", "tokens", "◇ ↓30K ↑500", "tokenLabel", "Token usage")
+    footer.applyContent(content("3s"))
+    val density = footer.resources.displayMetrics.density
+    val width = (420 * density).toInt()
+    for (heightDp in listOf(18, 28, 18)) {
+      val height = (heightDp * density).toInt()
+      footer.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY))
+      footer.layout(0, 0, width, height)
+      // A prop update can also place children without changing the Fabric frame.
+      footer.applyContent(content("${heightDp}s"))
+      val dot = footer.children.single { it.contentDescription == "Completed" }
+      for (label in footer.children.filterIsInstance<TextView>().filter { it.visibility == View.VISIBLE }) {
+        val line = label.layout
+        val top = label.top + label.baseline - line.getLineBaseline(0)
+        val lineCenter = top + line.height / 2.0
+        assertEquals("Text ${label.text} should center on the status dot at ${heightDp}dp",
+          (dot.top + dot.bottom) / 2.0, lineCenter, 1.0)
+      }
+    }
+  }
+
   @Test fun optionalMetricsGiveWayInOrderAndTheCostPressAnchorsToItsVisibleLabel() {
     var anchor: Rect? = null
     val footer = CompletedFooterView(RuntimeEnvironment.getApplication()) { _, rect -> anchor = rect }

@@ -10,6 +10,7 @@
 
 - Use `OverflowMenu` for every `ActionMenu` opened by a dots button. `tone` selects the glyph colour and backdrop (`text`, `muted`, `dim`, `filled` for toolbar neighbours on the container surface, `media` for the dark pill over images); `size` selects `touch` (48dp), `regular` (40dp) or `compact` (32dp), and the smaller sizes keep a 48dp target through `controlHitSlop`. `style` positions the menu anchor only.
 - Use `OverflowMenuButton` directly only when another owner opens the menu (`MessageActionMenu`, `UsageMenu`, a web sheet). Its `style` is placement only; appearance belongs to `tone`.
+- In virtualized rows, use `RowOverflowMenu` with the item's stable key. It keeps a regular dots button in the row and mounts the native popup at that button only while open.
 - A row whose whole surface opens the menu shows `overflowMenuIcon` as its trailing glyph instead of a literal.
 - `accessibilityLabel` is required and names both the trigger and the menu; callers keep their existing labels because tests and accessibility services query them.
 

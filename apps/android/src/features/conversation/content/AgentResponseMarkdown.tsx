@@ -4,13 +4,17 @@ import { projectMarkdownStream } from "@codewide/rendering-core";
 import { ActivityIndicator, View } from "react-native";
 import { readPrivateAssetText, type TransferAccess } from "../../../data/private-transfer";
 import { useAsyncResource } from "../../../rendering/async-resource-store";
-import { CompleteMarkdown } from "../../../rendering/CompleteMarkdown";
+import { CompleteMarkdownDocument } from "../../../rendering/CompleteMarkdown";
+import { prepareCompleteMarkdown } from "../../../rendering/prepareCompleteMarkdown";
 import { completeMarkdownStyles } from "../../../rendering/CompleteMarkdown.styles";
 import type { ContentReviewTarget } from "../../../rendering/content-review";
 import { ContentReviewComments } from "../../../rendering/ContentReviewHost";
-import { richMarkdownLayout } from "../../../rendering/rich-markdown-layout";
 import { occurrenceKey, textFingerprint } from "../../../rendering/listKey";
 import { RichMarkdown } from "../../../rendering/RichMarkdown";
+import {
+  completeMarkdownLayout,
+  richMarkdownLayout,
+} from "../../../rendering/rich-markdown-layout";
 import { SearchMessage } from "../../../rendering/SearchMessageFocus";
 import { usePrivateFileAccessScope } from "../../../rendering/use-private-image-uri";
 import { colors } from "../../../theme";
@@ -93,51 +97,45 @@ export function AgentResponseMarkdown({
     markdownSegmentsWeight,
   );
   const segments = resource.value ?? [];
+  const body = block.body ?? "";
   const loading = resource.status === "loading";
   const error = resource.error;
-  const fill =
-    richMarkdownLayout(block.body ?? "") === "fill" ||
-    segments.some((segment) => richMarkdownLayout(segment) === "fill");
-  const documentStyle = [
-    completeMarkdownStyles.document,
-    fill && completeMarkdownStyles.documentFill,
-  ];
-  const segmentOccurrences = new Map<string, number>();
-
+  let fill: boolean;
+  let content: React.JSX.Element;
   if (reference === null || segments.length === 0) {
-    return (
-      <View onLayout={onVisibilityLayout} ref={visibilityRef} style={documentStyle}>
-        <SearchMessage itemId={block.raw.id}>
-          <CompleteMarkdown reviewTarget={reviewTarget} source={block.body ?? ""} />
-        </SearchMessage>
-        {loading && (
-          <ActivityIndicator
-            accessibilityLabel="Loading complete response"
-            color={colors.textMuted}
-            size="small"
-          />
-        )}
-        {error !== null && <Text style={styles.errorText}>{error}</Text>}
-      </View>
+    const document = prepareCompleteMarkdown(body);
+    fill = document.fill;
+    content = (
+      <SearchMessage itemId={block.raw.id}>
+        <CompleteMarkdownDocument document={document} reviewTarget={reviewTarget} />
+      </SearchMessage>
     );
-  }
-  return (
-    <View onLayout={onVisibilityLayout} ref={visibilityRef} style={documentStyle}>
-      {segments.map((segment, index) => {
-        const key = occurrenceKey(
-          segmentOccurrences,
-          `${reference.id}:${textFingerprint(segment)}`,
-        );
-        return (
+  } else {
+    fill =
+      segments.some((segment) => richMarkdownLayout(segment) === "fill") ||
+      completeMarkdownLayout(body) === "fill";
+    const segmentOccurrences = new Map<string, number>();
+    content = (
+      <>
+        {segments.map((segment, index) => (
           <RichMarkdown
-            key={key}
+            key={occurrenceKey(segmentOccurrences, `${reference.id}:${textFingerprint(segment)}`)}
             reviewPathPrefix={`segment-${String(index)}`}
             reviewTarget={reviewTarget}
             source={segment}
           />
-        );
-      })}
-      <ContentReviewComments targetId={reviewTarget.id} />
+        ))}
+        <ContentReviewComments targetId={reviewTarget.id} />
+      </>
+    );
+  }
+  return (
+    <View
+      onLayout={onVisibilityLayout}
+      ref={visibilityRef}
+      style={[completeMarkdownStyles.document, fill && completeMarkdownStyles.documentFill]}
+    >
+      {content}
       {loading && (
         <ActivityIndicator
           accessibilityLabel="Loading complete response"

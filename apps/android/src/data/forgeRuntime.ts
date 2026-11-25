@@ -7,6 +7,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
 
 import { appLogger } from "../observability/logger";
+import type { ForgeLinkAuthority } from "./forgeLinkTargets";
 import { configureForgeQueryConnectivity } from "./forgeQueryConnectivity";
 import { createForgeResources } from "./forgeResources";
 import { createPullRequestLinkResources } from "./pullRequestLinkResources";
@@ -47,3 +48,16 @@ export const pullRequestLinkResources = createPullRequestLinkResources({
   getSession,
   rpcAfterAttach,
 });
+
+/** Resolve URLs using the same account directory and attached transport as the catalog. */
+export const forgeLinkAuthority: ForgeLinkAuthority = {
+  directory: async (connectionId) =>
+    forgeResources.queryClient.query(forgeResources.accounts.options({ connectionId })),
+  resolve: async (connectionId, pluginId, url) => {
+    const session = getSession(connectionId);
+    if (session === undefined) {
+      throw new Error("Server is unavailable");
+    }
+    return rpcAfterAttach<unknown>(session, "companion/pullRequest/resolveLink", { pluginId, url });
+  },
+};

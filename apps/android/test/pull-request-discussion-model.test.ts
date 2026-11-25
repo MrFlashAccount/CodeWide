@@ -347,6 +347,23 @@ describe("discussion navigator", () => {
     expect(fake.scrollTo).toHaveBeenCalledTimes(1);
   });
 
+  it("reveals only the latest requested thread when its row eventually mounts", () => {
+    const fake = target({ y: 320 });
+    const navigator = createDiscussionNavigator({
+      content: { current: fake.content },
+      contentOffset: 16,
+      scroll: { current: fake.scroll },
+    });
+
+    navigator.reveal(threadId);
+    navigator.reveal(otherThreadId);
+    navigator.attach(threadId, fake.thread);
+    expect(fake.scrollTo).not.toHaveBeenCalled();
+    navigator.attach(otherThreadId, fake.thread);
+    expect(fake.scrollTo).toHaveBeenCalledWith({ animated: true, y: 320 });
+    expect(navigator.expanded(otherThreadId)).toBe(true);
+  });
+
   it("keeps the user's own choice per thread", () => {
     const navigator = createDiscussionNavigator({
       content: { current: null },

@@ -159,6 +159,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
                 handleComposerTextChange={props.handleComposerTextChange}
                 pastedAttachmentPending={props.pastedAttachmentPending}
                 pendingVoiceSelection={props.pendingVoiceSelection}
+                questionReplyActive={props.questionReplyActive === true}
                 searchComposerSuggestions={props.searchComposerSuggestions}
                 selectComposerMention={props.selectComposerMention}
                 voiceBackend={props.voiceBackend}
@@ -187,6 +188,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
                 editingQueuedMessage={props.editingQueuedMessage}
                 goalAttachmentVisible={props.goalAttachmentVisible}
                 handleDeliveryAction={props.handleDeliveryAction}
+                questionReplyActive={props.questionReplyActive === true}
                 queuedComposerEditBusy={props.queuedComposerEditBusy}
                 resumeAction={props.resumeAction}
                 sendDisabled={props.sendDisabled}

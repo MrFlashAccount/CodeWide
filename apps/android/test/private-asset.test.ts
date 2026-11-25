@@ -228,29 +228,54 @@ describe("private asset transport", () => {
     );
   });
 
-  it("keeps materialized remote media separate from projected content", async () => {
-    const mediaId = "d".repeat(64);
-    const request = vi.fn(async () => Response.json({ id: mediaId }));
-    vi.stubGlobal("fetch", request);
-    const resolved = await resolvePrivateAssetRequest(
-      { kind: "remote", url: "https://images.example/shot.png" },
-      async () => ({
-        authorization: "Bearer token",
-        baseUrl: "https://companion.example",
-        transport: urlTransport,
-      }),
-      { imageVariant: "preview" },
-    );
+  it.each(["preview", "detail", "original"] as const)(
+    "reads %s using the opaque Companion media handle",
+    async (variant) => {
+      const mediaId = "aZ0_9-Cb".repeat(4);
+      const request = vi.fn(async () => Response.json({ id: mediaId }));
+      vi.stubGlobal("fetch", request);
+      const resolved = await resolvePrivateAssetRequest(
+        { kind: "remote", url: "https://images.example/shot.png" },
+        async () => ({
+          authorization: "Bearer token",
+          baseUrl: "https://companion.example",
+          transport: urlTransport,
+        }),
+        { imageVariant: variant },
+      );
 
-    expect(request).toHaveBeenCalledOnce();
-    expect(String(request.mock.calls[0]?.[0])).toBe(
-      "https://companion.example/v1/media/materialize",
-    );
-    expect(resolved.cacheIdentity).toBe(`media:${mediaId}:image:preview`);
-    expect(resolved.uri).toBe(
-      `https://companion.example/v1/image-previews/media/${mediaId}?variant=preview`,
-    );
-  });
+      expect(request).toHaveBeenCalledOnce();
+      expect(String(request.mock.calls[0]?.[0])).toBe(
+        "https://companion.example/v1/media/materialize",
+      );
+      const original = variant === "original";
+      expect(resolved.cacheIdentity).toBe(
+        original ? `media:${mediaId}` : `media:${mediaId}:image:${variant}`,
+      );
+      expect(resolved.uri).toBe(
+        original
+          ? `https://companion.example/v1/media/${mediaId}`
+          : `https://companion.example/v1/image-previews/media/${mediaId}?variant=${variant}`,
+      );
+    },
+  );
+
+  it.each(["d".repeat(64), `${"a".repeat(31)}/`])(
+    "rejects invalid handles from materialization",
+    async (id) => {
+      vi.stubGlobal("fetch", async () => Response.json({ id }));
+      await expect(
+        resolvePrivateAssetRequest(
+          { kind: "remote", url: "https://images.example/shot.png" },
+          async () => ({
+            authorization: "Bearer token",
+            baseUrl: "https://companion.example",
+            transport: urlTransport,
+          }),
+        ),
+      ).rejects.toThrow("Private asset response is invalid");
+    },
+  );
 
   it("downloads scoped files through the same authenticated reader", async () => {
     const request = vi.fn(async () => new Response("file", { status: 200 }));

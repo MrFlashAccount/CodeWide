@@ -430,7 +430,7 @@ function useTimelineRowSizeHint(input: {
   scale: number;
   timelineDateLabels: TimelineViewportProps["timelineDateLabels"];
 }) {
-  const getTimelineRowSizeHint = useEvent((row: TimelineRow) => {
+  const getTimelineRowSizeHint = (row: TimelineRow) => {
     const startedAt = performance.now();
     const dateLabels = input.timelineDateLabels.get(row.item);
     const result = timelineRowHeight(row, {
@@ -444,15 +444,14 @@ function useTimelineRowSizeHint(input: {
     return result.status === "exact"
       ? { size: result.size, status: "exact" as const }
       : { size: result.estimate, status: "estimated" as const };
-  });
-  const estimatedRowSizeHint = useEvent((row: TimelineRow) =>
+  };
+  const estimatedRowSizeHint = (row: TimelineRow) =>
     row.kind === "historyBeginning"
       ? {
           size: historyBeginningSizeEstimate(input.fontScale),
           status: "estimated" as const,
         }
-      : packedRowSizeHint(row),
-  );
+      : packedRowSizeHint(row);
   return input.premeasured
     ? getTimelineRowSizeHint
     : hasEstimatedRows(input.rows)

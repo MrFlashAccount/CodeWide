@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from "rea
 
 import { colors, iconSize, radii, touchTarget } from "../theme";
 import { PaneChrome } from "./PaneChrome";
-import { useThreePanels, type ThreePanelsChrome } from "./threePanels";
+import { useThreePanels } from "./threePanels";
 
 /**
  * The back intent the pane content supplies. `exit` leaves the content's root (a phone thread back
@@ -19,11 +19,11 @@ export type ThreePanelsBack = {
 };
 
 /**
- * The standard header of whatever a workspace pane shows: `[←] title [trailing] [⤢] [⋯] [×]`. The
- * pane decides the controls it owns from `ThreePanelsContext`: the fullscreen toggle and the close
+ * The standard header of whatever a workspace pane shows: `[←] title [trailing] [⋯] [×]`. The
+ * pane decides the controls it owns from `ThreePanelsContext`: the close action
  * come from the pane's declared chrome, and the content's back intent shows only when it is nested
- * or the pane cannot close. The content supplies only its title, trailing actions and menu, so
- * back, fullscreen and close look and behave the same in every pane. The header is pane chrome:
+ * or a stacked pane has no close action. The content supplies only its title, trailing actions and menu, so
+ * back and close look and behave the same in every pane. The header is pane chrome:
  * while panes rearrange it follows the pane's visible width (`PaneChrome`).
  */
 export function ThreePanelsHeader({
@@ -36,7 +36,7 @@ export function ThreePanelsHeader({
   withoutBackStyle,
 }: {
   readonly back: ThreePanelsBack | null;
-  /** The content's ⋯ menu, after the fullscreen toggle. */
+  /** The content's ⋯ menu, after trailing actions. */
   readonly menu?: ReactNode;
   /** The content's row metrics (height, insets). */
   readonly style?: StyleProp<ViewStyle>;
@@ -51,8 +51,9 @@ export function ThreePanelsHeader({
   /** Applied while no back arrow leads the row, so the title keeps the content inset. */
   readonly withoutBackStyle?: StyleProp<ViewStyle>;
 }): React.JSX.Element {
-  const { chrome } = useThreePanels();
-  const shownBack = paneBack(back, chrome);
+  const { chrome, variant } = useThreePanels();
+  const shownBack =
+    back?.kind === "nested" || (variant.kind === "stacked" && chrome.close === null) ? back : null;
   return (
     <PaneChrome testID={`${testID}-chrome`}>
       <View style={[styles.row, style, shownBack === null && withoutBackStyle]} testID={testID}>
@@ -66,7 +67,6 @@ export function ThreePanelsHeader({
         )}
         <View style={styles.title}>{title}</View>
         {trailing}
-        <FullscreenControl chrome={chrome} />
         {menu}
         {chrome.close === null ? null : (
           <HeaderControl
@@ -81,37 +81,6 @@ export function ThreePanelsHeader({
   );
 }
 
-/** A nested Back always shows; an exit Back gives way to the `×` of a pane that declares close. */
-function paneBack(back: ThreePanelsBack | null, chrome: ThreePanelsChrome): ThreePanelsBack | null {
-  return back !== null && (back.kind === "nested" || chrome.close === null) ? back : null;
-}
-
-/** The pane's fullscreen toggle, where the pane can be shown alone now. */
-function FullscreenControl({
-  chrome,
-}: {
-  readonly chrome: ThreePanelsChrome;
-}): React.JSX.Element | null {
-  if (chrome.toggleFullscreen === null) {
-    return null;
-  }
-  return chrome.fullscreen ? (
-    <HeaderControl
-      icon="contract-outline"
-      iconSize={iconSize.action}
-      label={`Exit ${chrome.label} fullscreen`}
-      onPress={chrome.toggleFullscreen}
-    />
-  ) : (
-    <HeaderControl
-      icon="expand-outline"
-      iconSize={iconSize.action}
-      label={`Open ${chrome.label} fullscreen`}
-      onPress={chrome.toggleFullscreen}
-    />
-  );
-}
-
 /** One pane control; every pane header draws its controls with this one shape. */
 function HeaderControl({
   icon,
@@ -119,7 +88,7 @@ function HeaderControl({
   label,
   onPress,
 }: {
-  readonly icon: "arrow-back" | "close" | "contract-outline" | "expand-outline";
+  readonly icon: "arrow-back" | "close";
   readonly iconSize: number;
   readonly label: string;
   readonly onPress: () => void;

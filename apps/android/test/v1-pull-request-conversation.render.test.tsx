@@ -10,6 +10,7 @@ import {
   PULL_REQUEST,
   REVIEW_CHAT,
   renderScreen,
+  renderVisibleDiscussion,
   textOf,
   type,
   unmountScreens,
@@ -83,8 +84,56 @@ function discussionOrder(conversation: Parameters<typeof within>[0]): string[] {
     .map((node) => String(node.props.testID));
 }
 
-it("renders the conversation newest first instead of the activity list", async () => {
+it("uses the position below the loaded status rows when the placeholder was initially visible", async () => {
+  let finish = (_page: typeof conversationArcanum): void => {
+    throw new Error("conversation request has no resolver");
+  };
+  const response = new Promise<typeof conversationArcanum>((resolve) => {
+    finish = resolve;
+  });
+  const { view } = renderScreen({ conversation: response });
+  await view.findByTestId("pull-request-conversation-loading");
+  const page = view.getByTestId("pull-request-overview");
+  fireEvent(view.getByTestId("pull-request-conversation"), "layout", {
+    nativeEvent: { layout: { y: 280, height: 104 } },
+  });
+  fireEvent(page, "layout", { nativeEvent: { layout: { height: 600 } } });
+  await act(async () => finish(conversationArcanum));
+  await view.findByTestId("discussion-issues");
+  fireEvent(view.getByTestId("pull-request-conversation"), "layout", {
+    nativeEvent: { layout: { y: 1400 } },
+  });
+  expect(view.queryByTestId("conversation-comment-ac-2")).toBeNull();
+  await act(async () =>
+    fireEvent.scroll(page, { nativeEvent: { contentOffset: { x: 0, y: 800 } } }),
+  );
+  expect(view.getByTestId("conversation-comment-ac-2")).toBeOnTheScreen();
+});
+
+it("mounts the discussion at 200 dp of the viewport and retains it after scrolling away", async () => {
   const { view } = renderScreen({});
+  await view.findByTestId("pull-request-discussion-heading-count");
+  const page = view.getByTestId("pull-request-overview");
+  const section = view.getByTestId("pull-request-conversation");
+  const padding = Number(StyleSheet.flatten(page.props.contentContainerStyle).paddingTop);
+  fireEvent(page, "layout", { nativeEvent: { layout: { height: 600 } } });
+  fireEvent(section, "layout", { nativeEvent: { layout: { y: 1400 - padding } } });
+  const scroll = (y: number) =>
+    fireEvent.scroll(page, { nativeEvent: { contentOffset: { x: 0, y } } });
+  scroll(599);
+  expect(view.queryByTestId("conversation-comment-c-1")).toBeNull();
+  expect(view.getByTestId("pull-request-comment-button")).toBeOnTheScreen();
+
+  await act(async () => scroll(600));
+  expect(view.getByTestId("conversation-comment-c-1")).toBeOnTheScreen();
+  const toggle = view.getByTestId("review-thread-rt-2-toggle");
+  await act(async () => fireEvent.press(toggle));
+  scroll(0);
+  expect(view.getByTestId("conversation-comment-c-5")).toBeOnTheScreen();
+});
+
+it("renders the conversation newest first instead of the activity list", async () => {
+  const { view } = await renderVisibleDiscussion({});
 
   await view.findByTestId("conversation-comment-c-1");
   const conversation = view.getByTestId("pull-request-conversation");
@@ -136,7 +185,7 @@ it("loads older discussion below the newest entries from Show more", async () =>
     nextCursor: null,
     openIssuesBlockMerge: null,
   };
-  const { server, view } = renderScreen({
+  const { server, view } = await renderVisibleDiscussion({
     conversation: { entries: [event, comment], nextCursor: "older-1", openIssuesBlockMerge: null },
     olderConversation: older,
   });
@@ -160,6 +209,38 @@ it("loads older discussion below the newest entries from Show more", async () =>
   ]);
 });
 
+function discussionEvents(length: number) {
+  return Array.from({ length }, (_, index) => ({
+    author: null,
+    category: index % 2 === 0 ? "state" : "push",
+    createdAt: new Date(Date.UTC(2026, 9, 22, 12) - index * 60_000).toISOString(),
+    id: `window-${String(index)}`,
+    kind: "event",
+    text: "Updated",
+  }));
+}
+
+it("mounts a long loaded discussion as it is read before offering the older remote page", async () => {
+  const entries = discussionEvents(32);
+  const { server, view } = await renderVisibleDiscussion({
+    conversation: { entries, nextCursor: "older", openIssuesBlockMerge: null },
+  });
+  await view.findByTestId("conversation-event-window-0");
+  const last = "conversation-event-window-31";
+  expect(view.queryByTestId(last)).toBeNull();
+  expect(view.queryByTestId("pull-request-discussion-more")).toBeNull();
+  const page = view.getByTestId("pull-request-overview");
+  fireEvent(page, "layout", { nativeEvent: { layout: { height: 600 } } });
+  for (let height = 1800; height < 18000 && view.queryByTestId(last) === null; height += 500) {
+    fireEvent(page, "contentSizeChange", 400, height);
+    fireEvent.scroll(page, { nativeEvent: { contentOffset: { x: 0, y: height - 600 } } });
+  }
+  expect(view.getByTestId(last)).toBeOnTheScreen();
+  expect(view.getByTestId("conversation-event-window-0")).toBeOnTheScreen();
+  expect(view.getByTestId("pull-request-discussion-more")).toBeOnTheScreen();
+  expect(server.cursors).toEqual([]);
+});
+
 it("keeps the activity list when the plugin does not declare the conversation", async () => {
   const { server, view } = renderScreen({ conversationDeclared: false });
 
@@ -172,7 +253,7 @@ it("keeps the activity list when the plugin does not declare the conversation", 
 });
 
 it("starts a resolved thread collapsed and expands it from its header", async () => {
-  const { view } = renderScreen({});
+  const { view } = await renderVisibleDiscussion({});
   const toggle = await view.findByTestId("review-thread-rt-2-toggle");
 
   expect(view.queryByTestId("conversation-comment-c-5")).toBeNull();
@@ -207,7 +288,7 @@ it("replies once with the thread id and a key, shimmering the text until it clea
         };
       }),
   );
-  const { view } = renderScreen({ capabilityOverrides: { replyToReviewThread } });
+  const { view } = await renderVisibleDiscussion({ capabilityOverrides: { replyToReviewThread } });
   const reply = within(await view.findByTestId("review-thread-rt-1-reply"));
 
   type(reply, "Keeping the host hint");
@@ -240,7 +321,7 @@ it("keeps the text and shows the companion's error when a reply fails", async ()
     ReturnType<Capabilities["replyToReviewThread"]>,
     Parameters<Capabilities["replyToReviewThread"]>
   >(async () => Promise.reject(new RpcResponseError(-32_083, "The forge refused the reply")));
-  const { view } = renderScreen({ capabilityOverrides: { replyToReviewThread } });
+  const { view } = await renderVisibleDiscussion({ capabilityOverrides: { replyToReviewThread } });
   const reply = within(await view.findByTestId("review-thread-rt-1-reply"));
 
   type(reply, "Keeping the host hint");
@@ -259,7 +340,7 @@ it("retries an unreached reply with the same key, and edited text with a new key
     ReturnType<Capabilities["replyToReviewThread"]>,
     Parameters<Capabilities["replyToReviewThread"]>
   >(async () => Promise.reject(new Error("The companion is unreachable")));
-  const { view } = renderScreen({ capabilityOverrides: { replyToReviewThread } });
+  const { view } = await renderVisibleDiscussion({ capabilityOverrides: { replyToReviewThread } });
   const reply = within(await view.findByTestId("review-thread-rt-1-reply"));
   const send = async (): Promise<void> => {
     fireEvent.press(reply.getByTestId("review-thread-rt-1-reply-send"));
@@ -286,7 +367,10 @@ it("starts addressComments focused on the thread and opens the review chat", asy
     Parameters<Capabilities["startScenario"]>
   >(async () => Promise.resolve({ created: false, kind: "started", threadId: REVIEW_CHAT }));
   const openThread = jest.fn();
-  const { view } = renderScreen({ capabilityOverrides: { startScenario }, openThread });
+  const { view } = await renderVisibleDiscussion({
+    capabilityOverrides: { startScenario },
+    openThread,
+  });
 
   fireEvent.press(await view.findByTestId("review-thread-rt-1-address"));
 
@@ -310,7 +394,7 @@ it("refuses conversation writes locally while the companion is offline", async (
     ReturnType<Capabilities["startScenario"]>,
     Parameters<Capabilities["startScenario"]>
   >();
-  const { server, view } = renderScreen({
+  const { server, view } = await renderVisibleDiscussion({
     capabilityOverrides: { createComment, startScenario },
   });
   fireEvent.press(await view.findByTestId("pull-request-comment-button"));
@@ -330,7 +414,7 @@ it("refuses conversation writes locally while the companion is offline", async (
     });
   });
 
-  type(comment, "Ship it");
+  fireEvent.changeText(comment.getByLabelText("Comment text"), "Ship it");
   await act(async () => {
     fireEvent.press(comment.getByTestId("pull-request-new-comment-send"));
     await Promise.resolve();
@@ -347,7 +431,7 @@ it("refuses conversation writes locally while the companion is offline", async (
 });
 
 it("renders an Arcanum-shaped discussion: the Issues row, iterations, verdict rows and machine authors", async () => {
-  const { view } = renderScreen({ conversation: conversationArcanum });
+  const { view } = await renderVisibleDiscussion({ conversation: conversationArcanum });
   const issues = await view.findByTestId("discussion-issues");
 
   const row = view.getByTestId("pull-request-status-issues");
@@ -430,8 +514,14 @@ it("starts settled issues collapsed and reveals one from the Issues row", async 
     });
   const scrollTo = jest.spyOn(ScrollView.prototype, "scrollTo");
   try {
-    const { view } = renderScreen({ conversation: conversationArcanum });
+    const { view } = renderScreen({
+      conversation: {
+        ...conversationArcanum,
+        entries: [...discussionEvents(16), ...conversationArcanum.entries],
+      },
+    });
     const issues = await view.findByTestId("discussion-issues");
+    expect(view.queryByTestId("review-thread-is-resolved")).toBeNull();
     expect(view.queryByTestId("conversation-comment-ic-4")).toBeNull();
 
     fireEvent.press(within(issues).getByTestId("discussion-settled-toggle"));
@@ -471,7 +561,7 @@ it("addresses an issue from the Issues row with its thread id", async () => {
 });
 
 it("groups nearby comments under one header and collapses a run of pushes, newest first", async () => {
-  const { view } = renderScreen({ conversation: conversationArcanum });
+  const { view } = await renderVisibleDiscussion({ conversation: conversationArcanum });
   const newest = await view.findByTestId("conversation-comment-ac-2");
   const older = view.getByTestId("conversation-comment-ac-1");
 

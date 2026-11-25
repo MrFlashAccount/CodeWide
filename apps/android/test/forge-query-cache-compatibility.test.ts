@@ -132,6 +132,25 @@ const samples: Readonly<Record<PersistedKind, readonly unknown[]>> = {
       parsePullRequestOverview(overview91, () => undefined),
       "forge/overview",
     ),
+    decoded(
+      parsePullRequestOverview(
+        {
+          ...overview91,
+          checkItems: [
+            {
+              ...overview91.checkItems[0],
+              activity: "running",
+              onDemand: false,
+              required: true,
+              state: "pending",
+              viewerUrl: "https://ci.example/run/42",
+            },
+          ],
+        },
+        () => undefined,
+      ),
+      "forge/overview with classified checks",
+    ),
   ],
   "review/drafts": [
     decoded(parseDrafts(draftsSnapshot), "review/drafts"),

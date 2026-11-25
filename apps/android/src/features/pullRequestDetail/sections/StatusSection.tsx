@@ -130,6 +130,7 @@ function ChecksSlot(
         props.onRun(action, null);
       }}
       pending={props.pending}
+      pendingToggles={props.pendingToggles}
       slots={props.slots}
     />
   );

@@ -27,6 +27,7 @@ import {
   type TextStyle,
   type ViewStyle,
 } from "react-native";
+import { occurrenceKey } from "./listKey";
 import { ScrollView as GestureScrollView } from "react-native-gesture-handler";
 
 import { colors, radii, typeScale, spacing, typeWeight, iconSize } from "../theme";
@@ -36,6 +37,7 @@ import { AppText } from "../ui/Typography";
 import { useAppDialog } from "../ui/AppDialog";
 import { isRemoteFileHref, remoteFileKind } from "./document-preview";
 import { parseDiagnosticRichMarkdown } from "./diagnostic-markdown";
+import type { ParsedMarkdownSegment } from "./rich-markdown-layout";
 import { safeImageUri } from "./image-source";
 import { recordDecodedImage, wasImageDecoded } from "./imageDecodeCache";
 import {
@@ -43,6 +45,7 @@ import {
   useImagePreviewGroup,
   useRegisterImagePreviewItem,
 } from "./ImagePreviewHost";
+import { MarkdownWebLinkContext } from "./markdownWebLink";
 import { useMarkdownLocalLinkHandler } from "./MarkdownLinkHandler";
 import { markdownTableLayout } from "./markdown-table-layout";
 import { useTableViewport } from "./useTableViewport";
@@ -306,21 +309,32 @@ export function RichMarkdown({
   onTargetLayout,
   reviewPathPrefix = "segment-0",
   reviewTarget,
-  source,
+  segment,
+  source: rawSource,
   targetLine,
-}: {
+}: (
+  | {
+      readonly segment?: never;
+      readonly source: string;
+      readonly streaming?: boolean;
+    }
+  | {
+      readonly segment: ParsedMarkdownSegment;
+      readonly source?: never;
+      readonly streaming?: never;
+    }
+) & {
   animateStreaming?: boolean;
   extensions?: Record<string, RichExtensionRenderer>;
   maxLines?: number;
   onTargetLayout?: (y: number) => void;
   reviewPathPrefix?: string;
   reviewTarget?: ContentReviewTarget;
-  source: string;
-  streaming?: boolean;
   targetLine?: number;
 }) {
   const plainText = usePerformanceExperiment("plainTextMarkdown");
   const premeasurement = useRichMarkdownPremeasurement();
+  const source = segment === undefined ? rawSource : segment.source;
   if (plainText) {
     return (
       <RichMarkdownReviewContext.Provider
@@ -342,7 +356,7 @@ export function RichMarkdown({
     );
   }
   // Streaming revisions belong to this mounted view, not the completed-text cache.
-  const parsed = parseDiagnosticRichMarkdown(source, !streaming);
+  const parsed = segment?.parsed ?? parseDiagnosticRichMarkdown(source, !streaming);
   if (maxLines !== undefined) {
     return (
       <RichMarkdownReviewContext.Provider
@@ -382,6 +396,7 @@ export function RichMarkdown({
     );
   }
   const imageOrder = collectMarkdownImageOrder(parsed.root);
+  const blockOccurrences = new Map<string, number>();
   const targetBlockIndex =
     targetLine === undefined ? null : richMarkdownBlockIndexAtLine(source, targetLine);
   return (
@@ -394,7 +409,7 @@ export function RichMarkdown({
         <View style={styles.document}>
           {parsed.root.children.map((node, index) => {
             const path = `${node.type}-${String(index)}`;
-            const key = markdownNodeKey(node);
+            const key = markdownNodeKey(blockOccurrences, node);
             const block = (
               <BlockNode
                 documentRoot
@@ -618,6 +633,7 @@ function BlockNode({
       );
     }
     case "blockquote": {
+      const occurrences = new Map<string, number>();
       const alert = projectMarkdownAlert(node);
       if (alert !== null) {
         const presentation = ALERT_CONFIG[alert.kind];
@@ -639,7 +655,7 @@ function BlockNode({
                   <BlockNode
                     extensions={extensions}
                     imageOrder={imageOrder}
-                    key={markdownNodeKey(child)}
+                    key={markdownNodeKey(occurrences, child)}
                     node={child}
                     path={`${path}/alert-${String(index)}`}
                   />
@@ -656,7 +672,7 @@ function BlockNode({
               <BlockNode
                 extensions={extensions}
                 imageOrder={imageOrder}
-                key={markdownNodeKey(child)}
+                key={markdownNodeKey(occurrences, child)}
                 node={child}
                 path={`${path}/quote-${String(index)}`}
               />
@@ -665,11 +681,12 @@ function BlockNode({
         </View>
       );
     }
-    case "list":
+    case "list": {
+      const occurrences = new Map<string, number>();
       return (
         <View style={styles.list}>
           {node.children.map((item, index) => (
-            <View key={markdownNodeKey(item)} style={styles.listRow}>
+            <View key={markdownNodeKey(occurrences, item)} style={styles.listRow}>
               {typeof item.checked === "boolean" ? (
                 <View
                   accessibilityLabel={item.checked ? "Completed task" : "Open task"}
@@ -696,6 +713,7 @@ function BlockNode({
           ))}
         </View>
       );
+    }
     case "code": {
       const language = node.lang ?? "text";
       if (language.toLocaleLowerCase() === "mermaid") {
@@ -734,7 +752,8 @@ function BlockNode({
       return (
         <MarkupBlock extensions={extensions} imageOrder={imageOrder} node={node} path={path} />
       );
-    case "footnoteDefinition":
+    case "footnoteDefinition": {
+      const occurrences = new Map<string, number>();
       return (
         <View style={styles.footnote}>
           <Text selectable style={styles.footnoteMarker}>
@@ -745,7 +764,7 @@ function BlockNode({
               <BlockNode
                 extensions={extensions}
                 imageOrder={imageOrder}
-                key={markdownNodeKey(child)}
+                key={markdownNodeKey(occurrences, child)}
                 node={child}
                 path={`${path}/footnote-${String(index)}`}
               />
@@ -753,6 +772,7 @@ function BlockNode({
           </View>
         </View>
       );
+    }
     case "definition":
     case "yaml":
       return null;
@@ -805,6 +825,7 @@ function MarkdownListBody({
       />
     );
   }
+  const occurrences = new Map<string, number>();
   return (
     <View style={styles.listBody}>
       <InsetRichContentWidth inset={richMarkdownGeometry.listInset}>
@@ -812,7 +833,7 @@ function MarkdownListBody({
           <BlockNode
             extensions={extensions}
             imageOrder={imageOrder}
-            key={markdownNodeKey(block)}
+            key={markdownNodeKey(occurrences, block)}
             node={block}
             path={`${path}-${String(index)}`}
           />
@@ -842,25 +863,22 @@ function MarkupBlock({
 }) {
   const animateStreaming = useContext(RichMarkdownRevealContext);
   const html = messageMarkupNodeHtml(node);
-  const renderCode = useEvent((value: string, language: string, childPath: string) => (
+  const renderCode = (value: string, language: string, childPath: string) => (
     <BlockNode
       extensions={extensions}
       imageOrder={imageOrder}
       node={{ lang: language, type: "code", value }}
       path={`${path}/${childPath}`}
     />
-  ));
-  const renderImage = useEvent((url: string, alt: string, dimensions?: MarkupImageDimensions) => (
+  );
+  const renderImage = (url: string, alt: string, dimensions?: MarkupImageDimensions) => (
     <MarkdownImage
       alt={alt}
       reveal={animateStreaming}
       url={url}
       {...(dimensions === undefined ? {} : { dimensions })}
     />
-  ));
-  const renderLink = useEvent((url: string, children: ReactNode) => (
-    <MarkdownLink url={url}>{children}</MarkdownLink>
-  ));
+  );
   if (html === null) {
     return (
       <CopyableInline style={styles.rawHtml} value={node.value}>
@@ -868,7 +886,11 @@ function MarkupBlock({
       </CopyableInline>
     );
   }
-  return <NativeMarkup code={renderCode} html={html} image={renderImage} link={renderLink} />;
+  return <NativeMarkup code={renderCode} html={html} image={renderImage} link={renderMarkupLink} />;
+}
+
+function renderMarkupLink(url: string, children: ReactNode): ReactNode {
+  return <MarkdownLink url={url}>{children}</MarkdownLink>;
 }
 
 function CopyableCodeBlock({ language, value }: { language: string; value: string }) {
@@ -918,7 +940,9 @@ function MarkdownLink({
 }) {
   const dialog = useAppDialog();
   const openLocalLink = useMarkdownLocalLinkHandler();
+  const openWebLink = useContext(MarkdownWebLinkContext);
   const external = isSafeLink(url);
+  const openLink = external ? (openWebLink ?? openLocalLink) : openLocalLink;
   const localKind =
     !external && openLocalLink !== null && isRemoteFileHref(url) ? remoteFileKind(url, url) : null;
   const local = localKind !== null;
@@ -930,7 +954,7 @@ function MarkdownLink({
       accessibilityHint="Opens the link"
       accessibilityRole="link"
       onPress={() => {
-        if (openLocalLink?.(url) === true) {
+        if (openLink?.(url) === true) {
           return;
         }
         if (external) {
@@ -1191,11 +1215,12 @@ function TableCellView({
 }
 
 function inline(nodes: PhrasingContent[], highlight: boolean, insideLink = false): ReactNode[] {
+  const occurrences = new Map<string, number>();
   return nodes.map((node) => {
     if (node.type === "text" && !highlight) {
       return node.value;
     }
-    const key = markdownNodeKey(node);
+    const key = markdownNodeKey(occurrences, node);
     switch (node.type) {
       case "text":
         return <HighlightSearchText key={key} text={node.value} />;
@@ -1272,8 +1297,8 @@ function highlightedInlineValue(text: string, highlight: boolean): ReactNode {
   return highlight ? <HighlightSearchText text={text} /> : text;
 }
 
-function markdownNodeKey(node: Nodes): string {
-  return markdownNodeIdentity(node, fallbackText(node));
+function markdownNodeKey(occurrences: Map<string, number>, node: Nodes): string {
+  return occurrenceKey(occurrences, markdownNodeIdentity(node, fallbackText(node)));
 }
 
 function headingStyle(depth: 1 | 2 | 3 | 4 | 5 | 6) {

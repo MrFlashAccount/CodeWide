@@ -8,19 +8,20 @@ import {
 } from "./threadListFabGeometry";
 
 export const styles = StyleSheet.create({
+  overlay: {
+    ...StyleSheet.absoluteFill,
+    zIndex: FLOATING_ACTION_Z_INDEX,
+  },
   primary: {
     ...PRIMARY_FAB_PLACEMENT,
     position: "absolute",
-    zIndex: FLOATING_ACTION_Z_INDEX,
   },
   secondaryAbovePrimary: {
     ...SECONDARY_FAB_ABOVE_PRIMARY,
     position: "absolute",
-    zIndex: FLOATING_ACTION_Z_INDEX,
   },
   secondaryAlone: {
     ...SECONDARY_FAB_ALONE,
     position: "absolute",
-    zIndex: FLOATING_ACTION_Z_INDEX,
   },
 });
